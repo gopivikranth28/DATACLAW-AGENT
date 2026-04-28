@@ -1,0 +1,19 @@
+{
+  "id": "dataclaw-tools",
+  "name": "Dataclaw Tools",
+  "version": "0.1.0",
+  "description": "Registers OpenClaw tools backed by Dataclaw's Python tool endpoints (dynamic discovery).",
+  "envVars": [
+    "DATACLAW_API_URL",
+    "DATACLAW_TOOLS_TOKEN",
+    "DATACLAW_TOOLS_PREFIX",
+    "DATACLAW_TOOLS_OPTIONAL"
+  ],
+  "configSchema": {
+    "type": "object",
+    "properties": {}
+  },
+  "skills": [
+    "./skills"
+  ]
+}

@@ -1,0 +1,78 @@
+# Bundled image: DataClaw + OpenClaw in a single container.
+# OpenClaw is installed from npm (no local clone required).
+#
+# Build:  docker compose -f docker-compose.bundled.yml build
+# Run:    docker compose -f docker-compose.bundled.yml up
+
+# Stage 1: Build the UI
+FROM node:22-alpine AS ui-build
+WORKDIR /build
+COPY ui/package.json ui/package-lock.json ./
+RUN npm install
+COPY ui/ .
+RUN npm run build
+
+# Stage 2: Grab Node.js 24 binaries (OpenClaw requires >= 22.16)
+FROM node:24-slim AS node-bin
+
+# Stage 3: Runtime — Python 3.12 + Node 24 + OpenClaw + DataClaw
+FROM python:3.12-slim-bookworm
+
+# Install uv for fast Python dependency management
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Copy Node.js 24 from the node-bin stage (OpenClaw needs Node 24).
+# npm requires lib/node_modules alongside the binary.
+COPY --from=node-bin /usr/local/bin/ /usr/local/bin/
+COPY --from=node-bin /usr/local/lib/node_modules/ /usr/local/lib/node_modules/
+
+# System dependencies
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       curl ca-certificates procps openssl git lsof \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install OpenClaw globally from npm
+RUN npm install -g openclaw@latest \
+    # Symlink ws into global node_modules so the OpenClaw CLI can resolve it
+    # when invoked from any working directory (e.g. docker exec).
+    && ln -sf /usr/local/lib/node_modules/openclaw/node_modules/ws /usr/local/lib/node_modules/ws
+
+WORKDIR /dataclaw
+
+# Copy plugins first — pyproject.toml references them as local path deps
+COPY plugins/ plugins/
+
+# Install Python dependencies (layer cache)
+COPY pyproject.toml uv.lock* ./
+RUN mkdir -p dataclaw && touch dataclaw/__init__.py \
+    && (uv sync --frozen --no-dev 2>/dev/null || uv sync --no-dev)
+
+# Copy backend source (overwrites the stub __init__.py)
+COPY dataclaw/ dataclaw/
+
+# Copy built UI from stage 1
+COPY --from=ui-build /build/dist ui/dist/
+
+# Copy OpenClaw plugins source
+COPY openclaw-plugins/ openclaw-plugins/
+
+# Pre-install plugin npm dependencies (dataclaw-tools needs @sinclair/typebox)
+RUN cd openclaw-plugins/dataclaw-tools && npm install --omit=dev
+
+# Create runtime directories
+RUN mkdir -p /dataclaw/workspaces /dataclaw/data
+
+# Copy entrypoint script
+COPY scripts/entrypoint-bundled.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Environment
+ENV DISPLAY=:0
+ENV TERM=xterm-256color
+ENV OPENCLAW_DISABLE_BONJOUR=1
+ENV NODE_ENV=production
+
+EXPOSE 8000 18789 18790
+
+CMD ["/entrypoint.sh"]

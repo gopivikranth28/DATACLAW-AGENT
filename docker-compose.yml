@@ -1,0 +1,11 @@
+services:
+  dataclaw:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/dataclaw/data
+      - ./workspaces:/dataclaw/workspaces
+    env_file:
+      - path: .env
+        required: false

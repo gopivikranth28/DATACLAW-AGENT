@@ -1,0 +1,23 @@
+[project]
+name = "dataclaw-notebooks"
+version = "0.1.0"
+description = "Dataclaw plugin — Jupyter notebook management and execution"
+requires-python = ">=3.12"
+dependencies = [
+    "dataclaw",
+    "nbformat>=5.0",
+    "jupyter_client>=8.0",
+]
+
+[project.entry-points."dataclaw.plugins"]
+dataclaw-notebooks = "dataclaw_notebooks:NotebooksPlugin"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

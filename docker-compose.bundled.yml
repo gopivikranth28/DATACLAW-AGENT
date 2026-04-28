@@ -1,0 +1,44 @@
+services:
+  dataclaw:
+    build:
+      context: .
+      dockerfile: Dockerfile.bundled
+    ports:
+      - "${DATACLAW_PORT:-8000}:${DATACLAW_PORT:-8000}"
+      - "${OPENCLAW_GATEWAY_PORT:-18789}:${OPENCLAW_GATEWAY_PORT:-18789}"
+      - "${OPENCLAW_BRIDGE_PORT:-18790}:${OPENCLAW_BRIDGE_PORT:-18790}"
+    volumes:
+      - ${DOCKER_DATA_DIR:-./docker-data}/data:/dataclaw/data
+      - ${DOCKER_DATA_DIR:-./docker-data}/workspaces:/dataclaw/workspaces
+      - ${DOCKER_DATA_DIR:-./docker-data}/openclaw:/root/.openclaw
+      - ${DOCKER_DATA_DIR:-./docker-data}/dataclaw:/root/.dataclaw
+    environment:
+      # Core ports/host — always passed
+      DATACLAW_HOST: ${DATACLAW_HOST:-0.0.0.0}
+      DATACLAW_PORT: ${DATACLAW_PORT:-8000}
+      OPENCLAW_GATEWAY_PORT: ${OPENCLAW_GATEWAY_PORT:-18789}
+      OPENCLAW_BRIDGE_PORT: ${OPENCLAW_BRIDGE_PORT:-18790}
+      DATACLAW_LLM_BACKEND: ${DATACLAW_LLM_BACKEND:-openclaw}
+      # Optional overrides — only passed when set on the host.
+      # When unset, the entrypoint derives sensible defaults
+      # (tokens default to the gateway token, API URL to loopback).
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
+      DATACLAW_FRONTEND_TOKEN:
+      DATACLAW_TOOLS_TOKEN:
+      DATACLAW_API_URL:
+      DATACLAW_OPENCLAW_URL:
+      # LLM provider API keys
+      ANTHROPIC_API_KEY:
+      OPENAI_API_KEY:
+      GEMINI_API_KEY:
+    env_file:
+      - path: .env
+        required: false
+    init: true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s

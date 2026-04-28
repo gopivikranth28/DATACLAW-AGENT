@@ -1,0 +1,56 @@
+{
+  "id": "dataclaw-frontend",
+  "name": "Dataclaw Frontend",
+  "version": "0.1.0",
+  "description": "Channel plugin that lets the Dataclaw frontend send messages to OpenClaw and receive responses.",
+  "channel": {
+    "id": "dataclaw-frontend",
+    "label": "Dataclaw Frontend",
+    "blurb": "Connect OpenClaw to the Dataclaw web frontend."
+  },
+  "channelEnvVars": [
+    "DATACLAW_FRONTEND_TOKEN"
+  ],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "channels": {
+        "type": "object",
+        "properties": {
+          "dataclaw-frontend": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "default": true
+              },
+              "token": {
+                "type": "string",
+                "description": "Shared bearer token expected in X-Dataclaw-Token header."
+              },
+              "dataclawApiUrl": {
+                "type": "string",
+                "description": "Dataclaw API base URL for message persistence.",
+                "default": "http://localhost:8000"
+              },
+              "allowFrom": {
+                "type": "array",
+                "items": { "type": "string" },
+                "default": []
+              },
+              "dmSecurity": {
+                "type": "string",
+                "enum": ["allowlist", "open"],
+                "default": "allowlist"
+              },
+              "responseTimeoutMs": {
+                "type": "number",
+                "default": 30000
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,23 @@
+[project]
+name = "dataclaw-browser"
+version = "0.1.0"
+description = "Dataclaw plugin — AI-driven browser automation"
+requires-python = ">=3.12"
+dependencies = [
+    "dataclaw",
+    "dataclaw-workspace",
+    "browser-use>=0.1",
+]
+
+[project.entry-points."dataclaw.plugins"]
+dataclaw-browser = "dataclaw_browser:BrowserPlugin"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

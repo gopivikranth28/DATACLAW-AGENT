@@ -1,0 +1,26 @@
+{
+  "name": "dataclaw-tools",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "OpenClaw tool plugin — exposes Dataclaw Python tools to OpenClaw agents",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.3.24-beta.2",
+      "minGatewayVersion": "2026.3.24-beta.2"
+    }
+  },
+  "peerDependencies": {
+    "openclaw": "*"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.41"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.2",
+    "typescript": "^6.0.2"
+  }
+}

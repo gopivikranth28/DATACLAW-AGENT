@@ -1,0 +1,49 @@
+[project]
+name = "dataclaw"
+version = "0.1.0"
+description = "Local-first, open-foundation data science agent platform"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.0",
+    "httpx>=0.27",
+    "langgraph>=0.4",
+    "langchain>=0.3",
+    "langchain-anthropic>=0.3",
+    "langchain-openai>=0.3",
+    "langchain-google-genai>=2.0",
+    "ag-ui-protocol>=0.1",
+    "dataclaw-workspace",
+    "dataclaw-data",
+    "dataclaw-plans",
+    "dataclaw-notebooks",
+    "dataclaw-projects",
+    "dataclaw-browser",
+    "dataclaw-openclaw",
+]
+
+[tool.uv.sources]
+dataclaw-workspace = { path = "plugins/dataclaw-workspace", editable = true }
+dataclaw-data = { path = "plugins/dataclaw-data", editable = true }
+dataclaw-plans = { path = "plugins/dataclaw-plans", editable = true }
+dataclaw-notebooks = { path = "plugins/dataclaw-notebooks", editable = true }
+dataclaw-projects = { path = "plugins/dataclaw-projects", editable = true }
+dataclaw-browser = { path = "plugins/dataclaw-browser", editable = true }
+dataclaw-openclaw = { path = "plugins/dataclaw-openclaw", editable = true }
+
+[project.scripts]
+dataclaw = "dataclaw.__main__:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
