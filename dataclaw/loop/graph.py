@@ -47,6 +47,7 @@ def build_agent_graph(
     *,
     max_messages: int = 30,
     keep_recent: int = 8,
+    max_tokens: int = 0,
 ) -> Any:
     """Build and compile the agent pipeline graph."""
     graph = StateGraph(AgentState)
@@ -54,7 +55,8 @@ def build_agent_graph(
     # ── Pipeline nodes ──────────────────────────────────────────────────
     graph.add_node("user_query_hook", make_hook_node(hooks, "userQueryHook"))
     graph.add_node("compaction", make_compaction_node(
-        providers.compaction, max_messages=max_messages, keep_recent=keep_recent
+        providers.compaction, max_messages=max_messages, keep_recent=keep_recent,
+        max_tokens=max_tokens,
     ))
     graph.add_node("post_compaction_hook", make_hook_node(hooks, "postCompactionHook"))
     graph.add_node("system_prompt", make_system_prompt_node(providers.system_prompt))

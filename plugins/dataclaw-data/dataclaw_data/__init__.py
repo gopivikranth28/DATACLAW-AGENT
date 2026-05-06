@@ -19,6 +19,7 @@ from dataclaw_data.tools import (
     data_query_data,
     data_get_docs,
     set_allowed_dataset_ids,
+    set_plugin_cfg,
 )
 from dataclaw_data.router import router as data_router
 
@@ -28,6 +29,9 @@ class DataPlugin:
     depends_on: list[str] = []
 
     def register(self, ctx: PluginContext) -> None:
+        # Pass plugin config to tools (max_query_rows, etc.)
+        set_plugin_cfg(ctx.config.plugins.get("data", {}))
+
         # Register API router
         ctx.include_api_router(data_router, prefix="/data", tags=["data"])
 

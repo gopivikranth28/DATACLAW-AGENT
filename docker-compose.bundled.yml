@@ -8,8 +8,6 @@ services:
       - "${OPENCLAW_GATEWAY_PORT:-18789}:${OPENCLAW_GATEWAY_PORT:-18789}"
       - "${OPENCLAW_BRIDGE_PORT:-18790}:${OPENCLAW_BRIDGE_PORT:-18790}"
     volumes:
-      - ${DOCKER_DATA_DIR:-./docker-data}/data:/dataclaw/data
-      - ${DOCKER_DATA_DIR:-./docker-data}/workspaces:/dataclaw/workspaces
       - ${DOCKER_DATA_DIR:-./docker-data}/openclaw:/root/.openclaw
       - ${DOCKER_DATA_DIR:-./docker-data}/dataclaw:/root/.dataclaw
     environment:
@@ -18,13 +16,18 @@ services:
       DATACLAW_PORT: ${DATACLAW_PORT:-8000}
       OPENCLAW_GATEWAY_PORT: ${OPENCLAW_GATEWAY_PORT:-18789}
       OPENCLAW_BRIDGE_PORT: ${OPENCLAW_BRIDGE_PORT:-18790}
-      DATACLAW_LLM_BACKEND: ${DATACLAW_LLM_BACKEND:-openclaw}
+      # Pass through only when explicitly set on the host. Defaulting it
+      # forces every container into openclaw mode and silently overrides
+      # the user's saved llm.backend choice (env vars beat the config
+      # file in the resolver).
+      DATACLAW_LLM_BACKEND:
       # Optional overrides — only passed when set on the host.
       # When unset, the entrypoint derives sensible defaults
       # (tokens default to the gateway token, API URL to loopback).
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
-      DATACLAW_FRONTEND_TOKEN:
-      DATACLAW_TOOLS_TOKEN:
+      # Shared bearer token for the consolidated `dataclaw` plugin (channel +
+      # tools). Leave unset to let the entrypoint default to "dataclaw-local".
+      DATACLAW_TOKEN:
       DATACLAW_API_URL:
       DATACLAW_OPENCLAW_URL:
       # LLM provider API keys

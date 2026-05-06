@@ -74,6 +74,7 @@ REQUIRED_PACKAGES = [
     "requests",        # DataClaw runtime API calls
     "duckdb",          # DataClaw SQL queries
     "mlflow",          # Experiment logging
+    "tabulate",        # Enables pandas df.to_markdown() for compact LLM views
 ]
 
 # Default optional — installed by default, user can remove
@@ -153,7 +154,7 @@ def update_project(project_id: str, updates: dict[str, Any]) -> dict[str, Any]:
     entry = _find_entry(project_id)
     meta_dir = Path(entry["directory"]) / META_DIR_NAME
     meta = _read_json(meta_dir / "project.json", entry)
-    for key in ("name", "description", "dataset_ids"):
+    for key in ("name", "description", "dataset_ids", "tool_ids", "skill_ids", "subagent_ids"):
         if key in updates:
             meta[key] = updates[key]
     meta["updated_at"] = datetime.now(timezone.utc).isoformat()

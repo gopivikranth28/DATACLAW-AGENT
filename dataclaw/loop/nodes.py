@@ -11,8 +11,9 @@ from typing import Any, Callable, Awaitable
 
 from dataclaw.hooks.registry import HookRegistry
 from dataclaw.providers.llm.provider import PendingToolCall, TextDeltaEvent, ToolUseStartEvent, TurnCompleteEvent
+from dataclaw.providers.compaction.provider import CompactionProvider
 from dataclaw.schema import Message
-from dataclaw.state import AgentState
+from dataclaw.state import AgentState, ReplaceMessages
 
 logger = logging.getLogger(__name__)
 
@@ -39,19 +40,23 @@ def make_hook_node(
 
 
 def make_compaction_node(
-    compaction_provider: Any,
+    compaction_provider: CompactionProvider,
     max_messages: int = 30,
     keep_recent: int = 8,
+    max_tokens: int = 0,
 ) -> Callable[[AgentState], Awaitable[dict[str, Any]]]:
     """Create the compaction node."""
 
     async def compaction_node(state: AgentState) -> dict[str, Any]:
         messages = list(state.get("messages", []))
         compacted = await compaction_provider.compact(
-            messages, max_messages=max_messages, keep_recent=keep_recent
+            messages,
+            max_messages=max_messages,
+            keep_recent=keep_recent,
+            max_tokens=max_tokens,
         )
         if len(compacted) != len(messages):
-            return {"messages": compacted}
+            return {"messages": ReplaceMessages(compacted)}
         return {}
 
     return compaction_node
@@ -208,8 +213,8 @@ def make_tool_execution_node() -> Callable[[AgentState], Awaitable[dict[str, Any
                 })
 
         new_messages = [
-            Message(role="assistant", content=assistant_content),
-            Message(role="user", content=tool_results),
+            Message.tool_call(assistant_content),
+            Message.tool_result(tool_results),
         ]
 
         return {

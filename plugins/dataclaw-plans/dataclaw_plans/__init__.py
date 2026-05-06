@@ -6,7 +6,6 @@ from dataclaw.plugins.base import (
     DataclawPlugin,
     PluginContext,
     PluginUIManifest,
-    PluginConfigField,
 )
 from dataclaw.providers.tool.implementations.python_tool import PythonTool
 
@@ -108,13 +107,4 @@ class PlansPlugin:
             label="Plans",
             icon="",
             pages=[],  # Plans UI is integrated into ChatPage sidebar
-            config_title="Plans & MLflow",
-            config_fields=[
-                PluginConfigField(
-                    name="auto_approve_single_step",
-                    field_type="bool",
-                    label="Auto-approve single-step plans",
-                    default=False,
-                ),
-            ],
         )

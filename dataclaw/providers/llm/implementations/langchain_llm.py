@@ -45,6 +45,7 @@ class LangChainLLM:
         *,
         system: str,
         tools: list[dict[str, Any]],
+        **kwargs: Any,
     ) -> AsyncIterator[BrokerEvent]:
         lc_tools = _to_lc_tools(tools)
         bound = self._model.bind_tools(lc_tools) if lc_tools else self._model
@@ -125,8 +126,8 @@ class LangChainLLM:
             })
 
         return [
-            Message(role="assistant", content=assistant_content),
-            Message(role="user", content=tool_results),
+            Message.tool_call(assistant_content),
+            Message.tool_result(tool_results),
         ]
 
 
@@ -162,14 +163,13 @@ def _to_lc_messages(messages: list[Message]) -> list[BaseMessage]:
             if isinstance(content, str):
                 result.append(HumanMessage(content=content))
             elif isinstance(content, list):
+                # Legacy: user messages with tool_result blocks (pre-refactor)
                 for block in content:
                     if block.get("type") == "tool_result":
-                        result.append(
-                            ToolMessage(
-                                content=block.get("content", ""),
-                                tool_call_id=block["call_id"],
-                            )
-                        )
+                        result.append(ToolMessage(
+                            content=block.get("content", ""),
+                            tool_call_id=block["call_id"],
+                        ))
                     else:
                         text = block.get("text", "")
                         if text:
@@ -179,6 +179,7 @@ def _to_lc_messages(messages: list[Message]) -> list[BaseMessage]:
             if isinstance(content, str):
                 result.append(AIMessage(content=content))
             elif isinstance(content, list):
+                # Legacy: assistant messages with mixed tool_call blocks
                 text_parts: list[str] = []
                 lc_tool_calls: list[dict[str, Any]] = []
                 for block in content:
@@ -192,11 +193,40 @@ def _to_lc_messages(messages: list[Message]) -> list[BaseMessage]:
                             "args": block.get("input", {}),
                             "type": "tool_call",
                         })
-                result.append(
-                    AIMessage(
-                        content="".join(text_parts),
-                        tool_calls=lc_tool_calls,
-                    )
-                )
+                result.append(AIMessage(
+                    content="".join(text_parts),
+                    tool_calls=lc_tool_calls,
+                ))
+
+        elif role == "tool_call":
+            # Dedicated tool_call role — content is list of tool_call blocks
+            if isinstance(content, list):
+                text_parts = []
+                lc_tool_calls = []
+                for block in content:
+                    btype = block.get("type")
+                    if btype == "text":
+                        text_parts.append(block.get("text", ""))
+                    elif btype == "tool_call":
+                        lc_tool_calls.append({
+                            "id": block["id"],
+                            "name": block["name"],
+                            "args": block.get("input", {}),
+                            "type": "tool_call",
+                        })
+                result.append(AIMessage(
+                    content="".join(text_parts),
+                    tool_calls=lc_tool_calls,
+                ))
+
+        elif role == "tool_result":
+            # Dedicated tool_result role — content is list of tool_result blocks
+            if isinstance(content, list):
+                for block in content:
+                    if block.get("type") == "tool_result":
+                        result.append(ToolMessage(
+                            content=block.get("content", ""),
+                            tool_call_id=block["call_id"],
+                        ))
 
     return result

@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclaw.state import AgentState
 from dataclaw_plans.store import get_active_plan_id
 
-PLAN_TOOLS = {"propose_plan", "update_plan", "list_plans", "get_plan"}
+PLAN_TOOLS = {"propose_plan", "update_plan", "list_plans", "get_plan", "query_mlflow_runs"}
 
 
 async def active_plan_context_hook(state: AgentState) -> AgentState:
@@ -22,6 +22,7 @@ async def active_plan_context_hook(state: AgentState) -> AgentState:
         return state
 
     active_id = get_active_plan_id(session_id)
+    auto_mode = state.get("metadata", {}).get("auto_mode", False)
 
     updated = []
     for tc in pending:
@@ -37,6 +38,10 @@ async def active_plan_context_hook(state: AgentState) -> AgentState:
             # Auto-inject proposal_id into update_plan
             if tool_name == "update_plan" and active_id and not tool_input.get("proposal_id"):
                 tc = {**tc, "tool_input": {**tc["tool_input"], "proposal_id": active_id}}
+
+            # Auto-approve plans when auto mode is active
+            if tool_name == "propose_plan" and auto_mode:
+                tc = {**tc, "tool_input": {**tc["tool_input"], "_auto_approve": True}}
 
         updated.append(tc)
 

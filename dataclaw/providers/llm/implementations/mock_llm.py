@@ -51,6 +51,7 @@ class MockLLM:
         *,
         system: str,
         tools: list[dict[str, Any]],
+        **kwargs: Any,
     ) -> AsyncIterator[BrokerEvent]:
         # Extract the last user message
         query = ""
@@ -145,6 +146,6 @@ class MockLLM:
             })
 
         return [
-            Message(role="assistant", content=assistant_content),
-            Message(role="user", content=tool_results),
+            Message.tool_call(assistant_content),
+            Message.tool_result(tool_results),
         ]

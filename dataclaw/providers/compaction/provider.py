@@ -15,17 +15,31 @@ if TYPE_CHECKING:
 class CompactionProvider(Protocol):
     """Compacts a message list, e.g. by summarising older messages."""
 
+    def will_compact(
+        self,
+        messages: list[Message],
+        *,
+        max_messages: int = 30,
+        max_tokens: int = 0,
+    ) -> bool:
+        """Return True if compact() would actually modify the message list."""
+        ...
+
     async def compact(
         self,
         messages: list[Message],
         *,
         max_messages: int = 30,
         keep_recent: int = 8,
+        max_tokens: int = 0,
     ) -> list[Message]:
         """Return a (possibly shortened) message list.
 
-        If the list is already within max_messages, return it unchanged.
-        Otherwise summarise older messages and keep the most recent
-        keep_recent messages verbatim.
+        Compaction triggers when either:
+        - len(messages) > max_messages, or
+        - estimated token count > max_tokens (0 disables token check)
+
+        When triggered, older messages are summarised and the most recent
+        keep_recent messages are kept verbatim.
         """
         ...

@@ -41,6 +41,9 @@ async def create_session(
     project_id: str | None = None,
     title: str = "New Chat",
     dataset_ids: list[str] | None = None,
+    tool_ids: list[str] | None = None,
+    skill_ids: list[str] | None = None,
+    subagent_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Create a new chat session."""
     sid = session_id or str(uuid.uuid4())
@@ -51,6 +54,10 @@ async def create_session(
         "projectId": project_id,
         "title": title,
         "datasetIds": dataset_ids,
+        "toolIds": tool_ids,
+        "skillIds": skill_ids,
+        "subagentIds": subagent_ids,
+        "autoTurnsUsed": 0,
         "messages": [],
         "createdAt": _now_iso(),
         "updatedAt": _now_iso(),
@@ -132,6 +139,29 @@ async def append_message(session_id: str, message: dict[str, Any]) -> None:
         path.write_text(json.dumps(data, indent=2, default=str))
 
 
+async def insert_message_at(session_id: str, index: int, message: dict[str, Any]) -> None:
+    """Insert a message at a specific position in the session's message list."""
+    path = _session_path(session_id)
+    if not path.exists():
+        return
+
+    async with _get_lock(session_id):
+        data = json.loads(path.read_text())
+
+        # Dedup by messageId
+        msg_id = message.get("messageId")
+        if msg_id:
+            existing_ids = {m.get("messageId") for m in data["messages"]}
+            if msg_id in existing_ids:
+                return
+
+        if "timestamp" not in message:
+            message["timestamp"] = _now_iso()
+        data["messages"].insert(index, message)
+        data["updatedAt"] = _now_iso()
+        path.write_text(json.dumps(data, indent=2, default=str))
+
+
 async def update_session(session_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
     """Update session fields (title, projectId, etc.)."""
     path = _session_path(session_id)
@@ -147,3 +177,42 @@ async def update_session(session_id: str, updates: dict[str, Any]) -> dict[str, 
         path.write_text(json.dumps(data, indent=2, default=str))
 
     return data
+
+
+async def save_subagent_conversation(
+    session_id: str,
+    conversation_id: str,
+    *,
+    subagent_name: str,
+    messages: list[dict[str, Any]],
+) -> None:
+    """Save a subagent conversation to the session for replay."""
+    path = _session_path(session_id)
+    if not path.exists():
+        return
+
+    async with _get_lock(session_id):
+        data = json.loads(path.read_text())
+        convs = data.setdefault("subagentConversations", {})
+        convs[conversation_id] = {
+            "subagentName": subagent_name,
+            "messages": messages,
+            "updatedAt": _now_iso(),
+        }
+        data["updatedAt"] = _now_iso()
+        path.write_text(json.dumps(data, indent=2, default=str))
+
+
+async def get_subagent_conversation(
+    session_id: str,
+    conversation_id: str,
+) -> dict[str, Any] | None:
+    """Load a subagent conversation from the session."""
+    path = _session_path(session_id)
+    if not path.exists():
+        return None
+
+    async with _get_lock(session_id):
+        data = json.loads(path.read_text())
+        convs = data.get("subagentConversations", {})
+        return convs.get(conversation_id)

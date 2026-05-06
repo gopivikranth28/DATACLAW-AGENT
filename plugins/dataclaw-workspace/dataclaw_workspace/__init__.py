@@ -22,6 +22,7 @@ from dataclaw_workspace.tools import (
     ws_update_file,
     ws_exec,
     display_image,
+    build_report,
     set_project_dir,
 )
 from dataclaw_workspace.config import WorkspaceConfig, load_config
@@ -57,7 +58,7 @@ class WorkspacePlugin:
 
         ctx.hooks.register("preToolCallHook", _inject_project_dir)
 
-        # Register 6 tools
+        # Register 7 tools
         ctx.tool_registry.register_tool(PythonTool(
             name="ws_list_files",
             description="List files and directories in the workspace",
@@ -143,6 +144,20 @@ class WorkspacePlugin:
                     "title": {"type": "string", "description": "Display title", "default": ""},
                 },
                 "required": ["path"],
+            },
+        ))
+
+        ctx.tool_registry.register_tool(PythonTool(
+            name="build_report",
+            description="Build an HTML report and save it to the workspace. The report is displayed inline with options to print or export as Word (.docx). Provide either raw HTML or a path to an HTML file.",
+            fn=lambda **kw: build_report(cfg=cfg, **kw),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "html": {"type": "string", "description": "Raw HTML string for the report"},
+                    "html_path": {"type": "string", "description": "Path to an HTML file in workspace"},
+                    "output_path": {"type": "string", "description": "Output filename (relative to workspace)", "default": "report.html"},
+                },
             },
         ))
 

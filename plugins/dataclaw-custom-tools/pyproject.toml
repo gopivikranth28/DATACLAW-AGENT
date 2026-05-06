@@ -1,0 +1,16 @@
+[project]
+name = "dataclaw-custom-tools"
+version = "0.1.0"
+description = "Custom Python tools and MCP server connections for DataClaw"
+requires-python = ">=3.12"
+dependencies = [
+    "dataclaw",
+    "mcp>=1.0.0",
+]
+
+[project.entry-points."dataclaw.plugins"]
+dataclaw-custom-tools = "dataclaw_custom_tools:CustomToolsPlugin"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -24,7 +24,7 @@ router = APIRouter()
 
 
 class ToolCallBody(BaseModel):
-    """Request body from OpenClaw's dataclaw-tools plugin."""
+    """Request body from OpenClaw's dataclaw plugin (tools surface)."""
     params: dict[str, Any] = Field(default_factory=dict)
     project_id: str | None = None
     workspace_id: str | None = None
@@ -35,22 +35,49 @@ class ToolCallBody(BaseModel):
 
 
 def _extract_from_session_key(key: str) -> str | None:
-    """Extract raw session id from an OpenClaw session key like 'agent:main:explicit:{id}'."""
-    if ":explicit:" in key:
-        return key.split(":explicit:")[-1]
+    """Extract the dataclaw chat id from an OpenClaw session key.
+
+    Recognizes both the new shape ``agent:<agentId>:dataclaw:channel:<chat_id>``
+    (used since OpenClaw 2026.5 routing through ``peer.kind: "channel"``) and
+    the legacy ``agent:<agentId>:explicit:<chat_id>``. Strips an optional
+    ``:thread:<id>`` suffix that may be appended for forked subsessions.
+    """
+    for marker in (":dataclaw:channel:", ":explicit:"):
+        if marker in key:
+            tail = key.split(marker, 1)[1]
+            return tail.split(":thread:", 1)[0]
     return None
 
 
+def _looks_like_chat_id(value: str) -> bool:
+    """Heuristic: a bare chat id has no OpenClaw session-key separators."""
+    return ":" not in value
+
+
 def _resolve_session_id(body: ToolCallBody) -> str | None:
-    """Return the best session_id candidate from the request."""
-    for value in [body.openclaw_session_key, body.session_id, body.titan_session_id,
-                  body.workspace_id, body.project_id]:
+    """Return the best dataclaw chat id candidate from the request.
+
+    Preference order:
+      1. ``session_id`` / ``titan_session_id`` if they look like a bare chat
+         id — the openclaw plugin client already extracts the chat id and
+         sends it under those keys.
+      2. ``openclaw_session_key`` parsed via ``_extract_from_session_key``,
+         which now recognizes both ``:dataclaw:channel:`` and the legacy
+         ``:explicit:`` markers.
+      3. Anything left, taken verbatim (workspace/project ids fall back here).
+    """
+    for value in (body.session_id, body.titan_session_id):
+        if value and _looks_like_chat_id(value):
+            return value
+    if body.openclaw_session_key:
+        extracted = _extract_from_session_key(body.openclaw_session_key)
+        if extracted:
+            return extracted
+    for value in (body.session_id, body.titan_session_id, body.workspace_id, body.project_id):
         if not value:
             continue
         extracted = _extract_from_session_key(value)
-        if extracted:
-            return extracted
-        return value
+        return extracted or value
     return None
 
 
@@ -97,15 +124,50 @@ async def tool_call_proxy(tool_name: str, body: ToolCallBody, request: Request) 
     }
     state = await hooks.run("preToolCallHook", state)
 
-    # Read back patched params (hooks may inject session_id, proposal_id, etc.)
+    # Honor guardrail decisions: the guardrail pre-hook removes blocked calls
+    # from `pending_tool_calls` and appends to `guardrail_verdicts`. If our
+    # call disappeared from `pending_tool_calls`, the guardrail blocked it.
+    # Without this check the proxy would happily run the tool anyway —
+    # bypassing every pre-phase guardrail (file delete, outside project,
+    # etc.) for calls that come through the openclaw bridge.
     patched_calls = state.get("pending_tool_calls", [])
-    if patched_calls:
-        clean_params = patched_calls[0].get("tool_input", clean_params)
+    matched = next(
+        (c for c in patched_calls if c.get("call_id") == call_id),
+        None,
+    )
+    if matched is None:
+        verdict = next(
+            (
+                v for v in state.get("guardrail_verdicts", [])
+                if v.get("tool_call_id") == call_id
+            ),
+            None,
+        )
+        message = (
+            verdict.get("message")
+            if isinstance(verdict, dict) and verdict.get("message")
+            else "Tool call blocked by guardrail"
+        )
+        raise HTTPException(403, message)
 
-    # Resolve tool callable
+    # Read back patched params (hooks may inject session_id, proposal_id, etc.)
+    clean_params = matched.get("tool_input", clean_params)
+
+    # Resolve tool callable. resolve_tools(state) returns the *enabled* set
+    # (filtered by session.toolIds, project.tool_ids, and the global disabled
+    # list), so a missing entry can mean either "tool was never registered"
+    # or "tool is registered but disabled for this session". The openclaw
+    # agent surfaces our error message verbatim — distinguish them so the
+    # agent can react accordingly instead of telling the user the tool
+    # doesn't exist.
     _, tool_callables = await providers.tool_availability.resolve_tools(state)
     fn = tool_callables.get(tool_name)
     if fn is None:
+        if providers.tool_availability.has_tool(tool_name):
+            raise HTTPException(
+                403,
+                f"Tool '{tool_name}' is registered but disabled for this session",
+            )
         raise HTTPException(404, f"Unknown tool: {tool_name}")
 
     # Emit tool call start events to tracker (if a run is active for this session)

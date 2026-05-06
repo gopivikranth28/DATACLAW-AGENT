@@ -245,6 +245,62 @@ async def ws_exec(
     }
 
 
+async def build_report(
+    *,
+    cfg: WorkspaceConfig,
+    html: str | None = None,
+    html_path: str | None = None,
+    output_path: str = "report.html",
+    workspace_id: str = "default",
+    **_: Any,
+) -> dict[str, Any]:
+    """Build an HTML report and save it to the workspace with a Word (.docx) export."""
+    if not html and not html_path:
+        raise ValueError("Provide either 'html' (raw HTML string) or 'html_path' (path to HTML file)")
+    if html and html_path:
+        raise ValueError("Provide only one of 'html' or 'html_path', not both")
+
+    if html_path:
+        resolved_input = _resolve_path(workspace_id, html_path)
+        if not resolved_input.is_file():
+            raise ValueError(f"HTML file not found: {html_path}")
+        html = resolved_input.read_text(encoding="utf-8")
+
+    # Ensure output ends with .html
+    if not output_path.endswith(".html"):
+        output_path = output_path.rsplit(".", 1)[0] + ".html"
+
+    resolved_html = _resolve_path(workspace_id, output_path)
+    resolved_html.parent.mkdir(parents=True, exist_ok=True)
+    resolved_html.write_text(html, encoding="utf-8")
+
+    # Generate .docx alongside
+    docx_path = output_path.rsplit(".", 1)[0] + ".docx"
+    resolved_docx = _resolve_path(workspace_id, docx_path)
+
+    def _convert_docx() -> None:
+        from html4docx import HtmlToDocx
+        parser = HtmlToDocx()
+        parser.parse_html_string(html)
+        parser.doc.save(str(resolved_docx))
+
+    try:
+        await asyncio.to_thread(_convert_docx)
+    except Exception:
+        # DOCX generation is best-effort; don't fail the whole tool
+        pass
+
+    result: dict[str, Any] = {
+        "html_path": str(resolved_html),
+        "size": resolved_html.stat().st_size,
+        "created": True,
+    }
+    if resolved_docx.exists():
+        result["docx_path"] = str(resolved_docx)
+
+    return result
+
+
 async def display_image(
     *,
     cfg: WorkspaceConfig,

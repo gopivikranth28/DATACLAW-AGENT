@@ -19,20 +19,41 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from starlette.responses import StreamingResponse
 
+from dataclaw_openclaw import openclaw_install_service
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-PLUGIN_IDS = ["dataclaw-tools", "dataclaw-frontend"]
+PLUGIN_IDS = ["dataclaw"]
+
+# Plugins whose tools should be auto-added to tools.alsoAllow at install time.
+# Clicking the install button is the explicit user approval that openclaw's
+# tools.alsoAllow gate normally requires.
+_PLUGINS_REQUIRING_TOOLS_ALLOW = {"dataclaw"}
 
 # Default path to the TypeScript plugin sources (relative to this file)
 _DEFAULT_PLUGINS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "openclaw-plugins"
 
 
 def _get_openclaw_config(request: Request) -> dict[str, Any]:
-    """Read the openclaw plugin config from app state."""
-    cfg: Any = request.app.state.config
-    return cfg.plugins.get("openclaw", {})
+    """Read the openclaw plugin config fresh from disk.
+
+    Avoid ``request.app.state.config`` and the resolver cache — both go stale
+    after the user saves new values via PATCH /api/config, so the install
+    flow would write yesterday's tokens / API URL to OpenClaw env vars.
+    """
+    from dataclaw.config.paths import config_path
+    path = config_path()
+    if not path.exists():
+        return {}
+    try:
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    plugins = cfg.get("plugins") if isinstance(cfg, dict) else None
+    openclaw = plugins.get("openclaw") if isinstance(plugins, dict) else None
+    return openclaw if isinstance(openclaw, dict) else {}
 
 
 def _openclaw_argv(cfg: dict[str, Any]) -> list[str]:
@@ -45,29 +66,6 @@ def _openclaw_argv(cfg: dict[str, Any]) -> list[str]:
             detail=f"Command not found: {argv[0]!r}. Check openclaw_cmd in Config → OpenClaw.",
         )
     return argv
-
-
-def _plugin_env_vars(plugin_id: str, cfg: dict[str, Any]) -> dict[str, str]:
-    """Return env var key→value pairs to set before installing a plugin."""
-    if plugin_id == "dataclaw-tools":
-        env: dict[str, str] = {}
-        api_url = cfg.get("tools_api_url", "http://localhost:8000")
-        if api_url:
-            env["DATACLAW_API_URL"] = api_url
-        token = cfg.get("tools_token", "")
-        if token:
-            env["DATACLAW_TOOLS_TOKEN"] = token
-        prefix = cfg.get("tools_prefix", "dataclaw_")
-        if prefix:
-            env["DATACLAW_TOOLS_PREFIX"] = prefix
-        return env
-    if plugin_id == "dataclaw-frontend":
-        env2: dict[str, str] = {}
-        token = cfg.get("frontend_token", "")
-        if token:
-            env2["DATACLAW_FRONTEND_TOKEN"] = token
-        return env2
-    return {}
 
 
 def _sse(data: dict) -> str:
@@ -485,11 +483,11 @@ async def plugin_status(plugin_id: str, request: Request):
 
     try:
         proc = await asyncio.create_subprocess_exec(
-            *argv, "plugins", "inspect", plugin_id,
+            *argv, "plugins", "inspect", plugin_id, "--json",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
-        stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+        stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
         output = stdout_bytes.decode(errors="replace")
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="openclaw plugins inspect timed out")
@@ -499,15 +497,26 @@ async def plugin_status(plugin_id: str, request: Request):
     if "Plugin not found" in output:
         return {"installed": False}
 
-    status_line = next(
-        (line.split("Status:", 1)[1].strip() for line in output.splitlines() if "Status:" in line),
-        None,
-    )
-    version_line = next(
-        (line.split("Version:", 1)[1].strip() for line in output.splitlines() if "Version:" in line),
-        None,
-    )
-    return {"installed": True, "status": status_line, "version": version_line}
+    # `inspect --json` may emit non-JSON warnings before the JSON object.
+    # Extract from the first `{` to the end and parse.
+    start = output.find("{")
+    if start < 0:
+        return {"installed": False, "raw": output[:500]}
+    try:
+        data = json.loads(output[start:])
+    except json.JSONDecodeError:
+        return {"installed": False, "raw": output[:500]}
+
+    plugin = data.get("plugin") if isinstance(data, dict) else None
+    if not isinstance(plugin, dict):
+        return {"installed": False}
+
+    return {
+        "installed": True,
+        "status": plugin.get("status"),
+        "version": plugin.get("version"),
+        "enabled": bool(plugin.get("enabled")),
+    }
 
 
 @router.post("/plugins/{plugin_id}/install")
@@ -518,148 +527,98 @@ async def install_plugin(plugin_id: str, request: Request):
     cfg = _get_openclaw_config(request)
     argv = _openclaw_argv(cfg)
 
+    # Pre-flight reads the manifest from the *Dataclaw-side* path; the
+    # openclaw plugins install subprocess receives the *OpenClaw-side* path
+    # (which may differ when openclaw_cmd is `docker exec ... openclaw` and
+    # the source is mounted at a different path inside the container).
     plugins_source_dir = Path(cfg.get("plugins_source_dir", str(_DEFAULT_PLUGINS_DIR)))
     plugin_dir = plugins_source_dir / plugin_id
 
-    env_vars = _plugin_env_vars(plugin_id, cfg)
-    gateway_url = cfg.get("url", "http://127.0.0.1:18789")
-    healthz_url = gateway_url.rstrip("/") + "/healthz"
+    openclaw_side_root = (cfg.get("openclaw_plugins_dir") or "").strip()
+    install_dir = (
+        Path(openclaw_side_root) / plugin_id if openclaw_side_root else plugin_dir
+    )
+    also_allow_addition = plugin_id if plugin_id in _PLUGINS_REQUIRING_TOOLS_ALLOW else None
 
-    async def _run(run_argv: list[str]) -> tuple[asyncio.StreamReader, asyncio.subprocess.Process]:
-        proc = await asyncio.create_subprocess_exec(
-            *run_argv,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        assert proc.stdout
-        return proc.stdout, proc
-
-    async def _restart_and_wait() -> tuple[bool, list[str]]:
-        """Restart the OpenClaw gateway and wait for it to come back."""
-        chunks: list[str] = []
-
-        chunks.append(_sse({"line": f"$ {' '.join(argv)} gateway restart"}))
-        restart_proc = await asyncio.create_subprocess_exec(
-            *argv, "gateway", "restart",
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        try:
-            rc = await asyncio.wait_for(restart_proc.wait(), timeout=15)
-        except asyncio.TimeoutError:
-            restart_proc.kill()
-            rc = -1
-
-        if rc != 0:
-            chunks.append(_sse({"line": "Restart failed, trying gateway start..."}))
-            start_proc = await asyncio.create_subprocess_exec(
-                *argv, "gateway", "start",
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            try:
-                await asyncio.wait_for(start_proc.wait(), timeout=15)
-            except asyncio.TimeoutError:
-                start_proc.kill()
-
-        await asyncio.sleep(2)
-        async with httpx.AsyncClient() as client:
-            for _ in range(30):
-                try:
-                    r = await client.get(healthz_url, timeout=2.0)
-                    if r.is_success:
-                        chunks.append(_sse({"line": "OpenClaw is up."}))
-                        return True, chunks
-                except Exception:
-                    pass
-                await asyncio.sleep(1)
-
-        chunks.append(_sse({"error": "OpenClaw did not come back online", "exit_code": 1}))
-        return False, chunks
+    # Read tools from the in-process registry. Avoids an HTTP round-trip
+    # to ``tools_api_url`` (which the user typically points at
+    # host.docker.internal so OpenClaw-in-Docker can reach Dataclaw — but
+    # that hostname doesn't resolve from Dataclaw on the host).
+    tools = _list_tools_in_process(request)
 
     async def _stream():
-        # Set env vars (each triggers a gateway restart)
-        for var, val in env_vars.items():
-            yield _sse({"line": f"$ {' '.join(argv)} config set env.vars.{var} ****"})
-            stdout, proc = await _run([*argv, "config", "set", f"env.vars.{var}", val])
-            output_lines: list[str] = []
-            async for raw in stdout:
-                line = raw.decode(errors="replace").rstrip()
-                output_lines.append(line)
-                yield _sse({"line": line})
-            rc = await proc.wait()
-            wrote = any("Config overwrite" in l or "Updated env.vars" in l for l in output_lines)
-            killed_by_restart = rc == 137
-            if rc != 0 and not (killed_by_restart and wrote):
-                yield _sse({"error": f"config set {var} failed (exit {rc})", "exit_code": rc})
-                return
-
-            yield _sse({"line": "Waiting for OpenClaw to restart..."})
-            ok, chunks = await _restart_and_wait()
-            for chunk in chunks:
-                yield chunk
-            if not ok:
-                return
-
-        # Install plugin
-        yield _sse({"line": f"=== Installing {plugin_id} ==="})
-        stdout2, proc2 = await _run([*argv, "plugins", "install", str(plugin_dir)])
-        async for line in stdout2:
-            yield _sse({"line": line.decode(errors="replace").rstrip()})
-        rc2 = await proc2.wait()
-
-        # Plugin install triggers a gateway restart — wait for it
-        if rc2 == 0 or rc2 == 137:
-            yield _sse({"line": "Waiting for OpenClaw to restart after plugin install..."})
-            ok, chunks = await _restart_and_wait()
-            for chunk in chunks:
-                yield chunk
-            if not ok:
-                yield _sse({"exit_code": 1})
-                return
-
-        # After installing dataclaw-tools, ensure it's in tools.alsoAllow
-        if rc2 == 0 and plugin_id == "dataclaw-tools":
-            yield _sse({"line": "Checking tools.alsoAllow..."})
-
-            current_list: list[str] = []
-            try:
-                get_proc = await asyncio.create_subprocess_exec(
-                    *argv, "config", "get", "tools.alsoAllow", "--json",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                get_stdout, _ = await asyncio.wait_for(get_proc.communicate(), timeout=10)
-                if get_proc.returncode == 0:
-                    parsed = json.loads(get_stdout.decode().strip())
-                    if isinstance(parsed, list):
-                        current_list = parsed
-            except Exception:
-                pass
-
-            if "dataclaw-tools" not in current_list:
-                current_list.append("dataclaw-tools")
-                new_value = json.dumps(current_list)
-                yield _sse({"line": f"Setting tools.alsoAllow to {new_value}"})
-                stdout3, proc3 = await _run([
-                    *argv, "config", "set", "tools.alsoAllow", new_value,
-                ])
-                async for raw in stdout3:
-                    yield _sse({"line": raw.decode(errors="replace").rstrip()})
-                rc3 = await proc3.wait()
-                if rc3 != 0 and rc3 != 137:
-                    yield _sse({"line": f"Warning: could not set tools.alsoAllow (exit {rc3})"})
-                else:
-                    yield _sse({"line": "Waiting for OpenClaw to restart..."})
-                    ok, chunks = await _restart_and_wait()
-                    for chunk in chunks:
-                        yield chunk
-            else:
-                yield _sse({"line": "dataclaw-tools already in tools.alsoAllow."})
-
-        yield _sse({"exit_code": rc2})
+        async for event in openclaw_install_service.install_plugin_atomic(
+            plugin_dir=plugin_dir,
+            openclaw_cfg=cfg,
+            argv=argv,
+            also_allow_addition=also_allow_addition,
+            tools=tools,
+            install_dir=install_dir,
+        ):
+            yield _sse(event)
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
+
+
+def _list_tools_in_process(request: Request) -> list[dict[str, Any]] | None:
+    """Read the tool list from Dataclaw's tool-availability registry.
+
+    Returns ``None`` if the registry isn't initialized — callers should treat
+    that as "leave the existing tool-manifest.json alone".
+    """
+    providers = getattr(request.app.state, "providers", None)
+    registry = getattr(providers, "tool_availability", None) if providers else None
+    if registry is None:
+        return None
+    try:
+        return registry.get_all_tools_with_status()
+    except Exception:
+        return None
+
+
+@router.get("/plugins/{plugin_id}/sync-status")
+async def plugin_sync_status(plugin_id: str, request: Request) -> dict[str, Any]:
+    """Compare the live tool registry against the last installed snapshot.
+
+    UI uses this to decide whether to nag the user that they've added or
+    removed a tool since the last `openclaw plugins install` and need to
+    reinstall the dataclaw plugin for the openclaw agent to see the change.
+
+    The diff is a no-op (``in_sync: true``) when no snapshot has ever been
+    recorded — that means the user hasn't installed the plugin yet, and the
+    UI's separate "install required" path covers that case.
+    """
+    if plugin_id not in PLUGIN_IDS:
+        raise HTTPException(status_code=404, detail="Unknown plugin")
+
+    snapshot = openclaw_install_service.read_install_state(plugin_id)
+    live_tools = _list_tools_in_process(request)
+    live_names = openclaw_install_service._extract_tool_names(live_tools)
+
+    if not snapshot:
+        return {
+            "plugin_id": plugin_id,
+            "has_snapshot": False,
+            "in_sync": True,
+            "live_count": len(live_names),
+            "added": [],
+            "removed": [],
+            "installed_at": None,
+        }
+
+    installed_names = snapshot.get("tool_names") or []
+    diff = openclaw_install_service.diff_tool_names(installed_names, live_names)
+    in_sync = not diff["added"] and not diff["removed"]
+    return {
+        "plugin_id": plugin_id,
+        "has_snapshot": True,
+        "in_sync": in_sync,
+        "live_count": len(live_names),
+        "installed_count": len(installed_names),
+        "added": diff["added"],
+        "removed": diff["removed"],
+        "installed_at": snapshot.get("installed_at"),
+    }
 
 
 @router.get("/fetch-token")

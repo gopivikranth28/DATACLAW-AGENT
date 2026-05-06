@@ -2,6 +2,7 @@
 
 import pytest
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import dataclaw.config.paths as paths
 from dataclaw_projects.registry import (
@@ -11,7 +12,7 @@ from dataclaw_projects.subagents import (
     list_subagent_definitions, get_subagent_definition,
     create_subagent_definition, update_subagent_definition, delete_subagent_definition,
 )
-from dataclaw_projects.tools import list_subagents_tool, delegate_to_subagent
+from dataclaw_projects.tools import list_subagents_tool, make_delegate_to_subagent
 
 
 @pytest.fixture(autouse=True)
@@ -130,7 +131,207 @@ async def test_list_subagents_tool():
     assert len(result["subagents"]) >= 1
 
 
+# ── Delegate tool fixtures ──────────────────────────────────────────────────
+
+
+def _make_mock_sub_agent_result():
+    """Create a mock SubAgentResult."""
+    from dataclaw.providers.sub_agent.provider import SubAgentResult
+    return SubAgentResult(status="completed", result="Task done.", turns_used=2)
+
+
+def _make_mock_provider(agent_type="llm"):
+    """Create a mock SubAgentProvider."""
+    provider = MagicMock()
+    provider.agent_type = agent_type
+    provider.run = AsyncMock(return_value=_make_mock_sub_agent_result())
+    provider.config_schema = MagicMock(return_value=[])
+    return provider
+
+
+@pytest.fixture
+def mock_providers_and_registry():
+    """Create mock providers and tool registry for delegate tests."""
+    from dataclaw.providers.sub_agent.registry import SubAgentRegistry
+    from dataclaw.hooks.sub_agent_hooks import SubAgentHookRegistry
+
+    providers = MagicMock()
+    providers.sub_agent_registry = SubAgentRegistry()
+    providers.sub_agent_registry.register(_make_mock_provider("llm"))
+    providers.sub_agent_hooks = SubAgentHookRegistry()
+
+    # Create a mock tool registry with a couple of tools
+    mock_tool_a = MagicMock()
+    mock_tool_a.definition = {"name": "search", "description": "Search", "parameters": {}}
+    mock_tool_a.execute = AsyncMock(return_value={"results": []})
+
+    mock_tool_b = MagicMock()
+    mock_tool_b.definition = {"name": "read_file", "description": "Read a file", "parameters": {}}
+    mock_tool_b.execute = AsyncMock(return_value={"content": ""})
+
+    tool_registry = MagicMock()
+    tool_registry._tools = {"search": mock_tool_a, "read_file": mock_tool_b}
+
+    return providers, tool_registry
+
+
+# ── Delegate tool tests ─────────────────────────────────────────────────────
+
+
 @pytest.mark.asyncio
-async def test_delegate_tool():
-    result = await delegate_to_subagent(subagent_name="test", task="do something")
-    assert result["status"] == "not_implemented"
+async def test_delegate_tool(mock_providers_and_registry):
+    providers, tool_registry = mock_providers_and_registry
+    create_subagent_definition(name="Test Bot", allowed_tools=["search"])
+    delegate = make_delegate_to_subagent(providers, tool_registry)
+
+    result = await delegate(subagent_name="test-bot", task="do something")
+    assert result["status"] == "completed"
+    assert result["result"] == "Task done."
+
+    # Verify the provider.run was called with filtered tools via context
+    mock_provider = providers.sub_agent_registry.get("llm")
+    call_kwargs = mock_provider.run.call_args
+    context = call_kwargs.kwargs["context"]
+    tool_names = [t["name"] for t in context.tools]
+    assert "search" in tool_names
+    assert "read_file" not in tool_names
+
+
+@pytest.mark.asyncio
+async def test_delegate_tool_unknown_subagent(mock_providers_and_registry):
+    providers, tool_registry = mock_providers_and_registry
+    delegate = make_delegate_to_subagent(providers, tool_registry)
+
+    result = await delegate(subagent_name="nonexistent", task="do something")
+    assert result["status"] == "error"
+    assert "not found" in result["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_delegate_tool_unknown_agent_type(mock_providers_and_registry):
+    """When the subagent's agent_type has no registered provider."""
+    providers, tool_registry = mock_providers_and_registry
+    create_subagent_definition(name="Rag Bot", agent_type="rag")
+    delegate = make_delegate_to_subagent(providers, tool_registry)
+
+    result = await delegate(subagent_name="rag-bot", task="find papers")
+    assert result["status"] == "error"
+    assert "rag" in result["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_delegate_tool_no_allowed_tools_passes_all(mock_providers_and_registry):
+    """When allowed_tools is empty, subagent gets all tools (except delegate_to_subagent)."""
+    providers, tool_registry = mock_providers_and_registry
+    create_subagent_definition(name="All Tools Bot", allowed_tools=[])
+    delegate = make_delegate_to_subagent(providers, tool_registry)
+
+    result = await delegate(subagent_name="all-tools-bot", task="do something")
+    assert result["status"] == "completed"
+
+    mock_provider = providers.sub_agent_registry.get("llm")
+    context = mock_provider.run.call_args.kwargs["context"]
+    tool_names = [t["name"] for t in context.tools]
+    assert "search" in tool_names
+    assert "read_file" in tool_names
+
+
+@pytest.mark.asyncio
+async def test_delegate_tool_blocks_recursion(mock_providers_and_registry):
+    """Subagent should never receive delegate_to_subagent tool."""
+    providers, tool_registry = mock_providers_and_registry
+
+    # Add delegate_to_subagent to the registry
+    mock_delegate = MagicMock()
+    mock_delegate.definition = {"name": "delegate_to_subagent", "description": "Delegate", "parameters": {}}
+    mock_delegate.execute = AsyncMock()
+    tool_registry._tools["delegate_to_subagent"] = mock_delegate
+
+    create_subagent_definition(name="Recursion Bot", allowed_tools=[])
+    delegate = make_delegate_to_subagent(providers, tool_registry)
+
+    await delegate(subagent_name="recursion-bot", task="do something")
+
+    mock_provider = providers.sub_agent_registry.get("llm")
+    context = mock_provider.run.call_args.kwargs["context"]
+    tool_names = [t["name"] for t in context.tools]
+    assert "delegate_to_subagent" not in tool_names
+
+
+@pytest.mark.asyncio
+async def test_delegate_tool_dispatches_by_agent_type(mock_providers_and_registry):
+    """Registry dispatches to the correct provider based on agent_type."""
+    providers, tool_registry = mock_providers_and_registry
+
+    # Register a second provider type
+    rag_provider = _make_mock_provider("rag")
+    from dataclaw.providers.sub_agent.provider import SubAgentResult
+    rag_provider.run = AsyncMock(return_value=SubAgentResult(
+        status="completed", result="Found 3 papers.", turns_used=1,
+    ))
+    providers.sub_agent_registry.register(rag_provider)
+
+    create_subagent_definition(name="My Rag Bot", agent_type="rag")
+    delegate = make_delegate_to_subagent(providers, tool_registry)
+
+    result = await delegate(subagent_name="my-rag-bot", task="find papers")
+    assert result["status"] == "completed"
+    assert result["result"] == "Found 3 papers."
+    rag_provider.run.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_delegate_pre_hook_modifies_task(mock_providers_and_registry):
+    """Pre-delegate hook can modify the task."""
+    providers, tool_registry = mock_providers_and_registry
+    create_subagent_definition(name="Hook Bot")
+
+    async def prepend_context(event):
+        event.task = f"[CONTEXT] {event.task}"
+        return event
+
+    providers.sub_agent_hooks.on_delegate(prepend_context)
+
+    delegate = make_delegate_to_subagent(providers, tool_registry)
+    await delegate(subagent_name="hook-bot", task="do something")
+
+    mock_provider = providers.sub_agent_registry.get("llm")
+    call_args = mock_provider.run.call_args
+    assert call_args.args[0] == "[CONTEXT] do something"
+
+
+@pytest.mark.asyncio
+async def test_delegate_pre_hook_aborts(mock_providers_and_registry):
+    """Pre-delegate hook can abort by raising HookError."""
+    from dataclaw.hooks.base import HookError
+    providers, tool_registry = mock_providers_and_registry
+    create_subagent_definition(name="Blocked Bot")
+
+    async def block_all(event):
+        raise HookError("Access denied")
+
+    providers.sub_agent_hooks.on_delegate(block_all)
+
+    delegate = make_delegate_to_subagent(providers, tool_registry)
+    result = await delegate(subagent_name="blocked-bot", task="do something")
+    assert result["status"] == "error"
+    assert "blocked by hook" in result["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_delegate_context_has_hooks_and_config(mock_providers_and_registry):
+    """SubAgentContext should carry hooks and config from definition."""
+    providers, tool_registry = mock_providers_and_registry
+    create_subagent_definition(
+        name="Configured Bot",
+        config={"max_turns": 5, "custom_field": "value"},
+    )
+    delegate = make_delegate_to_subagent(providers, tool_registry)
+
+    await delegate(subagent_name="configured-bot", task="do something")
+
+    mock_provider = providers.sub_agent_registry.get("llm")
+    context = mock_provider.run.call_args.kwargs["context"]
+    assert context.config["max_turns"] == 5
+    assert context.config["custom_field"] == "value"
+    assert context.sub_agent_hooks is providers.sub_agent_hooks

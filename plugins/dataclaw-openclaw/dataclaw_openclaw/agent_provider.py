@@ -77,7 +77,7 @@ class OpenClawAgentProvider:
         # Health check — verify OpenClaw is reachable before sending
         try:
             async with httpx.AsyncClient(timeout=5) as client:
-                await client.get(f"{self._url}/dataclaw-frontend/health")
+                await client.get(f"{self._url}/dataclaw/health")
         except Exception:
             yield TextDeltaEvent(
                 text="OpenClaw is not running or not reachable at "
@@ -116,7 +116,7 @@ class OpenClawAgentProvider:
         try:
             async with httpx.AsyncClient(timeout=http_timeout) as client:
                 response = await client.post(
-                    f"{self._url}/dataclaw-frontend/message",
+                    f"{self._url}/dataclaw/message",
                     headers=headers,
                     json=payload,
                 )

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Button, Tag, Input, message } from 'antd'
 import { CheckCircleOutlined, ClockCircleOutlined, CloseCircleOutlined, StopOutlined } from '@ant-design/icons'
 import { API } from '../../api'
@@ -23,7 +23,9 @@ interface Plan {
 
 interface PlanData {
   proposal_id?: string
+  snapshot_id?: string
   status?: string
+  // Older tool results may carry an inline plan; new ones rely on snapshot fetch.
   plan?: Plan
 }
 
@@ -37,14 +39,59 @@ export default function PlanDisplay({ data, onFileClick, onDecision }: {
   onFileClick?: (path: string) => void
   onDecision?: (proposalId: string, status: string, feedback?: string) => void
 }) {
-  const plan = data.plan
   const proposalId = data.proposal_id
-  const [currentStatus, setCurrentStatus] = useState(data.status || plan?.status || '')
+  const snapshotId = data.snapshot_id
+  // Body comes from the snapshot — frozen at tool-call time. Inline data.plan
+  // is honored as a fallback for legacy tool results that pre-date snapshots.
+  const [plan, setPlan] = useState<Plan | undefined>(data.plan)
+  const [planLoading, setPlanLoading] = useState<boolean>(!data.plan && !!snapshotId)
+  // currentStatus drives the decision buttons; refreshed from the live plan
+  // so re-renders of an old tool card reflect the user's later decision.
+  const [currentStatus, setCurrentStatus] = useState(data.status || data.plan?.status || '')
   const [decided, setDecided] = useState(false)
   const [showFeedback, setShowFeedback] = useState(false)
   const [feedbackText, setFeedbackText] = useState('')
 
-  if (!plan) return <pre style={{ fontSize: 11 }}>{JSON.stringify(data, null, 2)}</pre>
+  // Fetch the frozen snapshot for body rendering.
+  useEffect(() => {
+    if (data.plan || !proposalId || !snapshotId) return
+    let cancelled = false
+    setPlanLoading(true)
+    fetch(`${API}/plans/${proposalId}/snapshots/${snapshotId}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(body => {
+        if (cancelled) return
+        if (body && body.plan) setPlan(body.plan)
+        setPlanLoading(false)
+      })
+      .catch(() => { if (!cancelled) setPlanLoading(false) })
+    return () => { cancelled = true }
+  }, [proposalId, snapshotId, data.plan])
+
+  // Refresh live status while the card is still pending so decision buttons
+  // hide if the user already approved/denied via another card.
+  useEffect(() => {
+    if (!proposalId || decided) return
+    if (currentStatus !== 'pending') return
+    let cancelled = false
+    fetch(`${API}/plans/${proposalId}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(body => {
+        if (cancelled || !body) return
+        if (body.status && body.status !== currentStatus) {
+          setCurrentStatus(body.status)
+        }
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [proposalId, snapshotId])
+
+  if (!proposalId) return <pre style={{ fontSize: 11 }}>{JSON.stringify(data, null, 2)}</pre>
+  if (!plan) {
+    return planLoading
+      ? <div style={{ fontSize: 12, color: '#888' }}>Loading plan…</div>
+      : <pre style={{ fontSize: 11 }}>{JSON.stringify(data, null, 2)}</pre>
+  }
 
   const submitDecision = async (status: string, feedback: string = '') => {
     if (!proposalId) return

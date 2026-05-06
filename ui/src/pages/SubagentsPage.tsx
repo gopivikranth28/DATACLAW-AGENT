@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Button, Card, Empty, Input, Modal, Select, Popconfirm, message } from 'antd'
+import { Button, Card, Empty, Input, InputNumber, Modal, Select, Switch, Popconfirm, message } from 'antd'
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
 import { API } from '../api'
 
@@ -11,9 +11,16 @@ interface Subagent {
   allowed_tools?: string[]
 }
 
+interface AgentType {
+  agent_type: string
+  provider: string
+  config_schema: any[]
+}
+
 export default function SubagentsPage() {
   const [subagents, setSubagents] = useState<Subagent[]>([])
   const [tools, setTools] = useState<{ name: string; description: string }[]>([])
+  const [agentTypes, setAgentTypes] = useState<AgentType[]>([])
   const [editing, setEditing] = useState<any>(null)
   const [modalOpen, setModalOpen] = useState(false)
 
@@ -31,7 +38,20 @@ export default function SubagentsPage() {
     } catch {}
   }
 
-  useEffect(() => { load(); loadTools() }, [])
+  const loadAgentTypes = async () => {
+    try {
+      const res = await fetch(`${API}/providers`)
+      if (res.ok) {
+        const providers = await res.json()
+        const subAgentEntry = providers.find((p: any) => p.slot === 'sub_agent')
+        if (subAgentEntry?.agent_types) {
+          setAgentTypes(subAgentEntry.agent_types)
+        }
+      }
+    } catch {}
+  }
+
+  useEffect(() => { load(); loadTools(); loadAgentTypes() }, [])
 
   const openNew = () => {
     setEditing({ name: '', description: '', agent_type: 'llm', allowed_tools: [], config: {} })
@@ -119,34 +139,100 @@ export default function SubagentsPage() {
       <Modal title={editing?.id ? 'Edit Subagent' : 'New Subagent'} open={modalOpen}
         onCancel={() => setModalOpen(false)} onOk={save} okText="Save" width={600}>
         {editing && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 12 }}>
-            <Field label="Name">
-              <Input value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })} placeholder="Research Bot" />
-            </Field>
-            <Field label="Description">
-              <Input value={editing.description} onChange={e => setEditing({ ...editing, description: e.target.value })} />
-            </Field>
-            <Field label="Agent Type">
-              <Select value={editing.agent_type} onChange={v => setEditing({ ...editing, agent_type: v })} style={{ width: '100%' }}
-                options={[{ value: 'llm', label: 'LLM Agent' }]} />
-            </Field>
-            <Field label="Allowed Tools">
-              <Select mode="multiple" value={editing.allowed_tools || []}
-                onChange={v => setEditing({ ...editing, allowed_tools: v })}
-                style={{ width: '100%' }} placeholder="Select tools (empty = all)"
-                options={tools.map(t => ({ value: t.name, label: t.name }))} />
-            </Field>
-            <Field label="System Prompt">
-              <Input.TextArea value={editing.config?.system_prompt || ''}
-                onChange={e => setEditing({ ...editing, config: { ...editing.config, system_prompt: e.target.value } })}
-                rows={6} style={{ fontFamily: 'monospace', fontSize: 13 }}
-                placeholder="Instructions for the subagent..." />
-            </Field>
-          </div>
+          <EditForm
+            editing={editing}
+            setEditing={setEditing}
+            agentTypes={agentTypes}
+            tools={tools}
+          />
         )}
       </Modal>
     </div>
   )
+}
+
+/** Dynamic edit form that renders config fields based on the selected agent_type */
+function EditForm({ editing, setEditing, agentTypes, tools }: {
+  editing: any
+  setEditing: (v: any) => void
+  agentTypes: AgentType[]
+  tools: { name: string; description: string }[]
+}) {
+  const selectedType = agentTypes.find(t => t.agent_type === editing.agent_type)
+  const configFields = selectedType?.config_schema || []
+  const isLLMType = editing.agent_type === 'llm'
+
+  const updateConfig = (key: string, value: any) => {
+    setEditing({ ...editing, config: { ...editing.config, [key]: value } })
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 12 }}>
+      <Field label="Name">
+        <Input value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })} placeholder="Research Bot" />
+      </Field>
+      <Field label="Description">
+        <Input value={editing.description} onChange={e => setEditing({ ...editing, description: e.target.value })} />
+      </Field>
+      <Field label="Agent Type">
+        <Select value={editing.agent_type}
+          onChange={v => setEditing({ ...editing, agent_type: v, config: {} })}
+          style={{ width: '100%' }}
+          options={agentTypes.length > 0
+            ? agentTypes.map(t => ({ value: t.agent_type, label: `${t.agent_type} (${t.provider})` }))
+            : [{ value: 'llm', label: 'LLM Agent' }]
+          } />
+      </Field>
+
+      {/* Allowed Tools — only for LLM type which uses dataclaw tools */}
+      {isLLMType && (
+        <Field label="Allowed Tools">
+          <Select mode="multiple" value={editing.allowed_tools || []}
+            onChange={v => setEditing({ ...editing, allowed_tools: v })}
+            style={{ width: '100%' }} placeholder="Select tools (empty = all)"
+            options={tools.map(t => ({ value: t.name, label: t.name }))} />
+        </Field>
+      )}
+
+      {/* Dynamic config fields from the provider's config_schema */}
+      {configFields.map((field: any) => (
+        <Field key={field.name} label={field.label || field.name}>
+          <ConfigFieldInput
+            field={field}
+            value={editing.config?.[field.name] ?? field.default ?? ''}
+            onChange={v => updateConfig(field.name, v)}
+          />
+          {field.description && (
+            <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>{field.description}</div>
+          )}
+        </Field>
+      ))}
+    </div>
+  )
+}
+
+/** Renders the appropriate input for a config field based on field_type */
+function ConfigFieldInput({ field, value, onChange }: { field: any; value: any; onChange: (v: any) => void }) {
+  switch (field.field_type) {
+    case 'string':
+      return <Input value={value || ''} onChange={e => onChange(e.target.value)} />
+    case 'text':
+      return (
+        <Input.TextArea value={value || ''} onChange={e => onChange(e.target.value)}
+          rows={4} style={{ fontFamily: 'monospace', fontSize: 13 }} />
+      )
+    case 'int':
+      return <InputNumber value={value} onChange={v => onChange(v)} style={{ width: '100%' }} />
+    case 'bool':
+      return <Switch checked={!!value} onChange={v => onChange(v)} />
+    case 'select':
+      return (
+        <Select value={value} onChange={v => onChange(v)} style={{ width: '100%' }}
+          options={(field.options || []).map((o: any) => ({ value: o.value, label: o.label }))} />
+      )
+    default:
+      return <Input value={value || ''} onChange={e => onChange(e.target.value)} />
+  }
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {

@@ -159,15 +159,22 @@ class DataFrameRequest(BaseModel):
 
 @router.post("/dataframe")
 async def dataframe(req: DataFrameRequest) -> dict[str, Any]:
-    """Endpoint for the dataclaw_data notebook package — returns rows + columns."""
+    """Endpoint for the dataclaw_data notebook package — returns rows + columns.
+
+    The notebook runtime needs full result sets to materialize DataFrames, so
+    the LLM-tool row cap is bypassed here. Callers can still narrow with
+    n_rows; None on either branch means "no cap, return everything".
+    """
     from dataclaw_data.tools import data_preview_data, data_query_data
     try:
         if req.sql:
-            return await data_query_data(dataset_id=req.dataset_id, sql=req.sql)
+            return await data_query_data(
+                dataset_id=req.dataset_id, sql=req.sql, max_rows=req.n_rows,
+            )
         elif req.table_name:
             return await data_preview_data(
                 dataset_id=req.dataset_id, table_name=req.table_name,
-                n_rows=req.n_rows or 10000,
+                n_rows=req.n_rows,
             )
         else:
             raise HTTPException(400, "Provide table_name or sql")

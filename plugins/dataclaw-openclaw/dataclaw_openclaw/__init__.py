@@ -43,12 +43,11 @@ class OpenClawPlugin:
             logger.info("OpenClaw plugin: no URL configured, skipping agent provider swap")
             return
 
-        frontend_token = cfg.get("frontend_token", cfg.get("token", ""))
-        tools_token = cfg.get("tools_token", cfg.get("token", ""))
+        token = cfg.get("token", cfg.get("frontend_token", cfg.get("tools_token", "")))
         wait_ms = int(cfg.get("wait_ms", 0))
 
         # Replace the agent provider
-        provider = OpenClawAgentProvider(url=url, token=frontend_token, wait_ms=wait_ms)
+        provider = OpenClawAgentProvider(url=url, token=token, wait_ms=wait_ms)
         ctx.providers.replace("agent", provider)
         logger.info("OpenClaw plugin: agent provider replaced (url=%s)", url)
 
@@ -68,18 +67,18 @@ class OpenClawPlugin:
                     default="http://127.0.0.1:18789",
                 ),
                 PluginConfigField(
-                    name="frontend_token",
+                    name="token",
                     field_type="string",
-                    label="Frontend Token",
-                    description="Token sent TO OpenClaw — must match DATACLAW_FRONTEND_TOKEN / channels.dataclaw-frontend.token on the OpenClaw side",
+                    label="Shared Token",
+                    description="Bearer token shared between Dataclaw and OpenClaw (sent in X-Dataclaw-Token header in both directions). Must match DATACLAW_TOKEN on the OpenClaw side.",
                     default="dataclaw-local",
                 ),
                 PluginConfigField(
-                    name="tools_token",
+                    name="tools_api_url",
                     field_type="string",
-                    label="Tools Token",
-                    description="Token expected FROM OpenClaw — must match DATACLAW_TOOLS_TOKEN on the OpenClaw side",
-                    default="dataclaw-local",
+                    label="Dataclaw API URL (as seen by OpenClaw)",
+                    description="Base URL OpenClaw uses to call back into Dataclaw (DATACLAW_API_URL env var on the OpenClaw side). Use http://host.docker.internal:8000 when OpenClaw runs in Docker on the same host, or your bridge URL when running across containers.",
+                    default="http://localhost:8000",
                 ),
                 PluginConfigField(
                     name="wait_ms",
@@ -105,9 +104,16 @@ class OpenClawPlugin:
                 PluginConfigField(
                     name="plugins_source_dir",
                     field_type="string",
-                    label="Plugin Source Directory",
-                    description="Path to the openclaw-plugins directory containing dataclaw-tools and dataclaw-frontend",
+                    label="Plugin Source Directory (Dataclaw side)",
+                    description="Path to the openclaw-plugins directory as Dataclaw sees it. Used for the pre-flight manifest read.",
                     default=str(Path(__file__).resolve().parent.parent.parent.parent / "openclaw-plugins"),
+                ),
+                PluginConfigField(
+                    name="openclaw_plugins_dir",
+                    field_type="string",
+                    label="Plugin Source Directory (OpenClaw side)",
+                    description="Path to openclaw-plugins as the OpenClaw CLI sees it. Override this when OpenClaw runs in Docker and the source is mounted at a different path (e.g. /dataclaw/openclaw-plugins). Leave blank to reuse the Dataclaw-side path.",
+                    default="",
                 ),
             ],
         )

@@ -53,8 +53,16 @@ ContentBlock = TextBlock | ToolCallBlock | ToolResultBlock
 
 @dataclass
 class Message:
-    """Dataclaw's canonical message type."""
-    role: str  # "user" | "assistant" | "system"
+    """Dataclaw's canonical message type.
+
+    Roles:
+        user        — human input
+        assistant   — model response (text)
+        system      — system prompt / instructions
+        tool_call   — model requesting tool execution (content is list of tool_call blocks)
+        tool_result — tool execution results (content is list of tool_result blocks)
+    """
+    role: str  # "user" | "assistant" | "system" | "tool_call" | "tool_result"
     content: str | list[ContentBlock] = ""
 
     def text(self) -> str:
@@ -92,6 +100,16 @@ class Message:
     def system(cls, text: str) -> Message:
         return cls(role="system", content=text)
 
+    @classmethod
+    def tool_call(cls, tool_calls: list[ContentBlock]) -> Message:
+        """Create a tool_call message from a list of tool_call content blocks."""
+        return cls(role="tool_call", content=tool_calls)
+
+    @classmethod
+    def tool_result(cls, tool_results: list[ContentBlock]) -> Message:
+        """Create a tool_result message from a list of tool_result content blocks."""
+        return cls(role="tool_result", content=tool_results)
+
 
 # ── Tool definition ─────────────────────────────────────────────────────────
 
@@ -99,3 +117,4 @@ class ToolDefinition(TypedDict, total=False):
     name: str
     description: str
     parameters: dict[str, Any]  # JSON Schema
+    source: str  # "builtin" | "custom" | "mcp:{server}" — origin of this tool

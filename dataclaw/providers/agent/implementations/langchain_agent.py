@@ -57,7 +57,13 @@ class LangChainAgentProvider:
         messages = list(state.get("messages", []))
         tools = list(state.get("tools", []))
 
+        # Pass dynamic system prompt parts if the LLM supports it
+        extra_kwargs: dict[str, Any] = {}
+        system_dynamic = state.get("system_prompt_dynamic", "")
+        if system_dynamic:
+            extra_kwargs["system_dynamic"] = system_dynamic
+
         async for event in self._llm.stream_turn(
-            messages, system=system, tools=tools
+            messages, system=system, tools=tools, **extra_kwargs
         ):
             yield event

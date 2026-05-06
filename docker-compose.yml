@@ -4,8 +4,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./data:/dataclaw/data
-      - ./workspaces:/dataclaw/workspaces
+      - ${DOCKER_DATA_DIR:-./docker-data}/dataclaw:/root/.dataclaw
     env_file:
       - path: .env
         required: false

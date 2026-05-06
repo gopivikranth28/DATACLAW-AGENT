@@ -16,11 +16,13 @@ from dataclaw_data.registry import (
     refresh_dataset,
 )
 from dataclaw_data.tools import (
+    MAX_QUERY_ROWS,
     data_list_datasets,
     data_preview_data,
     data_profile_dataset,
     data_describe_column,
     data_query_data,
+    set_plugin_cfg,
 )
 
 
@@ -168,3 +170,208 @@ async def test_describe_column_not_found(sample_csv):
     ds = create_dataset(name="Sales", ds_type="local_file", connection=str(sample_csv))
     with pytest.raises(ValueError, match="Column not found"):
         await data_describe_column(dataset_id=ds["id"], table_name=ds["tables"][0]["name"], column_name="nonexistent")
+
+
+# ── Row cap tests ──────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def large_csv(tmp_path):
+    """CSV with more rows than MAX_QUERY_ROWS so cap behavior is observable."""
+    n = MAX_QUERY_ROWS + 200  # 700 rows
+    csv_path = tmp_path / "big.csv"
+    lines = ["id,value"]
+    lines.extend(f"{i},{i * 2}" for i in range(n))
+    csv_path.write_text("\n".join(lines) + "\n")
+    return csv_path, n
+
+
+@pytest.mark.asyncio
+async def test_query_data_default_caps_at_max(large_csv):
+    """LLM-style call (no max_rows arg) caps rows at MAX_QUERY_ROWS."""
+    csv_path, n = large_csv
+    ds = create_dataset(name="Big", ds_type="local_file", connection=str(csv_path))
+    alias = "file_big_csv"
+    result = await data_query_data(
+        dataset_id=ds["id"],
+        sql=f"SELECT * FROM {alias}",
+    )
+    assert n > MAX_QUERY_ROWS  # sanity
+    assert result["row_count"] == MAX_QUERY_ROWS
+
+
+@pytest.mark.asyncio
+async def test_query_data_max_rows_none_returns_all(large_csv):
+    """Notebook runtime path (max_rows=None) returns the full result set."""
+    csv_path, n = large_csv
+    ds = create_dataset(name="Big", ds_type="local_file", connection=str(csv_path))
+    alias = "file_big_csv"
+    result = await data_query_data(
+        dataset_id=ds["id"],
+        sql=f"SELECT * FROM {alias}",
+        max_rows=None,
+    )
+    assert result["row_count"] == n
+
+
+@pytest.mark.asyncio
+async def test_query_data_explicit_max_rows(large_csv):
+    csv_path, _ = large_csv
+    ds = create_dataset(name="Big", ds_type="local_file", connection=str(csv_path))
+    alias = "file_big_csv"
+    result = await data_query_data(
+        dataset_id=ds["id"],
+        sql=f"SELECT * FROM {alias}",
+        max_rows=42,
+    )
+    assert result["row_count"] == 42
+
+
+@pytest.mark.asyncio
+async def test_preview_data_returns_more_than_max_when_n_rows_exceeds(large_csv):
+    """data_preview_data must honor n_rows even when it exceeds MAX_QUERY_ROWS."""
+    csv_path, n = large_csv
+    ds = create_dataset(name="Big", ds_type="local_file", connection=str(csv_path))
+    table = ds["tables"][0]["name"]
+    result = await data_preview_data(
+        dataset_id=ds["id"],
+        table_name=table,
+        n_rows=MAX_QUERY_ROWS + 100,
+    )
+    assert result["row_count"] == MAX_QUERY_ROWS + 100
+    assert result["row_count"] < n  # didn't accidentally read everything
+
+
+@pytest.mark.asyncio
+async def test_dataframe_endpoint_sql_path_uncapped(large_csv):
+    """The /api/data/dataframe endpoint (notebook runtime) must not cap SQL results."""
+    from fastapi.testclient import TestClient
+    from fastapi import FastAPI
+    from dataclaw_data.router import router
+
+    csv_path, n = large_csv
+    ds = create_dataset(name="Big", ds_type="local_file", connection=str(csv_path))
+    alias = "file_big_csv"
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api/data")
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/data/dataframe",
+        json={"dataset_id": ds["id"], "sql": f"SELECT * FROM {alias}"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["row_count"] == n
+
+
+@pytest.mark.asyncio
+async def test_dataframe_endpoint_table_path_uncapped(large_csv):
+    """get_dataframe(id, table_name=...) with no n_rows must return the full table."""
+    from fastapi.testclient import TestClient
+    from fastapi import FastAPI
+    from dataclaw_data.router import router
+
+    csv_path, n = large_csv
+    ds = create_dataset(name="Big", ds_type="local_file", connection=str(csv_path))
+    table = ds["tables"][0]["name"]
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api/data")
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/data/dataframe",
+        json={"dataset_id": ds["id"], "table_name": table},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert n > 10000 or body["row_count"] == n  # truthy check; either full or sane
+    # Specifically: must exceed the prior 10000 hardcoded fallback.
+    assert body["row_count"] == n
+
+
+@pytest.mark.asyncio
+async def test_preview_data_n_rows_none_returns_all(large_csv):
+    """Direct call to data_preview_data with n_rows=None returns full table."""
+    csv_path, n = large_csv
+    ds = create_dataset(name="Big", ds_type="local_file", connection=str(csv_path))
+    table = ds["tables"][0]["name"]
+    result = await data_preview_data(
+        dataset_id=ds["id"], table_name=table, n_rows=None,
+    )
+    assert result["row_count"] == n
+
+
+# ── Config-driven cap tests ────────────────────────────────────────────────
+
+
+@pytest.fixture
+def reset_plugin_cfg():
+    """Ensure each test starts and ends with an empty plugin config."""
+    set_plugin_cfg({})
+    yield
+    set_plugin_cfg({})
+
+
+@pytest.mark.asyncio
+async def test_query_data_cap_uses_configured_max_rows(large_csv, reset_plugin_cfg):
+    """Setting max_query_rows in plugin config changes the LLM-default cap."""
+    csv_path, _ = large_csv
+    ds = create_dataset(name="Big", ds_type="local_file", connection=str(csv_path))
+    alias = "file_big_csv"
+
+    set_plugin_cfg({"max_query_rows": 75})
+    result = await data_query_data(
+        dataset_id=ds["id"], sql=f"SELECT * FROM {alias}",
+    )
+    assert result["row_count"] == 75
+
+
+@pytest.mark.asyncio
+async def test_query_data_cap_falls_back_when_config_missing(large_csv, reset_plugin_cfg):
+    csv_path, _ = large_csv
+    ds = create_dataset(name="Big", ds_type="local_file", connection=str(csv_path))
+    alias = "file_big_csv"
+
+    # Empty cfg → fall back to MAX_QUERY_ROWS.
+    result = await data_query_data(
+        dataset_id=ds["id"], sql=f"SELECT * FROM {alias}",
+    )
+    assert result["row_count"] == MAX_QUERY_ROWS
+
+
+@pytest.mark.asyncio
+async def test_query_data_cap_invalid_config_falls_back(large_csv, reset_plugin_cfg):
+    csv_path, _ = large_csv
+    ds = create_dataset(name="Big", ds_type="local_file", connection=str(csv_path))
+    alias = "file_big_csv"
+
+    # Garbage values fall back to the safe default rather than crashing.
+    set_plugin_cfg({"max_query_rows": "not-a-number"})
+    result = await data_query_data(
+        dataset_id=ds["id"], sql=f"SELECT * FROM {alias}",
+    )
+    assert result["row_count"] == MAX_QUERY_ROWS
+
+    set_plugin_cfg({"max_query_rows": 0})
+    result = await data_query_data(
+        dataset_id=ds["id"], sql=f"SELECT * FROM {alias}",
+    )
+    assert result["row_count"] == MAX_QUERY_ROWS
+
+
+@pytest.mark.asyncio
+async def test_query_data_explicit_max_rows_overrides_config(large_csv, reset_plugin_cfg):
+    """Explicit max_rows arg wins over plugin config (notebook runtime path)."""
+    csv_path, n = large_csv
+    ds = create_dataset(name="Big", ds_type="local_file", connection=str(csv_path))
+    alias = "file_big_csv"
+
+    set_plugin_cfg({"max_query_rows": 25})
+    # max_rows=None still bypasses the cap entirely.
+    result = await data_query_data(
+        dataset_id=ds["id"], sql=f"SELECT * FROM {alias}", max_rows=None,
+    )
+    assert result["row_count"] == n

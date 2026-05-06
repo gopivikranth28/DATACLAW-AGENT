@@ -21,10 +21,11 @@ class PythonTool(ToolProvider):
         description: str,
         fn: Callable[..., Awaitable[dict[str, Any]]],
         parameters: dict[str, Any] | None = None,
+        source: str = "builtin",
     ) -> None:
         if parameters is None:
             parameters = self._infer_parameters(fn)
-        super().__init__(name=name, description=description, parameters=parameters, fn=fn)
+        super().__init__(name=name, description=description, parameters=parameters, fn=fn, source=source)
 
     @staticmethod
     def _infer_parameters(fn: Callable[..., Any]) -> dict[str, Any]:

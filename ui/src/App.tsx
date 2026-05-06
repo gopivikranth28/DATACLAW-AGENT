@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react'
 import { Routes, Route, Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { Layout, Menu, ConfigProvider, theme } from 'antd'
 import {
-  MessageOutlined, BulbOutlined, SettingOutlined,
+  MessageOutlined, BulbOutlined, SettingOutlined, TeamOutlined,
   DatabaseOutlined, FolderOutlined, PlusOutlined, EllipsisOutlined,
+  ToolOutlined,
 } from '@ant-design/icons'
 import { API } from './api'
 import ChatPage from './pages/ChatPage'
@@ -12,7 +13,8 @@ import ConfigPage from './pages/ConfigPage'
 import DataPage from './pages/DataPage'
 import ProjectsPage from './pages/ProjectsPage'
 import ProjectPage from './pages/ProjectPage'
-// import SubagentsPage from './pages/SubagentsPage'
+import SubagentsPage from './pages/SubagentsPage'
+import ToolsPage from './pages/ToolsPage'
 
 const { Sider, Content } = Layout
 
@@ -83,14 +85,15 @@ export default function App() {
   const pluginIds = new Set(plugins.map(p => p.id))
   const hasData = pluginIds.has('data')
   const hasProjects = pluginIds.has('projects')
+  const hasTools = pluginIds.has('custom-tools')
 
   const nav = [
     { key: '/chat', icon: <MessageOutlined />, label: <Link to="/chat">Chat</Link> },
     ...(hasData ? [{ key: '/data', icon: <DatabaseOutlined />, label: <Link to="/data">Data</Link> }] : []),
-    // Subagents tab hidden — not ready for release
-    // ...(hasProjects ? [
-    //   { key: '/subagents', icon: <TeamOutlined />, label: <Link to="/subagents">Subagents</Link> },
-    // ] : []),
+    ...(hasProjects ? [
+      { key: '/subagents', icon: <TeamOutlined />, label: <Link to="/subagents">Subagents</Link> },
+    ] : []),
+    ...(hasTools ? [{ key: '/tools', icon: <ToolOutlined />, label: <Link to="/tools">Tools</Link> }] : []),
     { key: '/skills', icon: <BulbOutlined />, label: <Link to="/skills">Skills</Link> },
     { key: '/config', icon: <SettingOutlined />, label: <Link to="/config">Config</Link> },
   ]
@@ -115,12 +118,13 @@ export default function App() {
             <Route path="/chat" element={<ChatPage />} />
             <Route path="/skills" element={<SkillsPage />} />
             <Route path="/config" element={<ConfigPage plugins={plugins} />} />
+            {hasTools && <Route path="/tools" element={<ToolsPage />} />}
             {hasData && <Route path="/data" element={<DataPage />} />}
             {hasProjects && (
               <>
                 <Route path="/projects" element={<ProjectsPage />} />
                 <Route path="/projects/:id" element={<ProjectPage />} />
-                {/* <Route path="/subagents" element={<SubagentsPage />} /> */}
+                <Route path="/subagents" element={<SubagentsPage />} />
               </>
             )}
           </Routes>

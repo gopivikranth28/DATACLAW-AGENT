@@ -21,6 +21,10 @@ dependencies = [
     "dataclaw-projects",
     "dataclaw-browser",
     "dataclaw-openclaw",
+    "dataclaw-custom-tools",
+    "dataclaw-kaggle",
+    "dataclaw-gbrain",
+    "dataclaw-codex",
 ]
 
 [tool.uv.sources]
@@ -31,11 +35,19 @@ dataclaw-notebooks = { path = "plugins/dataclaw-notebooks", editable = true }
 dataclaw-projects = { path = "plugins/dataclaw-projects", editable = true }
 dataclaw-browser = { path = "plugins/dataclaw-browser", editable = true }
 dataclaw-openclaw = { path = "plugins/dataclaw-openclaw", editable = true }
+dataclaw-custom-tools = { path = "plugins/dataclaw-custom-tools", editable = true }
+dataclaw-kaggle = { path = "plugins/dataclaw-kaggle", editable = true }
+dataclaw-gbrain = { path = "plugins/dataclaw-gbrain", editable = true }
+dataclaw-codex = { path = "plugins/dataclaw-codex", editable = true }
 
 [project.scripts]
 dataclaw = "dataclaw.__main__:main"
 
 [project.optional-dependencies]
+rag = [
+    "sentence-transformers>=3.0",
+    "sqlite-vec>=0.1",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",

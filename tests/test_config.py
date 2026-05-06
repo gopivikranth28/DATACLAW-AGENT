@@ -15,7 +15,7 @@ def test_dataclaw_home_from_env(tmp_dataclaw_home):
 
 def test_default_config():
     config = DataclawConfig()
-    assert config.llm.backend == "anthropic"
+    assert config.llm.backend == "openclaw"
     assert config.compaction.enabled is False
     assert config.app.max_turns == 30
 
