@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from dataclaw_plans.store import read_proposals, find_proposal, write_proposals
+from dataclaw_plans.store import read_proposals, find_proposal, write_proposals, find_snapshot
 from dataclaw_plans.mlflow_tools import query_mlflow_runs, query_mlflow_runs_for_project
 
 router = APIRouter()
@@ -31,6 +31,18 @@ async def get_proposal(proposal_id: str) -> dict[str, Any]:
         return find_proposal(proposal_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Proposal not found")
+
+
+@router.get("/{proposal_id}/snapshots/{snapshot_id}")
+async def get_snapshot(proposal_id: str, snapshot_id: str) -> dict[str, Any]:
+    """Fetch a frozen plan snapshot taken at the moment of a tool call."""
+    try:
+        snap = find_snapshot(snapshot_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    if snap.get("proposal_id") != proposal_id:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    return snap
 
 
 class DecisionRequest(BaseModel):

@@ -27,7 +27,7 @@ On first run this installs Python dependencies, builds the React frontend, and s
 
 ### Option 2: Docker — Standalone (Direct LLM)
 
-For running with a direct LLM provider (Anthropic, OpenAI, Gemini) without OpenClaw:
+For running with a direct LLM provider (Anthropic, OpenAI, Gemini, Codex) without OpenClaw:
 
 ```bash
 docker compose up --build
@@ -42,26 +42,24 @@ ANTHROPIC_API_KEY=sk-... docker compose up --build
 | | |
 |---|---|
 | **Port** | `8000` — Dataclaw UI and API |
-| **Volumes** | `./data` — shared data files |
-| | `./workspaces` — workspace storage |
+| **Volumes** | `${DOCKER_DATA_DIR:-./docker-data}/dataclaw` — Dataclaw config, sessions, workspaces |
 
 ### Option 3: Docker — Bundled with OpenClaw
 
-For the full experience with OpenClaw as the agent runtime (recommended):
+For the full experience with OpenClaw as the agent runtime:
 
 ```bash
 docker compose -f docker-compose.bundled.yml up --build
 ```
 
-This builds a single container with both Dataclaw and OpenClaw pre-installed. On first start it bootstraps the OpenClaw gateway, installs the bridge plugins, and configures default tokens. All state persists under `docker-data/`.
+This builds a single container with both Dataclaw and OpenClaw pre-installed. On first start it bootstraps the OpenClaw gateway, installs the `dataclaw` plugin, and configures default tokens. All state persists under `docker-data/`.
 
 **First-run setup:**
 
 1. Start the container — it will bootstrap OpenClaw automatically
 2. Open http://localhost:8000/config
-3. Click **Configure Model** to authenticate your model provider through the embedded terminal
-4. The container will restart when OpenClaw restarts after model configuration — this is expected
-5. Start using Dataclaw at http://localhost:8000
+3. Click **Configure Model** to authenticate your model provider through the embedded terminal — when you close the modal a popup will remind you to restart OpenClaw so the new model takes effect (`openclaw gateway restart`, or restart the container)
+4. Start using Dataclaw at http://localhost:8000
 
 For full OpenClaw onboarding beyond the model provider, use the integrated terminal in the Dataclaw UI or `docker exec -it <container> bash`.
 
@@ -70,10 +68,8 @@ For full OpenClaw onboarding beyond the model provider, use the integrated termi
 | **Ports** | `8000` — Dataclaw UI and API |
 | | `18789` — OpenClaw gateway (WebSocket + Control UI) |
 | | `18790` — OpenClaw bridge |
-| **Volumes** | `docker-data/data` — shared data files |
-| | `docker-data/workspaces` — workspace storage |
-| | `docker-data/openclaw` — OpenClaw config, plugins, sessions |
-| | `docker-data/dataclaw` — Dataclaw config and sessions |
+| **Volumes** | `${DOCKER_DATA_DIR:-./docker-data}/openclaw` — OpenClaw config, plugins, sessions |
+| | `${DOCKER_DATA_DIR:-./docker-data}/dataclaw` — Dataclaw config, sessions, workspaces |
 
 All ports are overridable via environment variables (`DATACLAW_PORT`, `OPENCLAW_GATEWAY_PORT`, `OPENCLAW_BRIDGE_PORT`). The data directory can be changed with `DOCKER_DATA_DIR`.
 
@@ -90,32 +86,39 @@ The container runs both processes and exits if either one dies, relying on Docke
 
 Open the Config page at http://localhost:8000/config.
 
-**Recommended: OpenClaw** — a full-featured agent runtime with multi-model support, memory, and tool orchestration.
+**OpenClaw** — a full-featured agent runtime with multi-model support, memory, and tool orchestration.
 
 1. Select **OpenClaw** as the Agent Backend
 2. Click **Install OpenClaw** and follow the prompts
 3. Once installed, configure the OpenClaw model (e.g. Claude, GPT-4, Gemini) via the model selector
 
-**Alternative: Direct LLM** — connect directly to an LLM API without OpenClaw.
+**Direct LLM** — connect directly to an LLM API without OpenClaw.
 
-Select `anthropic`, `openai`, or `gemini` as the backend and enter your API key. Or set via environment:
+Select `anthropic`, `openai`, `gemini`, or `codex` as the backend and enter your API key (or sign in interactively for Codex — see [Codex authentication](#codex-authentication) below). Or set via environment:
 
 ```bash
 ANTHROPIC_API_KEY=sk-... uv run dataclaw
 ```
 
-### 2. Install OpenClaw Plugins (if using OpenClaw)
+#### Codex authentication
+
+Choosing the Codex backend lets you call OpenAI's Codex models with either an API key or a ChatGPT OAuth login. The Config page shows two buttons:
+
+- **Login with Browser** — opens an OAuth tab. After you sign in, OpenAI redirects to a `localhost:1455` callback that Codex listens on. Click the button, complete the sign-in, and the agent provider auto-reloads.
+- **Device Code** — for headless or remote setups. Shows a verification URL + 8-character code; enter the code on the URL.
+
+> **Docker fallback.** When Dataclaw runs in a container, the browser's `localhost:1455` is the host's loopback, but Codex's listener is inside the container — so the redirect 404's and the flow stalls. The Login modal exposes a *"Browser didn't redirect back automatically?"* paste field: copy the failed `http://localhost:1455/...` URL out of your browser's address bar, paste it back, and Dataclaw replays the GET inside the container so Codex's listener actually receives the auth code.
+
+### 2. Install the OpenClaw Plugin (if using OpenClaw)
 
 > **Note:** If you're using the bundled Docker image (`docker-compose.bundled.yml`), this step is handled automatically on first start. Skip to step 3.
 
-After OpenClaw is installed and running, install the Dataclaw bridge plugins from the Config page:
+After OpenClaw is installed and running, install the consolidated Dataclaw plugin from the Config page:
 
 1. Scroll to the **OpenClaw Bridge** section
-2. Click **Install** next to `dataclaw-tools` — this exposes Dataclaw's tools to the OpenClaw agent
-3. Click **Install** next to `dataclaw-frontend` — this routes messages between Dataclaw and OpenClaw
-4. Both plugins install automatically with the correct tokens and API URL
+2. Click **Install** next to `dataclaw` — one plugin that exposes Dataclaw's tools to the OpenClaw agent, routes UI messages between Dataclaw and OpenClaw, and registers the Dataclaw channel.
 
-The plugins are located in `openclaw-plugins/` and are installed into the running OpenClaw instance.
+The plugin is located at `openclaw-plugins/dataclaw/` and installs in a single click with the correct tokens, API URL, and tool allowlist entry. Each install also snapshots the current tool list and surfaces a drift banner on the Config and Tools pages when you add or remove tools, so you know when to re-install.
 
 ### 3. Create a Project
 
@@ -226,10 +229,13 @@ dataclaw/
     dataclaw-projects/                   #   Project management
     dataclaw-browser/                    #   AI browser automation (feature-flagged)
     dataclaw-openclaw/                   #   OpenClaw agent bridge
+    dataclaw-custom-tools/               #   User-defined Python tools + MCP server connections
+    dataclaw-kaggle/                     #   Kaggle competitions, datasets, submissions
+    dataclaw-gbrain/                     #   gBrain memory provider
+    dataclaw-codex/                      #   OpenAI Codex sub-agent provider
 
   openclaw-plugins/                      # TypeScript plugins for OpenClaw runtime
-    dataclaw-frontend/                   #   Channel plugin (messages Dataclaw <-> OpenClaw)
-    dataclaw-tools/                      #   Tool bridge (exposes Dataclaw tools to OpenClaw)
+    dataclaw/                            #   Consolidated plugin: tools bridge + frontend channel
 
   ui/                                    # React frontend (Vite, Ant Design, React Router)
 ```
@@ -247,8 +253,12 @@ Plugins are installed via pip and auto-discovered at startup:
 | `dataclaw-notebooks` | 13 (open, close, read, edit, execute, etc.) | `/api/notebooks` | nbformat, jupyter_client |
 | `dataclaw-plans` | 5 (propose, update, list, get, mlflow) | `/api/plans/*`, `/api/mlflow/*` | mlflow |
 | `dataclaw-projects` | — | `/api/projects/*` | — |
-| `dataclaw-browser` | 1 (browser_use) | — | browser-use |
-| `dataclaw-openclaw` | — (replaces agent provider) | `/api/tools/{name}/call` | httpx |
+| `dataclaw-browser` | 1 (browser_use) + browser sub-agent | — | browser-use |
+| `dataclaw-openclaw` | — (replaces agent provider) | `/api/openclaw/*`, `/api/tools/{name}/call` | httpx |
+| `dataclaw-custom-tools` | dynamic (user-defined + MCP) | `/api/custom-tools/*`, `/api/mcp-servers/*` | mcp |
+| `dataclaw-kaggle` | 8 (competitions, datasets, leaderboards, submissions) | `/api/kaggle/*` | kaggle SDK |
+| `dataclaw-gbrain` | 2 (search, save) — registered via memory provider | — | gbrain CLI |
+| `dataclaw-codex` | — (registers `codex` sub-agent type) | — | openai-codex-app-server-sdk |
 
 ### Notebook Isolation
 
@@ -262,6 +272,45 @@ The `dataclaw_data` runtime package is auto-injected into every kernel so notebo
 import dataclaw_data
 df = dataclaw_data.get_dataframe("dataset_id", table_name="query_name")
 ```
+
+### Auto Mode
+
+A toggle in the chat header that lets the agent run autonomously without waiting for the user to type "go" between turns. After every assistant turn, if the agent didn't ask a question and the auto-turn budget isn't exhausted, the loop fires another turn automatically with a synthetic "continue" prompt.
+
+- Per-session toggle — `autoMode` is stored on the chat session and survives reloads.
+- Hard cap on consecutive turns — `app.max_auto_turns` (default `10`) so a runaway loop doesn't burn through credits.
+- Plans proposed during auto mode are auto-approved, so a multi-step plan can execute end-to-end without UI clicks.
+
+### Subagents
+
+Plugins can register **sub-agent providers** (`ctx.sub_agent_registry.register(...)`) that the parent agent can delegate work to via `delegate_to_subagent`. Each provider declares an `agent_type` and exposes its own config schema. Currently shipped:
+
+| `agent_type` | Source | Use |
+|---|---|---|
+| `llm` | `DefaultSubAgentProvider` (built-in) | Spin up a fresh LangGraph loop with a focused system prompt and a scoped tool set |
+| `browser` | `dataclaw-browser` | Hand off web tasks to `browser-use` (Playwright) |
+| `codex` | `dataclaw-codex` | Hand off coding work to OpenAI Codex via the `codex` CLI/app-server |
+
+Subagent definitions are managed in the **Subagents** page (`/subagents`) and can be scoped per-project. The parent agent's `list_subagents` tool returns only the subagents the current session has been allowed to use.
+
+### Custom Tools & MCP Servers
+
+The `dataclaw-custom-tools` plugin lets you extend the tool surface without touching the codebase:
+
+- **Custom Python tools** — drop a `.py` file under `~/.dataclaw/tools/` exporting a `tool_definition` dict + a callable. They're loaded at startup and on hot-reload (`POST /api/custom-tools/reload`).
+- **MCP servers** — register an [MCP](https://modelcontextprotocol.io/) server (stdio or HTTP) from the **Tools** page; its tools are auto-discovered and exposed under the same registry the agent loop uses.
+
+Adding or removing tools triggers a drift banner on the OpenClaw bridge install card so you know to re-install the bridge plugin (or click the bundled image's auto-install) to refresh the manifest in OpenClaw.
+
+### Kaggle Integration
+
+The `dataclaw-kaggle` plugin wires up the Kaggle API end-to-end. Configure your Kaggle username + API key on the Config page (`plugins.kaggle.kaggle_username` / `plugins.kaggle.kaggle_key`), then the agent gets:
+
+- `list_competitions`, `competition_details`, `leaderboard`, `download_competition`
+- `search_datasets`, `download_dataset`
+- `submit`, `submissions`
+
+Downloaded competition/dataset archives can be auto-registered as Dataclaw datasets when `auto_register_datasets` is on (default), so the agent can immediately profile and query them.
 
 ---
 
@@ -284,10 +333,14 @@ All runtime data under `~/.dataclaw/` (override with `$DATACLAW_HOME`):
 |---|---|---|
 | `DATACLAW_LLM_BACKEND` | `llm.backend` | `openclaw` |
 | `ANTHROPIC_API_KEY` | `llm.anthropic.api_key` | |
-| `OPENAI_API_KEY` | `llm.openai.api_key` | |
+| `OPENAI_API_KEY` | `llm.openai.api_key` / `llm.codex.api_key` | |
 | `GOOGLE_API_KEY` | `llm.gemini.api_key` | |
+| `CODEX_MODEL` | `llm.codex.model` | `gpt-5.5` |
+| `CODEX_AUTH_MODE` | `llm.codex.auth_mode` | `default` (OAuth) — `api_key` for direct |
 | `DATACLAW_MAX_TURNS` | `app.max_turns` | `30` |
 | `DATACLAW_PORT` | `app.port` | `8000` |
+| `DATACLAW_TOKEN` | `plugins.openclaw.token` | `dataclaw-local` |
+| `DATACLAW_OPENCLAW_URL` | `plugins.openclaw.url` | `http://127.0.0.1:18789` |
 
 Config changes to the agent backend are **hot-reloaded** — no server restart needed.
 
@@ -327,11 +380,12 @@ rm -rf ui/dist && uv run dataclaw
 
 ### Sync OpenClaw tool manifest
 
-After adding/removing tools, regenerate the static manifest:
+The bridge plugin's tool manifest (`openclaw.plugin.json contracts.tools` + `src/tools/tool-manifest.generated.ts`) is regenerated automatically every time you click **Install** on the OpenClaw Bridge — the install service snapshots the live tool registry at install time. Add a new tool, watch the drift banner appear on the Config / Tools pages, click Install, done.
+
+If you'd rather invoke the install flow programmatically:
 
 ```bash
-cd openclaw-plugins/dataclaw-tools
-./sync-manifest.sh    # fetches from GET /api/tools (server must be running)
+curl -X POST http://localhost:8000/api/openclaw/plugins/dataclaw/install
 ```
 
 ---
@@ -344,7 +398,9 @@ cd openclaw-plugins/dataclaw-tools
 
 **Protocol:** [AG-UI](https://docs.ag-ui.com) (Server-Sent Events)
 
-**Agent Backends:** OpenClaw (recommended), Anthropic Claude, OpenAI, Google Gemini, Mock
+**Agent Backends:** OpenClaw (recommended), Anthropic Claude, OpenAI, OpenAI Codex (OAuth or API key), Google Gemini, Mock
+
+**Sub-agents:** built-in LLM, browser-use, Codex
 
 ---
 

@@ -27,6 +27,43 @@ from dataclaw.plugins.registry import ProviderRegistry
 logger = logging.getLogger(__name__)
 
 
+def _bootstrap_core_schema_defaults(cfg_path: Path) -> None:
+    """Backfill missing keys from the core DataclawConfig schema into the
+    on-disk config.
+
+    The first-run bootstrap only writes defaults when the file doesn't
+    exist. Once it exists, new schema fields (e.g. ``compaction.max_tokens``
+    added later) never make it onto disk, so ``resolve()`` falls back to
+    the literal default in each call site — which can silently disagree
+    with the schema default. This walks the schema defaults and adds only
+    keys that are missing, never overwriting values the user has set.
+    """
+    if not cfg_path.exists():
+        return
+    try:
+        raw = json.loads(cfg_path.read_text())
+    except Exception:
+        return
+
+    defaults = DataclawConfig().model_dump()
+
+    def _merge(dst: dict, src: dict) -> bool:
+        changed = False
+        for key, default_val in src.items():
+            if key not in dst:
+                dst[key] = default_val
+                changed = True
+            elif isinstance(default_val, dict) and isinstance(dst.get(key), dict):
+                if _merge(dst[key], default_val):
+                    changed = True
+        return changed
+
+    if _merge(raw, defaults):
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        cfg_path.write_text(json.dumps(raw, indent=2))
+        logger.info("Backfilled missing core schema defaults into %s", cfg_path)
+
+
 def _bootstrap_plugin_defaults(plugins: list, cfg_path: Path) -> None:
     """Write plugin config field defaults into the config file if not already set."""
     try:
@@ -64,7 +101,14 @@ def _load_config() -> DataclawConfig:
         try:
             return DataclawConfig(**json.loads(path.read_text()))
         except Exception:
-            logger.warning("Failed to parse config file, using defaults")
+            # Log with traceback — silently falling back to defaults makes the
+            # UI report the wrong backend in /api/providers because the in-memory
+            # config diverges from what the resolver reads off disk.
+            logger.exception(
+                "Failed to parse %s; falling back to defaults. "
+                "The Config UI will misreport active backends until this is fixed.",
+                path,
+            )
     return DataclawConfig()
 
 
@@ -78,11 +122,60 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         cfg_path.parent.mkdir(parents=True, exist_ok=True)
         cfg_path.write_text(json.dumps(DataclawConfig().model_dump(), indent=2))
         logger.info("Created default config at %s", cfg_path)
+    else:
+        # File exists — backfill any new schema defaults the user is missing.
+        _bootstrap_core_schema_defaults(cfg_path)
 
     config = _load_config()
     registry = ProviderRegistry()
     hooks = HookRegistry()
     tool_registry = init_providers(registry)
+
+    # Register memory ingest hook if a real memory provider is active
+    from dataclaw.providers.memory.implementations.noop import NoopMemoryProvider
+    if not isinstance(registry.memory, NoopMemoryProvider):
+        from dataclaw.providers.memory.hooks import MemoryIngestHook
+        hooks.register("postAgentMessageHook", MemoryIngestHook(registry.memory))
+
+    # Register guardrail hooks
+    from dataclaw.guardrails.registry import GuardrailRegistry
+    from dataclaw.guardrails.definitions import (
+        FileDeleteGuardrail,
+        OutsideProjectGuardrail,
+        CodeOutsideWorkspaceGuardrail,
+        PlanCompletionGuardrail,
+        CredentialDetectionGuardrail,
+        ResponseTruncationGuardrail,
+    )
+    guardrail_registry = GuardrailRegistry()
+    guardrail_registry.register(FileDeleteGuardrail())
+    guardrail_registry.register(OutsideProjectGuardrail())
+    guardrail_registry.register(CodeOutsideWorkspaceGuardrail())
+    guardrail_registry.register(PlanCompletionGuardrail())
+    guardrail_registry.register(CredentialDetectionGuardrail())
+    guardrail_registry.register(ResponseTruncationGuardrail())
+    hooks.register("preToolCallHook", guardrail_registry.as_pre_hook())
+    hooks.register("postToolCallHook", guardrail_registry.as_post_hook())
+
+    # Refresh the skill provider's per-request resolved set before each tool
+    # call. Without this, `list_skills` and `fetch_skill` rely on
+    # `FileSkillProvider._resolved_skills`, which is only populated by the
+    # native chat router's `resolve_skills(state)` call — so tools reaching
+    # the skill provider via the openclaw bridge proxy (or any other
+    # non-chat-loop entrypoint) get an unfiltered or stale list. Note: this
+    # writes to instance state, so concurrent requests with different
+    # session_ids race; a contextvar-based fix is the proper cure but
+    # overkill for the local single-user setup.
+    skill_provider = registry.skill
+
+    async def _refresh_resolved_skills(state):
+        try:
+            await skill_provider.resolve_skills(state)
+        except Exception:
+            logger.debug("skill provider resolve_skills failed during preToolCallHook", exc_info=True)
+        return state
+
+    hooks.register("preToolCallHook", _refresh_resolved_skills)
 
     ctx = PluginContext(
         hooks=hooks,
@@ -90,6 +183,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app=app,
         config=config,
         tool_registry=tool_registry,
+        guardrail_registry=guardrail_registry,
     )
 
     plugins = discover_plugins()
@@ -109,16 +203,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.hooks = hooks
     app.state.config = config
     app.state.plugins_list = plugins
+    app.state.guardrail_registry = guardrail_registry
 
     errors = registry.validate()
     for err in errors:
         logger.error("Provider error: %s", err)
 
+    # Run async plugin initialization (e.g. MCP server connections).
+    # on_event("startup") handlers are ignored when a lifespan is used,
+    # so we call them here explicitly.
+    for handler in app.router.on_startup:
+        await handler()
+
     # Mount SPA static files AFTER all plugin routes are registered,
     # so the catch-all /{path:path} doesn't shadow plugin routes.
     _mount_spa(app)
 
-    yield
+    try:
+        yield
+    finally:
+        # Run shutdown handlers
+        for handler in app.router.on_shutdown:
+            await handler()
 
 
 def create_app() -> FastAPI:
@@ -137,19 +243,22 @@ def create_app() -> FastAPI:
     )
 
     # Core routers — all under /api
-    from dataclaw.api.routers import chat, config, skills, tools, providers, files, terminal
-    from dataclaw.api.routers import plugins_router
+    from dataclaw.api.routers import chat, config, skills, skill_library, tools, providers, files, terminal
+    from dataclaw.api.routers import plugins_router, codex_auth, guardrails
     from dataclaw.api.routers.chat import agent_router
 
     app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
     app.include_router(config.router, prefix="/api/config", tags=["config"])
     app.include_router(skills.router, prefix="/api/skills", tags=["skills"])
+    app.include_router(skill_library.router, prefix="/api/skill-library", tags=["skill-library"])
     app.include_router(tools.router, prefix="/api/tools", tags=["tools"])
+    app.include_router(guardrails.router, prefix="/api/guardrails", tags=["guardrails"])
     app.include_router(providers.router, prefix="/api/providers", tags=["providers"])
     app.include_router(plugins_router.router, prefix="/api/plugins", tags=["plugins"])
     app.include_router(agent_router, prefix="/api", tags=["agent"])
     app.include_router(files.router, prefix="/api/workspace", tags=["workspace-files"])
     app.include_router(terminal.router, prefix="/api/terminal", tags=["terminal"])
+    app.include_router(codex_auth.router, prefix="/api/codex", tags=["codex-auth"])
 
     return app
 

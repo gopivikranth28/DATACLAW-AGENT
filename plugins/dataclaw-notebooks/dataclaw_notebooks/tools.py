@@ -118,7 +118,13 @@ async def insert_cell(*, index: int = -1, cell_type: str = "code", source: str =
 
     state.dirty = True
     await _mgr().save(state.name)
-    return {"inserted_at": actual, "cell_type": cell_type, "num_cells": len(cells)}
+    return {
+        "inserted_at": actual,
+        "cell_index": actual,
+        "cell_type": cell_type,
+        "source": source,
+        "num_cells": len(cells),
+    }
 
 
 async def edit_cell(*, cell_index: int, new_source: str, **kw: Any) -> dict[str, Any]:
@@ -182,19 +188,20 @@ async def execute_cell(*, cell_index: int, timeout: int = 120, **kw: Any) -> dic
     cell = cells[cell_index]
     if cell.cell_type != "code":
         raise ValueError(f"Cell {cell_index} is {cell.cell_type}, not code")
-    if not cell.source.strip():
-        return {"cell_index": cell_index, "outputs": [], "error": None}
+    source = cell.source
+    if not source.strip():
+        return {"cell_index": cell_index, "source": source, "outputs": [], "error": None}
 
     if not state.kernel_alive:
         await _mgr().start_kernel(state.name)
 
-    outputs, error = await _run_code(state, cell.source, timeout)
+    outputs, error = await _run_code(state, source, timeout)
     cell.outputs = outputs_to_nbformat(outputs)
     max_count = max((c.get("execution_count") or 0 for c in cells if c.cell_type == "code"), default=0)
     cell.execution_count = max_count + 1
     state.dirty = True
     await _mgr().save(state.name)
-    return {"cell_index": cell_index, "outputs": outputs, "error": error}
+    return {"cell_index": cell_index, "source": source, "outputs": outputs, "error": error}
 
 
 async def execute_code(*, code: str, timeout: int = 120, **kw: Any) -> dict[str, Any]:
@@ -261,9 +268,21 @@ async def _execute_and_collect(kc: Any, code: str, timeout: int) -> list[dict]:
         elif msg_type in ("execute_result", "display_data"):
             data = content.get("data", {})
             if "image/png" in data:
-                outputs.append({"type": "image", "data": data["image/png"], "mimetype": "image/png"})
+                outputs.append({
+                    "type": "image",
+                    "mimetype": "image/png",
+                    "data": data["image/png"],
+                    "summary": data.get("text/plain", ""),
+                })
             elif "text/html" in data:
-                outputs.append({"type": "html", "text": data["text/html"]})
+                outputs.append({
+                    "type": "html",
+                    "text": data["text/html"],
+                    "plain_text": data.get("text/plain", ""),
+                    "markdown": data.get("text/markdown", ""),
+                })
+            elif "text/markdown" in data:
+                outputs.append({"type": "markdown", "text": data["text/markdown"]})
             elif "text/plain" in data:
                 outputs.append({"type": "text", "text": data["text/plain"]})
         elif msg_type == "error":

@@ -54,11 +54,10 @@ PY
 fi
 export OPENCLAW_GATEWAY_TOKEN
 
-# Plugin tokens default to dataclaw-local (matches DataClaw API defaults)
-DATACLAW_FRONTEND_TOKEN="${DATACLAW_FRONTEND_TOKEN:-dataclaw-local}"
-DATACLAW_TOOLS_TOKEN="${DATACLAW_TOOLS_TOKEN:-dataclaw-local}"
+# Shared plugin token defaults to dataclaw-local (matches DataClaw API defaults)
+DATACLAW_TOKEN="${DATACLAW_TOKEN:-${DATACLAW_FRONTEND_TOKEN:-${DATACLAW_TOOLS_TOKEN:-dataclaw-local}}}"
 DATACLAW_API_URL="${DATACLAW_API_URL:-http://127.0.0.1:${DATACLAW_PORT}}"
-export DATACLAW_FRONTEND_TOKEN DATACLAW_TOOLS_TOKEN DATACLAW_API_URL
+export DATACLAW_TOKEN DATACLAW_API_URL
 
 if [[ "$FRESH_INSTALL" == true ]]; then
   # =======================================================================
@@ -88,22 +87,6 @@ if [[ "$FRESH_INSTALL" == true ]]; then
     {"path":"gateway.bind","value":"lan"},
     {"path":"gateway.controlUi.allowedOrigins","value":["http://localhost:%s","http://127.0.0.1:%s"]}
   ]' "$OPENCLAW_GATEWAY_PORT" "$OPENCLAW_GATEWAY_PORT")" >/dev/null || true
-
-  # --- Plugin env vars ---
-  echo "==> Configuring plugin environment"
-  openclaw config set env.vars.DATACLAW_API_URL "$DATACLAW_API_URL" >/dev/null || true
-  openclaw config set env.vars.DATACLAW_TOOLS_TOKEN "$DATACLAW_TOOLS_TOKEN" >/dev/null || true
-  openclaw config set env.vars.DATACLAW_FRONTEND_TOKEN "$DATACLAW_FRONTEND_TOKEN" >/dev/null || true
-
-  # --- Install plugins ---
-  echo "==> Installing dataclaw plugins"
-  openclaw plugins install /dataclaw/openclaw-plugins/dataclaw-frontend --force || true
-  openclaw plugins install /dataclaw/openclaw-plugins/dataclaw-tools --force || true
-
-  # --- Plugin permissions ---
-  echo "==> Configuring plugin permissions"
-  openclaw config set plugins.allow '["dataclaw-frontend","dataclaw-tools"]' >/dev/null || true
-  openclaw config set tools.alsoAllow '["dataclaw-tools"]' >/dev/null || true
 
   # --- Bootstrap workspace files ---
   echo "==> Bootstrapping workspace"
@@ -154,23 +137,37 @@ else
   # =======================================================================
   echo "==> Existing config found, skipping bootstrap"
 
-  # Check if dataclaw plugins are installed
-  NEED_PLUGIN_INSTALL=false
-  if [[ ! -d "$OPENCLAW_CONFIG_DIR/extensions/dataclaw-frontend" ]]; then
-    NEED_PLUGIN_INSTALL=true
-  fi
-  if [[ ! -d "$OPENCLAW_CONFIG_DIR/extensions/dataclaw-tools" ]]; then
-    NEED_PLUGIN_INSTALL=true
-  fi
-
-  if [[ "$NEED_PLUGIN_INSTALL" == true ]]; then
-    echo "==> Dataclaw plugins missing, reinstalling"
-    openclaw plugins install /dataclaw/openclaw-plugins/dataclaw-frontend --force || true
-    openclaw plugins install /dataclaw/openclaw-plugins/dataclaw-tools --force || true
+  # One-shot migration from the legacy two-plugin layout. Containers that came
+  # up before the consolidation may still have `dataclaw-tools` and/or
+  # `dataclaw-frontend` extensions on disk; remove them so the consolidated
+  # `dataclaw` plugin owns the channel + tools cleanly. Each call is a no-op
+  # if the plugin isn't installed.
+  if [[ -d "$OPENCLAW_CONFIG_DIR/extensions/dataclaw-tools" \
+     || -d "$OPENCLAW_CONFIG_DIR/extensions/dataclaw-frontend" ]]; then
+    echo "==> Removing legacy split plugins"
+    openclaw plugins uninstall dataclaw-tools 2>/dev/null || true
+    openclaw plugins uninstall dataclaw-frontend 2>/dev/null || true
   fi
 fi
 
-# --- Start both processes — exit container if either dies ---
+# ---------------------------------------------------------------------------
+# Run the canonical install flow BEFORE starting the gateway.
+# `install_dataclaw_plugin.py` calls `install_plugin_atomic` — the same
+# function the UI's "Install" button runs — so every step (build, install,
+# atomic batch config with delta-only writes, the tools.alsoAllow vs
+# tools.allow profile-aware branch, additive merges that preserve the user's
+# existing plugins.allow/tools.allow entries, plus the channels.<id> +
+# plugins.entries.<id>.* writes) stays in lockstep with the UI flow.
+#
+# The script stubs out _wait_for_gateway because the gateway isn't up yet —
+# `openclaw plugins install` and `openclaw config set` both write to disk
+# without needing a running gateway, and the gateway picks the new state up
+# when we start it below.
+# ---------------------------------------------------------------------------
+echo "==> Installing/refreshing dataclaw plugin (canonical flow)"
+( cd /dataclaw && uv run --no-sync python3 scripts/install_dataclaw_plugin.py ) \
+  || echo "Warning: dataclaw plugin install/refresh exited non-zero"
+
 echo "==> Starting OpenClaw gateway on port $OPENCLAW_GATEWAY_PORT"
 openclaw gateway \
   --bind lan \

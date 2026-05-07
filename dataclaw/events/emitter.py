@@ -26,6 +26,7 @@ from ag_ui.core import (
     ToolCallResultEvent,
     StateSnapshotEvent,
     StateDeltaEvent,
+    MessagesSnapshotEvent,
     CustomEvent,
 )
 from ag_ui.encoder import EventEncoder
@@ -158,6 +159,14 @@ class AgentEventEmitter:
             StateSnapshotEvent(
                 type=EventType.STATE_SNAPSHOT,
                 snapshot=snapshot,
+            )
+        )
+
+    def messages_snapshot(self, messages: list[dict[str, Any]]) -> str:
+        return self.encoder.encode(
+            MessagesSnapshotEvent(
+                type=EventType.MESSAGES_SNAPSHOT,
+                messages=messages,
             )
         )
 

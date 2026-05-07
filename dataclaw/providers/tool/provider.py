@@ -29,13 +29,16 @@ class ToolProvider:
         description: str,
         parameters: dict[str, Any],
         fn: Callable[..., Awaitable[dict[str, Any]]],
+        source: str = "builtin",
     ) -> None:
         self.name = name
         self.fn = fn
+        self.source = source
         self._definition: ToolDefinition = {
             "name": name,
             "description": description,
             "parameters": parameters,
+            "source": source,
         }
         # Check if function accepts **kwargs
         sig = inspect.signature(fn)

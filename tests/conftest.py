@@ -39,7 +39,7 @@ def tmp_dataclaw_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 class MockCompactionProvider:
-    async def compact(self, messages, *, max_messages=30, keep_recent=8):
+    async def compact(self, messages, *, max_messages=30, keep_recent=8, max_tokens=0):
         return messages
 
 
@@ -56,6 +56,12 @@ class MockMemoryProvider:
         return []
 
     def as_tool_definition(self):
+        return None
+
+    async def save_memory(self, content, *, metadata=None):
+        return {}
+
+    def as_save_tool_definition(self):
         return None
 
 
@@ -85,8 +91,12 @@ class MockLLMProvider:
     def __init__(self, response_text: str = "Hello from mock!", tool_calls: list | None = None):
         self._response_text = response_text
         self._tool_calls = tool_calls or []
+        # Record the kwargs the last stream_turn was called with, so tests
+        # can assert on reasoning_effort / text_verbosity passthrough.
+        self.last_call_kwargs: dict[str, Any] = {}
 
-    async def stream_turn(self, messages, *, system, tools) -> AsyncIterator[BrokerEvent]:
+    async def stream_turn(self, messages, *, system, tools, **kwargs) -> AsyncIterator[BrokerEvent]:
+        self.last_call_kwargs = dict(kwargs)
         yield TextDeltaEvent(text=self._response_text)
         for tc in self._tool_calls:
             yield PendingToolCall(**tc)
@@ -108,8 +118,8 @@ class MockLLMProvider:
                 "is_error": err is not None,
             })
         return [
-            Message(role="assistant", content=assistant_content),
-            Message(role="user", content=tool_results),
+            Message.tool_call(assistant_content),
+            Message.tool_result(tool_results),
         ]
 
 

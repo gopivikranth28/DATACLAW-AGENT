@@ -1,0 +1,34 @@
+{
+  "name": "@dataclaw/openclaw-dataclaw",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "OpenClaw plugin — exposes Dataclaw Python tools and routes Dataclaw UI messages to OpenClaw agents.",
+  "scripts": {
+    "ensure-manifest": "node -e \"const f='src/tools/tool-manifest.generated.ts';require('fs').existsSync(f)||require('fs').writeFileSync(f,'import type { DataclawToolDefinition } from \\\"./types.js\\\";\\nexport const DATACLAW_TOOL_MANIFEST: DataclawToolDefinition[] = [];\\n')\"",
+    "prebuild": "npm run ensure-manifest",
+    "build": "esbuild ./index.ts --bundle --outdir=./dist --platform=node --format=esm --external:openclaw --external:openclaw/*"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "channel": {
+      "id": "dataclaw",
+      "label": "Dataclaw",
+      "blurb": "Connect OpenClaw to the Dataclaw web frontend."
+    },
+    "compat": {
+      "pluginApi": ">=2026.3.24-beta.2",
+      "minGatewayVersion": "2026.3.24-beta.2"
+    }
+  },
+  "peerDependencies": {
+    "openclaw": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.2",
+    "esbuild": "^0.24.0",
+    "typescript": "^6.0.2"
+  }
+}

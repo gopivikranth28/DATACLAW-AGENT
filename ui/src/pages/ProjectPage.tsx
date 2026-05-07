@@ -7,7 +7,7 @@ import { FileViewerModal } from '../components/FilePreview'
 import FileIcon from '../components/FileIcon'
 import ChatPage from './ChatPage'
 
-interface Project { id: string; name: string; description: string; directory: string; created_at: string; dataset_ids?: string[] | null }
+interface Project { id: string; name: string; description: string; directory: string; created_at: string; dataset_ids?: string[] | null; tool_ids?: string[] | null; skill_ids?: string[] | null; subagent_ids?: string[] | null }
 interface Session { id: string; title: string; createdAt: string; updatedAt?: string }
 interface FileNode { name: string; path: string; is_dir: boolean; size: number; children?: FileNode[] }
 
@@ -51,6 +51,8 @@ export default function ProjectPage() {
   if (loading) return <div style={{ padding: 48, textAlign: 'center' }}><Spin /></div>
   if (!project) return <div style={{ padding: 48, textAlign: 'center' }}>Project not found</div>
 
+  const scrollPane: React.CSSProperties = { height: 'calc(100vh - 140px)', overflow: 'auto' }
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* Header */}
@@ -67,14 +69,17 @@ export default function ProjectPage() {
       <Tabs
         activeKey={activeTab}
         onChange={setActiveTab}
-        style={{ flex: 1, overflow: 'hidden' }}
+        style={{ flex: 1, minHeight: 0 }}
         tabBarStyle={{ padding: '0 24px', marginBottom: 0 }}
         items={[
-          { key: 'sessions', label: 'Sessions', children: <SessionsTab projectId={project.id} visible={activeTab === 'sessions'} onOpenChat={(sessionId) => setSelectedSessionId(sessionId)} /> },
+          { key: 'sessions', label: 'Sessions', children: <div style={scrollPane}><SessionsTab projectId={project.id} visible={activeTab === 'sessions'} onOpenChat={(sessionId) => setSelectedSessionId(sessionId)} /></div> },
           { key: 'chat', label: 'Chat', children: <div style={{ height: 'calc(100vh - 140px)' }}><ChatPage projectId={project.id} initialSessionId={selectedSessionId} initialDatasetIds={project.dataset_ids} onSessionChange={setSelectedSessionId} /></div> },
-          { key: 'data', label: 'Data Sources', children: <DataSourcesTab projectId={project.id} initialDatasetIds={project.dataset_ids} onDatasetIdsChange={(ids) => setProject(prev => prev ? { ...prev, dataset_ids: ids } : prev)} /> },
-          { key: 'files', label: 'Files', children: <FilesTab projectId={project.id} /> },
-          { key: 'experiments', label: 'Experiments', children: <ExperimentsTab projectId={project.id} /> },
+          { key: 'data', label: 'Data Sources', children: <div style={scrollPane}><DataSourcesTab projectId={project.id} initialDatasetIds={project.dataset_ids} onDatasetIdsChange={(ids) => setProject(prev => prev ? { ...prev, dataset_ids: ids } : prev)} /></div> },
+          { key: 'tools', label: 'Tools', children: <div style={scrollPane}><ProjectToolsTab projectId={project.id} initialToolIds={project.tool_ids} onToolIdsChange={(ids) => setProject(prev => prev ? { ...prev, tool_ids: ids } : prev)} /></div> },
+          { key: 'skills', label: 'Skills', children: <div style={scrollPane}><ProjectSkillsTab projectId={project.id} initialSkillIds={project.skill_ids} onSkillIdsChange={(ids) => setProject(prev => prev ? { ...prev, skill_ids: ids } : prev)} /></div> },
+          { key: 'subagents', label: 'Subagents', children: <div style={scrollPane}><ProjectSubagentsTab projectId={project.id} initialSubagentIds={project.subagent_ids} onSubagentIdsChange={(ids) => setProject(prev => prev ? { ...prev, subagent_ids: ids } : prev)} /></div> },
+          { key: 'files', label: 'Files', children: <div style={scrollPane}><FilesTab projectId={project.id} /></div> },
+          { key: 'experiments', label: 'Experiments', children: <div style={scrollPane}><ExperimentsTab projectId={project.id} /></div> },
         ]}
       />
     </div>
@@ -287,6 +292,218 @@ function DataSourcesTab({ projectId, initialDatasetIds, onDatasetIdsChange }: {
                 <span style={{ fontWeight: 500 }}>{ds.name}</span>
                 <Tag style={{ fontSize: 10 }}>{ds.type}</Tag>
                 <Tag color={ds.status === 'connected' ? 'green' : 'red'} style={{ fontSize: 10 }}>{ds.status}</Tag>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Project Tools Tab ─────────────────────────────────────────────────────
+
+function ProjectToolsTab({ projectId, initialToolIds, onToolIdsChange }: {
+  projectId: string
+  initialToolIds?: string[] | null
+  onToolIdsChange?: (ids: string[] | null) => void
+}) {
+  const [tools, setTools] = useState<any[]>([])
+  const [selectedIds, setSelectedIds] = useState<string[] | null>(initialToolIds ?? null)
+  const [search, setSearch] = useState('')
+
+  useEffect(() => {
+    fetch(`${API}/tools`).then(r => r.ok ? r.json() : { tools: [] })
+      .then(data => setTools(data.tools ?? []))
+      .catch(() => {})
+  }, [projectId])
+
+  useEffect(() => {
+    fetch(`${API}/projects/${projectId}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(p => { if (p?.tool_ids !== undefined) setSelectedIds(p.tool_ids) })
+      .catch(() => {})
+  }, [projectId])
+
+  const filtered = tools.filter(t => !search || t.name?.toLowerCase().includes(search.toLowerCase()))
+  const limiting = selectedIds !== null
+  const isSelected = (name: string) => !limiting || selectedIds!.includes(name)
+
+  const saveSelection = (ids: string[] | null) => {
+    setSelectedIds(ids)
+    onToolIdsChange?.(ids)
+    fetch(`${API}/projects/${projectId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tool_ids: ids }),
+    }).catch(() => {})
+  }
+
+  const toggle = (name: string, on: boolean) => {
+    const current = limiting ? [...selectedIds!] : tools.map(t => t.name)
+    const next = on ? [...current, name] : current.filter(x => x !== name)
+    saveSelection(next)
+  }
+
+  return (
+    <div style={{ padding: 24, maxWidth: 700 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
+        <Input placeholder="Search tools..." value={search} onChange={e => setSearch(e.target.value)} style={{ maxWidth: 300 }} allowClear />
+        <Button size="small" onClick={() => saveSelection(null)}>Use all</Button>
+        <Button size="small" onClick={() => saveSelection([])}>Use none</Button>
+        <span style={{ marginLeft: 'auto', fontSize: 12, color: '#888' }}>
+          {limiting ? `${selectedIds!.length} of ${tools.length} selected` : `All ${tools.length} tools`}
+        </span>
+      </div>
+      {filtered.length === 0 ? (
+        <Empty description="No tools" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {filtered.map(t => (
+            <Card key={t.name} size="small" style={{ borderRadius: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Switch size="small" checked={isSelected(t.name)} onChange={on => toggle(t.name, on)} />
+                <span style={{ fontWeight: 500, fontFamily: 'monospace', fontSize: 13 }}>{t.name}</span>
+                {t.source && <Tag style={{ fontSize: 10 }}>{t.source}</Tag>}
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Project Skills Tab ───────────────────────────────────────────────────
+
+function ProjectSkillsTab({ projectId, initialSkillIds, onSkillIdsChange }: {
+  projectId: string
+  initialSkillIds?: string[] | null
+  onSkillIdsChange?: (ids: string[] | null) => void
+}) {
+  const [skills, setSkills] = useState<any[]>([])
+  const [selectedIds, setSelectedIds] = useState<string[] | null>(initialSkillIds ?? null)
+  const [search, setSearch] = useState('')
+
+  useEffect(() => {
+    fetch(`${API}/skills`).then(r => r.ok ? r.json() : []).then(setSkills).catch(() => {})
+  }, [projectId])
+
+  useEffect(() => {
+    fetch(`${API}/projects/${projectId}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(p => { if (p?.skill_ids !== undefined) setSelectedIds(p.skill_ids) })
+      .catch(() => {})
+  }, [projectId])
+
+  const filtered = skills.filter(s => !search || s.name?.toLowerCase().includes(search.toLowerCase()))
+  const limiting = selectedIds !== null
+  const isSelected = (id: string) => !limiting || selectedIds!.includes(id)
+
+  const saveSelection = (ids: string[] | null) => {
+    setSelectedIds(ids)
+    onSkillIdsChange?.(ids)
+    fetch(`${API}/projects/${projectId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ skill_ids: ids }),
+    }).catch(() => {})
+  }
+
+  const toggle = (id: string, on: boolean) => {
+    const current = limiting ? [...selectedIds!] : skills.map(s => s.id)
+    const next = on ? [...current, id] : current.filter(x => x !== id)
+    saveSelection(next)
+  }
+
+  return (
+    <div style={{ padding: 24, maxWidth: 700 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
+        <Input placeholder="Search skills..." value={search} onChange={e => setSearch(e.target.value)} style={{ maxWidth: 300 }} allowClear />
+        <Button size="small" onClick={() => saveSelection(null)}>Use all</Button>
+        <Button size="small" onClick={() => saveSelection([])}>Use none</Button>
+        <span style={{ marginLeft: 'auto', fontSize: 12, color: '#888' }}>
+          {limiting ? `${selectedIds!.length} of ${skills.length} selected` : `All ${skills.length} skills`}
+        </span>
+      </div>
+      {filtered.length === 0 ? (
+        <Empty description="No skills" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {filtered.map(s => (
+            <Card key={s.id} size="small" style={{ borderRadius: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Switch size="small" checked={isSelected(s.id)} onChange={on => toggle(s.id, on)} />
+                <span style={{ fontWeight: 500 }}>{s.name}</span>
+                {s.description && <span style={{ fontSize: 11, color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 300 }}>{s.description}</span>}
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Project Subagents Tab ────────────────────────────────────────────────
+
+function ProjectSubagentsTab({ projectId, initialSubagentIds, onSubagentIdsChange }: {
+  projectId: string
+  initialSubagentIds?: string[] | null
+  onSubagentIdsChange?: (ids: string[] | null) => void
+}) {
+  const [subagents, setSubagents] = useState<any[]>([])
+  const [selectedIds, setSelectedIds] = useState<string[] | null>(initialSubagentIds ?? null)
+  const [search, setSearch] = useState('')
+
+  useEffect(() => {
+    fetch(`${API}/subagents/`).then(r => r.ok ? r.json() : []).then(setSubagents).catch(() => {})
+  }, [projectId])
+
+  useEffect(() => {
+    fetch(`${API}/projects/${projectId}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(p => { if (p?.subagent_ids !== undefined) setSelectedIds(p.subagent_ids) })
+      .catch(() => {})
+  }, [projectId])
+
+  const filtered = subagents.filter(sa => !search || sa.name?.toLowerCase().includes(search.toLowerCase()))
+  const limiting = selectedIds !== null
+  const isSelected = (id: string) => !limiting || selectedIds!.includes(id)
+
+  const saveSelection = (ids: string[] | null) => {
+    setSelectedIds(ids)
+    onSubagentIdsChange?.(ids)
+    fetch(`${API}/projects/${projectId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subagent_ids: ids }),
+    }).catch(() => {})
+  }
+
+  const toggle = (id: string, on: boolean) => {
+    const current = limiting ? [...selectedIds!] : subagents.map(sa => sa.id)
+    const next = on ? [...current, id] : current.filter(x => x !== id)
+    saveSelection(next)
+  }
+
+  return (
+    <div style={{ padding: 24, maxWidth: 700 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
+        <Input placeholder="Search subagents..." value={search} onChange={e => setSearch(e.target.value)} style={{ maxWidth: 300 }} allowClear />
+        <Button size="small" onClick={() => saveSelection(null)}>Use all</Button>
+        <Button size="small" onClick={() => saveSelection([])}>Use none</Button>
+        <span style={{ marginLeft: 'auto', fontSize: 12, color: '#888' }}>
+          {limiting ? `${selectedIds!.length} of ${subagents.length} selected` : `All ${subagents.length} subagents`}
+        </span>
+      </div>
+      {filtered.length === 0 ? (
+        <Empty description="No subagents" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {filtered.map(sa => (
+            <Card key={sa.id} size="small" style={{ borderRadius: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Switch size="small" checked={isSelected(sa.id)} onChange={on => toggle(sa.id, on)} />
+                <span style={{ fontWeight: 500 }}>{sa.name}</span>
+                {sa.agent_type && <Tag style={{ fontSize: 10 }}>{sa.agent_type}</Tag>}
               </div>
             </Card>
           ))}

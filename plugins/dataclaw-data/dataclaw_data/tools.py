@@ -12,6 +12,33 @@ from dataclaw_data.registry import read_datasets, find_dataset
 
 MAX_QUERY_ROWS = 500
 
+# Sentinel: parameter wasn't supplied, so use the runtime-configured default.
+# Distinct from None, which explicitly means "no cap" (used by the notebook
+# runtime endpoint to materialize full DataFrames).
+_USE_CONFIG: Any = object()
+
+# Module-level plugin config — set by the plugin's register() at startup.
+_plugin_cfg: dict[str, Any] = {}
+
+
+def set_plugin_cfg(cfg: dict[str, Any]) -> None:
+    """Store the plugin config so query helpers can read max_query_rows etc."""
+    global _plugin_cfg
+    _plugin_cfg = cfg or {}
+
+
+def _configured_max_query_rows() -> int:
+    """Resolve the configured row cap, falling back to MAX_QUERY_ROWS."""
+    raw = _plugin_cfg.get("max_query_rows")
+    if raw is None:
+        return MAX_QUERY_ROWS
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return MAX_QUERY_ROWS
+    return value if value > 0 else MAX_QUERY_ROWS
+
+
 # Module-level dataset filter — set by preToolCallHook before each agent turn.
 # None means "all datasets", a list means "only these IDs".
 _allowed_dataset_ids: list[str] | None = None
@@ -74,19 +101,26 @@ async def data_preview_data(
     *,
     dataset_id: str,
     table_name: str,
-    n_rows: int = 50,
+    n_rows: int | None = 50,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """Preview rows from a dataset table."""
+    """Preview rows from a dataset table.
+
+    n_rows=None means "no LIMIT, return the whole table" — used by the
+    notebook runtime endpoint when materializing a full DataFrame.
+    """
     _check_dataset_allowed(dataset_id)
     dataset = find_dataset(dataset_id)
     table = _find_table(dataset, table_name)
     conn = _connect(dataset)
     try:
         relation = _relation_for_table(conn, dataset, table)
-        result = conn.execute(f"SELECT * FROM {relation} LIMIT {int(n_rows)}")
+        if n_rows is None:
+            result = conn.execute(f"SELECT * FROM {relation}")
+        else:
+            result = conn.execute(f"SELECT * FROM {relation} LIMIT {int(n_rows)}")
         qname = _safe_alias(table)
-        payload = _rows_result(result, table_name=table_name, query_name=qname)
+        payload = _rows_result(result, table_name=table_name, query_name=qname, max_rows=n_rows)
         payload["notebook_hint"] = (
             f"To load this table as a DataFrame in a notebook:\n"
             f"  import dataclaw_data\n"
@@ -199,19 +233,29 @@ async def data_query_data(
     *,
     dataset_id: str,
     sql: str,
+    max_rows: Any = _USE_CONFIG,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """Run read-only DuckDB SQL against a dataset."""
+    """Run read-only DuckDB SQL against a dataset.
+
+    `max_rows` caps the returned row count. Defaults to the plugin config's
+    `max_query_rows` (500 unless overridden) to keep LLM tool responses
+    bounded; pass None to disable the cap (used by the notebook runtime
+    endpoint, which streams full results into a DataFrame).
+    """
     _check_dataset_allowed(dataset_id)
     if not _is_read_only(sql):
         raise ValueError("Only read-only SELECT/WITH/SHOW/DESCRIBE/SUMMARIZE SQL is allowed")
+
+    if max_rows is _USE_CONFIG:
+        max_rows = _configured_max_query_rows()
 
     dataset = find_dataset(dataset_id)
     conn = _connect(dataset)
     try:
         registered = _register_views(conn, dataset)
         result = conn.execute(sql)
-        payload = _rows_result(result)
+        payload = _rows_result(result, max_rows=max_rows)
         payload["dataset_id"] = dataset_id
         payload["registered_tables"] = registered
         return payload
@@ -309,9 +353,15 @@ def _column_details(conn: Any, relation: str, table: dict) -> list[dict[str, str
     return [{"name": str(c[0]), "type": str(c[1]) if len(c) > 1 else "unknown"} for c in desc]
 
 
-def _rows_result(result: Any, table_name: str | None = None, query_name: str | None = None) -> dict[str, Any]:
+def _rows_result(
+    result: Any,
+    table_name: str | None = None,
+    query_name: str | None = None,
+    max_rows: int | None = MAX_QUERY_ROWS,
+) -> dict[str, Any]:
     columns = [desc[0] for desc in result.description]
-    rows = [{col: _serialize(val) for col, val in zip(columns, row)} for row in result.fetchmany(MAX_QUERY_ROWS)]
+    raw_rows = result.fetchall() if max_rows is None else result.fetchmany(max_rows)
+    rows = [{col: _serialize(val) for col, val in zip(columns, row)} for row in raw_rows]
     payload: dict[str, Any] = {"columns": columns, "rows": rows, "row_count": len(rows)}
     if table_name:
         payload["table_name"] = table_name

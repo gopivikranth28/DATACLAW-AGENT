@@ -20,10 +20,17 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY --from=node-bin /usr/local/bin/ /usr/local/bin/
 COPY --from=node-bin /usr/local/lib/node_modules/ /usr/local/lib/node_modules/
 
-# System deps: curl (for OpenClaw install script) and a systemctl
+# Install the OpenAI Codex CLI — used by `dataclaw/auth/codex_login.py` to
+# drive browser-based / device-code OAuth flows when the user picks the
+# "OpenAI Codex" agent backend. The Python SDK shells out to this binary,
+# so the import alone is not sufficient.
+RUN npm install -g @openai/codex@latest
+
+# System deps: curl (for OpenClaw install script), git (so uv sync can
+# clone openai-codex-app-server-sdk from its git source), and a systemctl
 # replacement so OpenClaw's daemon manager works in containers.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && apt-get install -y --no-install-recommends curl ca-certificates git \
     && curl -fsSL https://raw.githubusercontent.com/gdraheim/docker-systemctl-replacement/master/files/docker/systemctl3.py \
        -o /usr/bin/systemctl \
     && chmod +x /usr/bin/systemctl \
@@ -47,9 +54,6 @@ COPY --from=ui-build /build/dist ui/dist/
 
 # Copy openclaw-plugins source (needed for plugin install via the Config page)
 COPY openclaw-plugins/ openclaw-plugins/
-
-# Create runtime directories
-RUN mkdir -p /dataclaw/workspaces /dataclaw/data
 
 # Prevent OpenClaw from detecting a headless environment — the embedded UI
 # is the user's local interface, so we fake a display.

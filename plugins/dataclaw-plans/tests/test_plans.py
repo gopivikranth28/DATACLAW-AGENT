@@ -3,7 +3,14 @@
 import pytest
 
 import dataclaw.config.paths as paths
-from dataclaw_plans.store import read_proposals, write_proposals, get_active_plan_id
+from dataclaw_plans.store import (
+    read_proposals,
+    write_proposals,
+    get_active_plan_id,
+    read_snapshots,
+    find_snapshot,
+    SNAPSHOTS_PER_PROPOSAL,
+)
 from dataclaw_plans.tools import propose_plan, update_plan, get_plan_decision, list_plans, get_plan
 from dataclaw_plans.hooks import active_plan_context_hook
 
@@ -30,7 +37,35 @@ async def test_propose_plan():
     )
     assert result["status"] == "pending"
     assert result["proposal_id"].startswith("plan-")
-    assert len(result["plan"]["steps"]) == 2
+    assert result["snapshot_id"].startswith("snap-")
+    assert result["revision"] == 1
+    assert "plan" not in result  # full plan must not be echoed
+    # Live plan still has the steps.
+    plan = await get_plan(proposal_id=result["proposal_id"])
+    assert len(plan["steps"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_propose_plan_return_shape_slim():
+    result = await propose_plan(
+        name="Plan", description="d",
+        steps=[{"name": "s", "description": "d"}], session_id="sess-1",
+    )
+    assert set(result.keys()) == {"proposal_id", "snapshot_id", "status", "revision", "message"}
+    assert "awaiting" in result["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_propose_plan_persists_snapshot():
+    result = await propose_plan(
+        name="Plan", description="d",
+        steps=[{"name": "s1", "description": "d1"}],
+        session_id="sess-1",
+    )
+    snap = find_snapshot(result["snapshot_id"])
+    assert snap["proposal_id"] == result["proposal_id"]
+    assert snap["trigger"] == "propose"
+    assert snap["plan"]["steps"][0]["name"] == "s1"
 
 
 @pytest.mark.asyncio
@@ -51,10 +86,11 @@ async def test_propose_plan_auto_resolve():
     r1 = await propose_plan(name="Plan v1", description="d", steps=[{"name": "s1", "description": "d1"}], session_id="sess-1")
     r2 = await propose_plan(name="Plan v2", description="d", steps=[{"name": "s2", "description": "d2"}], session_id="sess-1")
 
-    # Same proposal ID, updated
+    # Same proposal ID, updated revision
     assert r2["proposal_id"] == r1["proposal_id"]
-    assert r2["plan"]["name"] == "Plan v2"
-    assert r2["plan"]["revision"] == 2
+    assert r2["revision"] == 2
+    plan = await get_plan(proposal_id=r2["proposal_id"])
+    assert plan["name"] == "Plan v2"
 
     # Only one proposal in store
     assert len(read_proposals()) == 1
@@ -73,8 +109,16 @@ async def test_update_plan():
         step_patches=[{"name": "Step 1", "status": "completed", "summary": "Done!"}],
         session_id="sess-1",
     )
-    assert result["plan"]["steps"][0]["status"] == "completed"
-    assert result["plan"]["steps"][0]["summary"] == "Done!"
+    assert result["success"] is True
+    assert result["steps_updated"] == 1
+    assert result["snapshot_id"].startswith("snap-")
+    assert "plan" not in result  # no full echo
+
+    # Snapshot is the temporally-correct view: step 1 completed.
+    snap = find_snapshot(result["snapshot_id"])
+    assert snap["trigger"] == "update"
+    assert snap["plan"]["steps"][0]["status"] == "completed"
+    assert snap["plan"]["steps"][0]["summary"] == "Done!"
 
 
 @pytest.mark.asyncio
@@ -87,13 +131,85 @@ async def test_update_plan_new_step():
         step_patches=[{"name": "Step 2", "status": "in_progress", "description": "New step"}],
         session_id="sess-1",
     )
-    assert len(result["plan"]["steps"]) == 2
+    assert result["success"] is True
+    snap = find_snapshot(result["snapshot_id"])
+    assert len(snap["plan"]["steps"]) == 2
 
 
 @pytest.mark.asyncio
-async def test_update_plan_not_found():
-    with pytest.raises(KeyError, match="not found"):
-        await update_plan(proposal_id="nonexistent", session_id="sess-1")
+async def test_update_plan_not_found_returns_soft_failure():
+    """Missing proposal returns success:false, doesn't raise."""
+    result = await update_plan(proposal_id="nonexistent", session_id="sess-1")
+    assert result == {
+        "success": False,
+        "proposal_id": "nonexistent",
+        "error": "Plan proposal not found",
+    }
+
+
+@pytest.mark.asyncio
+async def test_update_plan_snapshots_preserve_history():
+    """Each update_plan persists a frozen snapshot — older ones don't mutate."""
+    r = await propose_plan(
+        name="Plan", description="d",
+        steps=[
+            {"name": "Step 1", "description": "d1"},
+            {"name": "Step 2", "description": "d2"},
+        ],
+        session_id="sess-1",
+    )
+    pid = r["proposal_id"]
+    propose_snap_id = r["snapshot_id"]
+
+    r1 = await update_plan(
+        proposal_id=pid,
+        step_patches=[{"name": "Step 1", "status": "completed"}],
+        session_id="sess-1",
+    )
+    r2 = await update_plan(
+        proposal_id=pid,
+        step_patches=[{"name": "Step 2", "status": "completed"}],
+        session_id="sess-1",
+    )
+
+    # The second update's snapshot has both steps completed.
+    snap2 = find_snapshot(r2["snapshot_id"])
+    assert all(s["status"] == "completed" for s in snap2["plan"]["steps"])
+
+    # The first update's snapshot still shows step 2 NOT completed —
+    # this is the timeline-preservation property.
+    snap1 = find_snapshot(r1["snapshot_id"])
+    statuses = {s["name"]: s["status"] for s in snap1["plan"]["steps"]}
+    assert statuses["Step 1"] == "completed"
+    assert statuses["Step 2"] != "completed"
+
+    # The original propose snapshot is untouched.
+    propose_snap = find_snapshot(propose_snap_id)
+    assert all(s["status"] == "not_started" for s in propose_snap["plan"]["steps"])
+
+
+@pytest.mark.asyncio
+async def test_snapshot_pruning_caps_at_limit():
+    """Snapshots beyond SNAPSHOTS_PER_PROPOSAL for one proposal are dropped (oldest first)."""
+    r = await propose_plan(
+        name="Plan", description="d",
+        steps=[{"name": "Step", "description": "d"}],
+        session_id="sess-1",
+    )
+    pid = r["proposal_id"]
+    # The propose call already added 1 snapshot. Push past the cap.
+    extra = SNAPSHOTS_PER_PROPOSAL  # → total = SNAPSHOTS_PER_PROPOSAL + 1, then prune to cap
+    for _ in range(extra):
+        await update_plan(
+            proposal_id=pid,
+            step_patches=[{"name": "Step", "status": "in_progress"}],
+            session_id="sess-1",
+        )
+
+    proposal_snaps = [s for s in read_snapshots() if s["proposal_id"] == pid]
+    assert len(proposal_snaps) == SNAPSHOTS_PER_PROPOSAL
+    # Oldest dropped: the original propose snapshot is gone.
+    assert all(s["id"] != r["snapshot_id"] for s in proposal_snaps)
 
 
 # ── Query ───────────────────────────────────────────────────────────────────

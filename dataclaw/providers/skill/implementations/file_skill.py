@@ -61,6 +61,12 @@ class FileSkillProvider:
 
     def __init__(self, directory: Path | None = None) -> None:
         self._dir = directory or skills_dir()
+        self._resolved_skills: list[dict[str, Any]] = []
+        # Sentinel: distinguishes "resolve_skills() never ran for this
+        # request" (use _load_all() — same behavior as old code) from
+        # "resolve_skills() ran and the filter is empty" (no skills, don't
+        # fall back to all). Set on every resolve_skills() call.
+        self._resolved_skills_set: bool = False
 
     def _load_all(self) -> list[dict[str, Any]]:
         if not self._dir.exists():
@@ -73,18 +79,109 @@ class FileSkillProvider:
         return skills
 
     async def resolve_skills(self, state: AgentState) -> list[dict[str, Any]]:
-        return self._load_all()
+        all_skills = self._load_all()
+
+        # Check session-level allowlist first, then project-level
+        allowed_ids = self._resolve_allowed_ids(state)
+        if allowed_ids is not None:
+            filtered = [s for s in all_skills if s["id"] in allowed_ids]
+        else:
+            filtered = all_skills
+
+        # Assign serial IDs for unambiguous LLM tool calls
+        for i, skill in enumerate(filtered):
+            skill["serial_id"] = f"skill_{i + 1}"
+
+        self._resolved_skills = filtered
+        self._resolved_skills_set = True
+        return filtered
+
+    def _resolve_allowed_ids(self, state: AgentState) -> list[str] | None:
+        """Resolve skill allowlist from session → project → None (all)."""
+        import json
+        from dataclaw.config.paths import sessions_dir
+
+        session_id = state.get("session_id")
+        if session_id:
+            try:
+                path = sessions_dir() / f"{session_id}.json"
+                if path.exists():
+                    data = json.loads(path.read_text())
+                    if data.get("skillIds") is not None:
+                        return data["skillIds"]
+            except Exception:
+                pass
+
+        project_id = state.get("project_id")
+        if project_id:
+            try:
+                from dataclaw_projects.registry import get_project
+                proj = get_project(project_id)
+                if proj.get("skill_ids") is not None:
+                    return proj["skill_ids"]
+            except Exception:
+                pass
+
+        return None
 
     async def format_for_prompt(self, skills: list[dict[str, Any]]) -> list[str]:
-        fragments = []
-        for skill in skills:
-            fragments.append(
-                f"### {skill['name']}\n{skill.get('description', '')}\n{skill.get('body', '')}"
-            )
-        return fragments
+        """Format skill summaries for the system prompt.
 
-    async def fetch_skill(self, skill_id: str) -> dict[str, Any] | None:
-        for skill in self._load_all():
-            if skill["id"] == skill_id:
-                return skill
-        return None
+        Only includes id, name, and description — not the full body.
+        The agent uses the ``fetch_skill`` tool to load the full content
+        when it decides to apply a skill.
+        """
+        if not skills:
+            return []
+        lines = ["Available skills (use the `fetch_skill` tool with the id to load full instructions):"]
+        for skill in skills:
+            sid = skill.get("serial_id", skill["id"])
+            desc = skill.get("description", "")
+            line = f"- {skill['name']} (id: {sid})"
+            if desc:
+                line += f" - {desc}"
+            lines.append(line)
+        return ["\n".join(lines)]
+
+    async def fetch_skill(self, skill_id: str, **kwargs: Any) -> dict[str, Any]:
+        """Fetch the full content of a skill by its serial ID. Used as an agent tool."""
+        # Look up from the cached resolved list first (has serial_ids).
+        for skill in self._resolved_skills:
+            if skill.get("serial_id") == skill_id or skill["id"] == skill_id:
+                return {
+                    "content": f"# {skill['name']}\n\n{skill.get('body', '')}",
+                    "id": skill.get("serial_id", skill["id"]),
+                    "name": skill["name"],
+                    "description": skill.get("description", ""),
+                }
+        # Fallback only when no per-request resolve happened (e.g., a
+        # standalone CLI invocation). If the session-aware preToolCallHook
+        # ran and the requested id wasn't in the resolved set, the filter
+        # excluded it on purpose — don't reach into _load_all() and bypass.
+        if not self._resolved_skills_set:
+            for skill in self._load_all():
+                if skill["id"] == skill_id:
+                    return {
+                        "content": f"# {skill['name']}\n\n{skill.get('body', '')}",
+                        "id": skill["id"],
+                        "name": skill["name"],
+                        "description": skill.get("description", ""),
+                    }
+        return {"content": f"Skill not found: {skill_id}", "is_error": True}
+
+    async def list_available_skills(self, **kwargs: Any) -> dict[str, Any]:
+        """List skills available for the current session. Used as an agent tool."""
+        # Trust the resolved cache *only* if resolve_skills() was actually
+        # called for this request (set by the preToolCallHook in app.py).
+        # The old `_resolved_skills or _load_all()` fallback also fired for
+        # explicit empty-list filters (a session with `skillIds: []`), so
+        # filtering down to zero silently became "show everything".
+        if self._resolved_skills_set:
+            skills = self._resolved_skills
+        else:
+            skills = self._load_all()
+        lines = []
+        for i, s in enumerate(skills):
+            sid = s.get("serial_id", f"skill_{i + 1}")
+            lines.append(f"- {s['name']} (id: {sid}): {s.get('description', '')}")
+        return {"content": "\n".join(lines) if lines else "No skills available."}

@@ -24,6 +24,17 @@ class PluginContext:
     app: FastAPI
     config: DataclawConfig
     tool_registry: Any  # DefaultToolAvailability (avoid circular import)
+    guardrail_registry: Any = None  # GuardrailRegistry (avoid circular import)
+
+    @property
+    def sub_agent_registry(self):
+        """Shortcut to providers.sub_agent_registry."""
+        return self.providers.sub_agent_registry
+
+    @property
+    def sub_agent_hooks(self):
+        """Shortcut to providers.sub_agent_hooks."""
+        return self.providers.sub_agent_hooks
 
     def include_api_router(self, router: Any, **kwargs: Any) -> None:
         """Register a router under the /api prefix. Plugins should use this instead of app.include_router()."""

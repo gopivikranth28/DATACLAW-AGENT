@@ -14,6 +14,7 @@ from dataclaw_plans.store import (
     write_proposals,
     find_proposal,
     get_active_plan_id,
+    append_snapshot,
 )
 
 
@@ -24,6 +25,7 @@ async def propose_plan(
     steps: list[dict[str, Any]],
     context: str = "",
     session_id: str = "default",
+    _auto_approve: bool = False,
     **kw: Any,
 ) -> dict[str, Any]:
     """Create or revise a plan proposal for user approval."""
@@ -87,8 +89,23 @@ async def propose_plan(
     except Exception:
         logger.debug("MLflow experiment creation skipped", exc_info=True)
 
+    # Auto-approve when auto mode is active
+    if _auto_approve:
+        proposal["status"] = "approved"
+        proposal["decision"] = "approved"
+
     write_proposals(proposals)
-    return {"proposal_id": proposal["id"], "status": proposal["status"], "plan": proposal}
+    snapshot = append_snapshot(proposal, trigger="propose")
+    return {
+        "proposal_id": proposal["id"],
+        "snapshot_id": snapshot["id"],
+        "status": proposal["status"],
+        "revision": proposal["revision"],
+        "message": (
+            "Plan auto-approved." if proposal["status"] == "approved"
+            else "Plan submitted — awaiting user decision."
+        ),
+    }
 
 
 async def update_plan(
@@ -130,9 +147,20 @@ async def update_plan(
         proposal["updated_at"] = datetime.now(timezone.utc).isoformat()
         write_proposals(proposals)
 
-        return {"proposal_id": proposal["id"], "status": proposal["status"], "plan": proposal}
+        snapshot = append_snapshot(proposal, trigger="update")
+        return {
+            "proposal_id": proposal["id"],
+            "snapshot_id": snapshot["id"],
+            "status": proposal["status"],
+            "steps_updated": len(patches),
+            "success": True,
+        }
 
-    raise KeyError(f"Plan proposal not found: {proposal_id}")
+    return {
+        "success": False,
+        "proposal_id": proposal_id,
+        "error": "Plan proposal not found",
+    }
 
 
 async def get_plan_decision(

@@ -1,0 +1,25 @@
+[project]
+name = "dataclaw-codex"
+version = "0.1.0"
+description = "Dataclaw plugin — OpenAI Codex subagent provider"
+requires-python = ">=3.12"
+dependencies = [
+    "dataclaw",
+    "openai-codex-app-server-sdk",
+]
+
+[project.entry-points."dataclaw.plugins"]
+dataclaw-codex = "dataclaw_codex:CodexPlugin"
+
+[tool.uv.sources]
+openai-codex-app-server-sdk = { git = "https://github.com/openai/codex.git", subdirectory = "sdk/python" }
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

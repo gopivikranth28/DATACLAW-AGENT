@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+
+# Node
+node_modules/
+ui/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets / local config
+.env
+.env.*
+.dataclaw/
+.openclaw/
+
+# Runtime data
+*.db
+*.sqlite
+workspaces/
+docker-data/
+dataclaw-data/   # legacy bundled-compose mount path (now docker-data/dataclaw)
+data/
+
+# Testing
+.pytest_cache/
+
+# Claude
+.claude/
+.claude3/
+CLAUDE.md
+
+# Vite build output
+ui/build/
+
+*.zip

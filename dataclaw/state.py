@@ -16,11 +16,22 @@ from typing import Any, Callable, Awaitable, TypedDict, Annotated
 from dataclaw.schema import Message
 
 
+class ReplaceMessages:
+    """Sentinel wrapper: signals the reducer to replace rather than append."""
+
+    __slots__ = ("messages",)
+
+    def __init__(self, messages: list[Message]) -> None:
+        self.messages = messages
+
+
 def append_messages(
     existing: list[Message],
-    updates: list[Message],
+    updates: list[Message] | ReplaceMessages,
 ) -> list[Message]:
-    """LangGraph reducer: append new messages to the conversation."""
+    """LangGraph reducer: append new messages, or replace if wrapped in ReplaceMessages."""
+    if isinstance(updates, ReplaceMessages):
+        return updates.messages
     return existing + updates
 
 
@@ -44,6 +55,9 @@ class AgentState(TypedDict, total=False):
     # ── Agent response ──────────────────────────────────────────────────
     pending_tool_calls: list[dict[str, Any]]
     tool_results: list[dict[str, Any]]
+
+    # ── Guardrails ──────────────────────────────────────────────────────
+    guardrail_verdicts: list[dict[str, Any]]
 
     # ── Loop metadata ───────────────────────────────────────────────────
     turn: int

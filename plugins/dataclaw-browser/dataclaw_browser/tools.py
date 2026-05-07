@@ -51,17 +51,13 @@ async def browser_use(
     errors: list[str] = []
 
     try:
-        initial_actions = []
-        if url:
-            initial_actions.append({"open_url": url})
-
         profile = BrowserProfile(headless=True)
         agent = BrowserAgent(
             task=task,
             llm=llm,
             browser_profile=profile,
             max_actions_per_step=max_steps,
-            initial_actions=initial_actions,
+            **({"directly_open_url": url} if url else {}),
         )
 
         result = await asyncio.wait_for(
@@ -115,20 +111,34 @@ async def browser_use(
 
 
 def _create_llm(provider: str, model: str, api_key: str) -> Any:
-    """Create an LLM instance for browser-use."""
+    """Create an LLM instance for browser-use using browser-use's native classes.
+
+    API key handling:
+      - Anthropic: pass api_key directly; falls back to ANTHROPIC_API_KEY env var
+      - OpenAI: set OPENAI_API_KEY env var if provided; falls back to existing env
+      - Gemini: set GOOGLE_API_KEY env var if provided; falls back to existing env
+
+    If no api_key is provided, all providers fall back to their respective
+    environment variables, which should be set from the main LLM config.
+    """
+    import os
     try:
         if provider == "anthropic":
-            from langchain_anthropic import ChatAnthropic
+            from browser_use import ChatAnthropic
             kwargs: dict[str, Any] = {"model": model}
             if api_key:
                 kwargs["api_key"] = api_key
             return ChatAnthropic(**kwargs)
         elif provider == "openai":
-            from langchain_openai import ChatOpenAI
-            kwargs = {"model": model}
+            from browser_use import ChatOpenAI
             if api_key:
-                kwargs["api_key"] = api_key
-            return ChatOpenAI(**kwargs)
-    except Exception:
+                os.environ.setdefault("OPENAI_API_KEY", api_key)
+            return ChatOpenAI(model=model)
+        elif provider == "gemini":
+            from browser_use import ChatGoogle
+            if api_key:
+                os.environ.setdefault("GOOGLE_API_KEY", api_key)
+            return ChatGoogle(model=model)
+    except ImportError:
         return None
     return None

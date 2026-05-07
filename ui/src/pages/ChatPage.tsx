@@ -1,16 +1,18 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Button, Card, Input, Select, Empty, Popconfirm, Alert, Modal, Switch, Tag, Collapse, Tooltip, Table } from 'antd'
 import {
   PlusOutlined, DeleteOutlined, SendOutlined, SettingOutlined, DatabaseOutlined,
   EyeOutlined, EyeInvisibleOutlined, CheckCircleOutlined, CloseCircleOutlined,
   ClockCircleOutlined, FolderOutlined, FolderOpenOutlined, ExperimentOutlined, StopOutlined, ReloadOutlined,
+  ThunderboltOutlined, EditOutlined, ToolOutlined, BulbOutlined, TeamOutlined, SafetyOutlined,
 } from '@ant-design/icons'
 import { useSearchParams } from 'react-router-dom'
 import { API } from '../api'
 import { useAGUI } from '../hooks/useAGUI'
-import type { AGUIMessage, ToolCallState } from '../hooks/useAGUI'
+import type { AGUIMessage } from '../hooks/useAGUI'
 import MarkdownContent from '../components/MarkdownContent'
 import ToolCallCard from '../components/ToolCallCard'
+import GuardrailCard from '../components/GuardrailCard'
 import { FileViewerModal } from '../components/FilePreview'
 import FileIcon from '../components/FileIcon'
 
@@ -38,7 +40,12 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
   }
   const [input, setInput] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
   const skipNextLoadRef = useRef(false)
+
+  // Windowed rendering: only render the last N items, expand on scroll up
+  const WINDOW_SIZE = 80
+  const [visibleCount, setVisibleCount] = useState(WINDOW_SIZE)
 
   // System prompt
   const [systemPrompt, setSystemPrompt] = useState(() => localStorage.getItem('dataclaw_system_prompt') || '')
@@ -47,6 +54,21 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
 
   // Tool toggle
   const [showTools, setShowTools] = useState(true)
+
+  // Auto mode
+  const DEFAULT_AUTO_MESSAGE = "Auto mode is turned on. Keep working to improve the result until told otherwise. If you are submitting a plan it is auto-approved. For each iteration you should continue raising plans and logging metrics to MLFlow. You should preserve outputs from each attempt in structured subdirectories."
+  const [autoMode, setAutoMode] = useState(false)
+  const [autoTurnsUsed, setAutoTurnsUsed] = useState(0)
+  const [autoMessage, setAutoMessage] = useState(DEFAULT_AUTO_MESSAGE)
+  const [maxAutoTurns, setMaxAutoTurns] = useState(10)
+  const [autoMessageModalOpen, setAutoMessageModalOpen] = useState(false)
+  const [autoMessageDraft, setAutoMessageDraft] = useState('')
+  const [maxAutoTurnsDraft, setMaxAutoTurnsDraft] = useState(10)
+  const autoModeRef = useRef(false)
+  const autoTurnsRef = useRef(0)
+  const maxAutoTurnsRef = useRef(10)
+  const autoMessageRef = useRef(DEFAULT_AUTO_MESSAGE)
+  const activeSessionIdRef = useRef<string | null>(null)
 
   // Plans sidebar
   const [plans, setPlans] = useState<Plan[]>([])
@@ -62,6 +84,26 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
   const [selectedDatasetIds, setSelectedDatasetIds] = useState<string[] | null>(initialDatasetIds !== undefined ? initialDatasetIds ?? null : null)
   const [datasetModalOpen, setDatasetModalOpen] = useState(false)
 
+  // Tool filters
+  const [allTools, setAllTools] = useState<any[]>([])
+  const [selectedToolIds, setSelectedToolIds] = useState<string[] | null>(null)
+  const [toolModalOpen, setToolModalOpen] = useState(false)
+
+  // Skill filters
+  const [allSkills, setAllSkills] = useState<any[]>([])
+  const [selectedSkillIds, setSelectedSkillIds] = useState<string[] | null>(null)
+  const [skillModalOpen, setSkillModalOpen] = useState(false)
+
+  // Subagent filters
+  const [allSubagents, setAllSubagents] = useState<any[]>([])
+  const [selectedSubagentIds, setSelectedSubagentIds] = useState<string[] | null>(null)
+  const [subagentModalOpen, setSubagentModalOpen] = useState(false)
+
+  // Guardrail config
+  const [allGuardrails, setAllGuardrails] = useState<any[]>([])
+  const [guardrailDisabled, setGuardrailDisabled] = useState<string[]>([])
+  const [guardrailModalOpen, setGuardrailModalOpen] = useState(false)
+
   // Update dataset filter and persist to session
   const updateDatasetFilter = useCallback((ids: string[] | null) => {
     setSelectedDatasetIds(ids)
@@ -69,6 +111,46 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
       fetch(`${API}/chat/sessions/${activeSessionId}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ datasetIds: ids }),
+      }).catch(() => {})
+    }
+  }, [activeSessionId])
+
+  const updateToolFilter = useCallback((ids: string[] | null) => {
+    setSelectedToolIds(ids)
+    if (activeSessionId) {
+      fetch(`${API}/chat/sessions/${activeSessionId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ toolIds: ids }),
+      }).catch(() => {})
+    }
+  }, [activeSessionId])
+
+  const updateSkillFilter = useCallback((ids: string[] | null) => {
+    setSelectedSkillIds(ids)
+    if (activeSessionId) {
+      fetch(`${API}/chat/sessions/${activeSessionId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ skillIds: ids }),
+      }).catch(() => {})
+    }
+  }, [activeSessionId])
+
+  const updateSubagentFilter = useCallback((ids: string[] | null) => {
+    setSelectedSubagentIds(ids)
+    if (activeSessionId) {
+      fetch(`${API}/chat/sessions/${activeSessionId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subagentIds: ids }),
+      }).catch(() => {})
+    }
+  }, [activeSessionId])
+
+  const updateGuardrailConfig = useCallback((disabled: string[]) => {
+    setGuardrailDisabled(disabled)
+    if (activeSessionId) {
+      fetch(`${API}/guardrails/config/session/${activeSessionId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ disabled }),
       }).catch(() => {})
     }
   }, [activeSessionId])
@@ -108,7 +190,38 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const resizingRef = useRef(false)
 
-  const { messages, toolCalls, timeline, isRunning, reconnecting, error, sendMessage, cancelRun, checkAndReconnect, reset, setMessages, setToolCalls, setInitialOrder } = useAGUI()
+  // Keep auto mode refs in sync
+  useEffect(() => { autoModeRef.current = autoMode }, [autoMode])
+  useEffect(() => { autoTurnsRef.current = autoTurnsUsed }, [autoTurnsUsed])
+  useEffect(() => { autoMessageRef.current = autoMessage }, [autoMessage])
+  useEffect(() => { maxAutoTurnsRef.current = maxAutoTurns }, [maxAutoTurns])
+  useEffect(() => { activeSessionIdRef.current = activeSessionId }, [activeSessionId])
+
+  // Stable ref for sendMessage so onRunFinished doesn't go stale
+  const sendMessageRef = useRef<typeof sendMessage>(null as any)
+  const autoContinuePendingRef = useRef(false)
+
+  const onRunFinished = useCallback(() => {
+    if (!autoModeRef.current) return
+    if (autoContinuePendingRef.current) return // prevent re-entrant triggers
+    if (autoTurnsRef.current >= maxAutoTurnsRef.current) {
+      setAutoMode(false)
+      return
+    }
+    autoContinuePendingRef.current = true
+    setTimeout(() => {
+      autoContinuePendingRef.current = false
+      const sessionId = activeSessionIdRef.current
+      // Re-check auto mode — user may have toggled it off during the delay
+      if (!sessionId || !autoModeRef.current) return
+      setAutoTurnsUsed(prev => prev + 1)
+      // We pass empty history — the backend loads full history from session storage
+      sendMessageRef.current(sessionId, [], autoMessageRef.current)
+    }, 2000)
+  }, [])
+
+  const { messages, toolCalls, timeline, isRunning, reconnecting, error, sendMessage, cancelRun, checkAndReconnect, reset } = useAGUI({ onRunFinished })
+  sendMessageRef.current = sendMessage
 
   // Check plugins
   useEffect(() => {
@@ -136,7 +249,7 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
     }
   }, [initialSessionId])
 
-  // Load session messages
+  // Load session: connect via AG-UI to get MessagesSnapshot, and fetch metadata for dataset filter
   useEffect(() => {
     if (!activeSessionId) return
     if (skipNextLoadRef.current) {
@@ -144,46 +257,31 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
       return
     }
     reset()
+    // Restore session-level dataset filter from metadata
     fetch(`${API}/chat/sessions/${activeSessionId}`)
       .then(r => r.ok ? r.json() : null)
       .then(session => {
-        if (!session) return
-        // Restore session-level dataset filter
-        if (session.datasetIds !== undefined) {
+        if (session?.datasetIds !== undefined) {
           setSelectedDatasetIds(session.datasetIds)
         }
-        if (!session.messages) return
-        const sorted = [...session.messages].sort(
-          (a: any, b: any) => (a.timestamp || '').localeCompare(b.timestamp || '')
-        )
-        let order = 0
-        const msgs: AGUIMessage[] = []
-        const tcs: ToolCallState[] = []
-        for (const m of sorted) {
-          order++
-          if (m.role === 'tool_call') {
-            tcs.push({
-              id: m.toolCallId || `tc-hist-${order}`,
-              name: m.toolName || 'unknown',
-              args: m.args || '',
-              result: m.result ?? null,
-              status: m.status || 'complete',
-              order,
-            })
-          } else if (m.role === 'user' || m.role === 'assistant') {
-            msgs.push({
-              id: m.messageId || `hist-${order}`,
-              role: m.role,
-              content: typeof m.content === 'string' ? m.content : '',
-              order,
-            })
-          }
+        if (session?.toolIds !== undefined) setSelectedToolIds(session.toolIds)
+        if (session?.skillIds !== undefined) setSelectedSkillIds(session.skillIds)
+        if (session?.subagentIds !== undefined) setSelectedSubagentIds(session.subagentIds)
+        if (session?.guardrailConfig?.disabled) setGuardrailDisabled(session.guardrailConfig.disabled)
+        else setGuardrailDisabled([])
+        // Restore auto mode state
+        if (session) {
+          setAutoMode(!!session.autoMode)
+          // Read the persisted counter so navigating away and back
+          // doesn't reset the badge to 0/N.
+          setAutoTurnsUsed(typeof session.autoTurnsUsed === 'number' ? session.autoTurnsUsed : 0)
+          if (session.autoMessage) setAutoMessage(session.autoMessage)
+          if (session.maxAutoTurns) setMaxAutoTurns(session.maxAutoTurns)
         }
-        setMessages(msgs)
-        setToolCalls(tcs)
-        setInitialOrder(order)
       }).catch(() => {})
-  }, [activeSessionId, reset, setMessages, setToolCalls, setInitialOrder])
+    // Load messages via MessagesSnapshot (handles both history and active run reconnection)
+    checkAndReconnect(activeSessionId)
+  }, [activeSessionId, reset, checkAndReconnect])
 
   // Load plans for session
   useEffect(() => {
@@ -216,6 +314,14 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
     fetch(`${API}/data/datasets`).then(r => r.ok ? r.json() : []).then(setAllDatasets).catch(() => {})
   }, [hasDataPlugin])
 
+  // Load tools, skills, subagents for filters
+  useEffect(() => {
+    fetch(`${API}/tools`).then(r => r.ok ? r.json() : { tools: [] }).then(d => setAllTools(d.tools ?? [])).catch(() => {})
+    fetch(`${API}/skills`).then(r => r.ok ? r.json() : []).then(setAllSkills).catch(() => {})
+    fetch(`${API}/subagents/`).then(r => r.ok ? r.json() : []).then(setAllSubagents).catch(() => {})
+    fetch(`${API}/guardrails`).then(r => r.ok ? r.json() : { guardrails: [] }).then(d => setAllGuardrails(d.guardrails ?? [])).catch(() => {})
+  }, [])
+
   // Load project files for explorer
   const loadProjectFiles = useCallback(() => {
     if (!hasWorkspacePlugin || !projectId) { setProjectFiles([]); return }
@@ -226,14 +332,38 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
   }, [hasWorkspacePlugin, projectId])
   useEffect(() => { loadProjectFiles() }, [loadProjectFiles])
 
-  // Check for active agent run on session change (handles page refresh)
-  useEffect(() => {
-    if (!activeSessionId) return
-    checkAndReconnect(activeSessionId)
-  }, [activeSessionId, checkAndReconnect])
+  // Filtered timeline (pre-filter tool calls when hidden)
+  const filteredTimeline = useMemo(() =>
+    showTools ? timeline : timeline.filter(e => e.type !== 'toolCall'),
+    [timeline, showTools]
+  )
 
-  // Auto-scroll
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, toolCalls])
+  // Windowed slice: only render the tail, expand on "load more"
+  const windowedTimeline = useMemo(() => {
+    if (filteredTimeline.length <= visibleCount) return filteredTimeline
+    return filteredTimeline.slice(filteredTimeline.length - visibleCount)
+  }, [filteredTimeline, visibleCount])
+
+  const hasMore = filteredTimeline.length > visibleCount
+
+  // Reset visible window when switching sessions
+  useEffect(() => { setVisibleCount(WINDOW_SIZE) }, [activeSessionId])
+
+  // Auto-scroll to bottom when new content arrives (only if already near bottom)
+  const isNearBottomRef = useRef(true)
+  useEffect(() => {
+    if (isNearBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [messages, toolCalls])
+
+  // Track scroll position to decide whether to auto-scroll
+  const handleScroll = useCallback(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    const threshold = 150
+    isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold
+  }, [])
 
   const createSession = async () => {
     try {
@@ -362,6 +492,36 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
           {activeSessionId && <Popconfirm title="Delete this session?" onConfirm={deleteSession}><Button icon={<DeleteOutlined />} danger size="small" /></Popconfirm>}
 
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+            {/* Auto mode toggle */}
+            {hasPlansPlugin && (
+              <Tooltip title={autoMode ? `Auto mode ON (${autoTurnsUsed}/${maxAutoTurns} turns)` : 'Enable auto mode'}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 4px' }}>
+                  <ThunderboltOutlined style={{ fontSize: 12, color: autoMode ? '#1677ff' : '#999' }} />
+                  <Switch size="small" checked={autoMode}
+                    onChange={async (checked) => {
+                      setAutoMode(checked)
+                      setAutoTurnsUsed(0)
+                      if (activeSessionId) {
+                        fetch(`${API}/chat/sessions/${activeSessionId}`, {
+                          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ autoMode: checked }),
+                        }).catch(() => {})
+                      }
+                    }}
+                  />
+                  <span style={{ fontSize: 11, color: autoMode ? '#1677ff' : '#999', cursor: 'pointer' }}
+                    onClick={() => { setAutoMessageDraft(autoMessage); setMaxAutoTurnsDraft(maxAutoTurns); setAutoMessageModalOpen(true) }}>
+                    Auto
+                  </span>
+                  {autoMode && (
+                    <Button size="small" type="text" icon={<EditOutlined />}
+                      style={{ padding: '0 2px', height: 18, width: 18, minWidth: 18, fontSize: 10, color: '#999' }}
+                      onClick={() => { setAutoMessageDraft(autoMessage); setMaxAutoTurnsDraft(maxAutoTurns); setAutoMessageModalOpen(true) }} />
+                  )}
+                </div>
+              </Tooltip>
+            )}
+
             {/* Dataset filter */}
             {hasDataPlugin && (
               <Tooltip title="Manage datasets">
@@ -372,7 +532,47 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
               </Tooltip>
             )}
 
-            {/* Tool toggle */}
+            {/* Tools filter */}
+            {allTools.length > 0 && (
+              <Tooltip title="Manage tools">
+                <Tag icon={<ToolOutlined />} color={selectedToolIds !== null ? 'blue' : 'green'}
+                  style={{ cursor: 'pointer', margin: 0 }} onClick={() => setToolModalOpen(true)}>
+                  {selectedToolIds !== null ? `${selectedToolIds.length} tools` : 'All tools'}
+                </Tag>
+              </Tooltip>
+            )}
+
+            {/* Skills filter */}
+            {allSkills.length > 0 && (
+              <Tooltip title="Manage skills">
+                <Tag icon={<BulbOutlined />} color={selectedSkillIds !== null ? 'blue' : 'green'}
+                  style={{ cursor: 'pointer', margin: 0 }} onClick={() => setSkillModalOpen(true)}>
+                  {selectedSkillIds !== null ? `${selectedSkillIds.length} skills` : 'All skills'}
+                </Tag>
+              </Tooltip>
+            )}
+
+            {/* Subagents filter */}
+            {allSubagents.length > 0 && (
+              <Tooltip title="Manage subagents">
+                <Tag icon={<TeamOutlined />} color={selectedSubagentIds !== null ? 'blue' : 'green'}
+                  style={{ cursor: 'pointer', margin: 0 }} onClick={() => setSubagentModalOpen(true)}>
+                  {selectedSubagentIds !== null ? `${selectedSubagentIds.length} subagents` : 'All subagents'}
+                </Tag>
+              </Tooltip>
+            )}
+
+            {/* Guardrails config */}
+            {allGuardrails.length > 0 && (
+              <Tooltip title="Manage guardrails">
+                <Tag icon={<SafetyOutlined />} color={guardrailDisabled.length > 0 ? 'orange' : 'green'}
+                  style={{ cursor: 'pointer', margin: 0 }} onClick={() => setGuardrailModalOpen(true)}>
+                  {guardrailDisabled.length > 0 ? `${allGuardrails.length - guardrailDisabled.length}/${allGuardrails.length} guardrails` : 'All guardrails'}
+                </Tag>
+              </Tooltip>
+            )}
+
+            {/* Tool call visibility toggle */}
             <Tooltip title={showTools ? 'Hide tool calls' : 'Show tool calls'}>
               <Button size="small" type={showTools ? 'default' : 'dashed'}
                 icon={showTools ? <EyeOutlined /> : <EyeInvisibleOutlined />}
@@ -399,20 +599,38 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
         )}
 
         {/* Messages */}
-        <div style={{ flex: 1, overflow: 'auto', padding: '20px 24px' }}>
-          {messages.length === 0 && !isRunning ? (
+        <div ref={scrollContainerRef} onScroll={handleScroll} style={{ flex: 1, overflow: 'auto', padding: '20px 24px' }}>
+          {filteredTimeline.length === 0 && !isRunning ? (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
               <Empty description="Start a conversation" image={Empty.PRESENTED_IMAGE_SIMPLE} />
             </div>
           ) : (
             <div style={{ maxWidth: 800, margin: '0 auto' }}>
-              {timeline.map(entry => (
-                entry.type === 'message'
-                  ? <MessageBubble key={entry.item.id} message={entry.item as AGUIMessage} onFileClick={previewFile} />
-                  : showTools ? <ToolCallCard key={entry.item.id} toolCall={entry.item as any} onFileClick={previewFile} onDecision={submitDecision} /> : null
+              {hasMore && (
+                <div style={{ textAlign: 'center', padding: '8px 0' }}>
+                  <Button size="small" type="link" onClick={() => setVisibleCount(prev => prev + WINDOW_SIZE)}>
+                    Load earlier messages ({filteredTimeline.length - visibleCount} more)
+                  </Button>
+                </div>
+              )}
+              {windowedTimeline.map(entry => (
+                <div key={entry.item.id} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 80px' }}>
+                  {entry.type === 'message'
+                    ? (entry.item as AGUIMessage).role === 'compaction'
+                      ? <CompactionDivider message={entry.item as AGUIMessage} />
+                      : <MessageBubble message={entry.item as AGUIMessage} onFileClick={previewFile} />
+                    : entry.type === 'guardrail'
+                    ? <GuardrailCard guardrail={entry.item as any} threadId={activeSessionId || ''} />
+                    : <ToolCallCard toolCall={entry.item as any} onFileClick={previewFile} onDecision={submitDecision} />
+                  }
+                </div>
               ))}
               {/* Typing indicator */}
-              {isRunning && !timeline.some(e => e.type === 'message' && e.item.role === 'assistant' && (e.item as AGUIMessage).content === '') && (
+              {isRunning && (() => {
+                const last = filteredTimeline[filteredTimeline.length - 1]
+                if (last?.type === 'message' && (last.item as AGUIMessage).role === 'assistant') return false
+                return true
+              })() && (
                 <div style={{ display: 'flex', gap: 6, padding: '8px 0', alignItems: 'center' }}>
                   <div style={{ display: 'flex', gap: 3 }}>
                     {[0, 1, 2].map(i => (
@@ -440,7 +658,18 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
               placeholder="Send a message..." autoSize={{ minRows: 1, maxRows: 6 }}
               style={{ borderRadius: 10 }} disabled={isRunning} />
             {isRunning ? (
-              <Button danger icon={<StopOutlined />} onClick={() => activeSessionId && cancelRun(activeSessionId)}
+              <Button danger icon={<StopOutlined />} onClick={() => {
+                if (activeSessionId) cancelRun(activeSessionId)
+                if (autoMode) {
+                  setAutoMode(false)
+                  if (activeSessionId) {
+                    fetch(`${API}/chat/sessions/${activeSessionId}`, {
+                      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ autoMode: false }),
+                    }).catch(() => {})
+                  }
+                }
+              }}
                 style={{ borderRadius: 10, minWidth: 44, height: 32 }} />
             ) : (
               <Button type="primary" icon={<SendOutlined />} onClick={handleSend}
@@ -617,6 +846,43 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
           rows={4} placeholder="Describe what should be changed..." />
       </Modal>
 
+      {/* Auto message editor modal */}
+      <Modal title="Auto Mode Settings" open={autoMessageModalOpen} onCancel={() => setAutoMessageModalOpen(false)}
+        onOk={() => {
+          const msg = autoMessageDraft.trim() || DEFAULT_AUTO_MESSAGE
+          const turns = Math.max(1, Math.min(100, maxAutoTurnsDraft || 10))
+          setAutoMessage(msg)
+          setMaxAutoTurns(turns)
+          setAutoMessageModalOpen(false)
+          if (activeSessionId) {
+            fetch(`${API}/chat/sessions/${activeSessionId}`, {
+              method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ autoMessage: msg, maxAutoTurns: turns }),
+            }).catch(() => {})
+          }
+        }}
+        okText="Save" width={600}>
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 4 }}>Max auto turns</label>
+          <Input type="number" min={1} max={100} value={maxAutoTurnsDraft}
+            onChange={e => setMaxAutoTurnsDraft(parseInt(e.target.value) || 10)}
+            style={{ width: 120 }} />
+          <span style={{ fontSize: 11, color: '#888', marginLeft: 8 }}>How many turns the agent will run autonomously</span>
+        </div>
+        <div>
+          <label style={{ fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 4 }}>Continuation message</label>
+          <p style={{ fontSize: 12, color: '#888', marginBottom: 8 }}>
+            This message is sent to the agent after each turn in auto mode.
+          </p>
+          <Input.TextArea value={autoMessageDraft} onChange={e => setAutoMessageDraft(e.target.value)}
+            rows={6} style={{ fontFamily: 'monospace', fontSize: 13 }}
+            placeholder="Custom auto-continue message..." />
+          {autoMessageDraft !== DEFAULT_AUTO_MESSAGE && (
+            <Button size="small" style={{ marginTop: 8 }} onClick={() => setAutoMessageDraft(DEFAULT_AUTO_MESSAGE)}>Reset to Default</Button>
+          )}
+        </div>
+      </Modal>
+
       {/* File preview modal */}
       <FileViewerModal file={filePreviewTarget} onClose={() => setFilePreviewTarget(null)} />
 
@@ -644,6 +910,109 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
           })}
         </div>
       </Modal>
+
+      {/* Tools filter modal */}
+      <Modal title="Chat Tools" open={toolModalOpen} onCancel={() => setToolModalOpen(false)} footer={[
+        <Button key="none" onClick={() => updateToolFilter([])}>Remove all</Button>,
+        <Button key="all" onClick={() => updateToolFilter(null)}>Use all tools</Button>,
+        <Button key="done" type="primary" onClick={() => setToolModalOpen(false)}>Done</Button>,
+      ]}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: '50vh', overflow: 'auto' }}>
+          {allTools.map(t => {
+            const isOn = selectedToolIds === null || selectedToolIds.includes(t.name)
+            return (
+              <Card key={t.name} size="small" style={{ borderRadius: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Switch size="small" checked={isOn} onChange={on => {
+                    const current = selectedToolIds ?? allTools.map(x => x.name)
+                    updateToolFilter(on ? [...current, t.name] : current.filter(x => x !== t.name))
+                  }} />
+                  <span style={{ fontWeight: 500, fontSize: 13, fontFamily: 'monospace' }}>{t.name}</span>
+                  {t.source && <Tag style={{ fontSize: 10 }}>{t.source}</Tag>}
+                </div>
+              </Card>
+            )
+          })}
+        </div>
+      </Modal>
+
+      {/* Skills filter modal */}
+      <Modal title="Chat Skills" open={skillModalOpen} onCancel={() => setSkillModalOpen(false)} footer={[
+        <Button key="none" onClick={() => updateSkillFilter([])}>Remove all</Button>,
+        <Button key="all" onClick={() => updateSkillFilter(null)}>Use all skills</Button>,
+        <Button key="done" type="primary" onClick={() => setSkillModalOpen(false)}>Done</Button>,
+      ]}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: '50vh', overflow: 'auto' }}>
+          {allSkills.map(s => {
+            const isOn = selectedSkillIds === null || selectedSkillIds.includes(s.id)
+            return (
+              <Card key={s.id} size="small" style={{ borderRadius: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Switch size="small" checked={isOn} onChange={on => {
+                    const current = selectedSkillIds ?? allSkills.map(x => x.id)
+                    updateSkillFilter(on ? [...current, s.id] : current.filter(x => x !== s.id))
+                  }} />
+                  <span style={{ fontWeight: 500, fontSize: 13 }}>{s.name}</span>
+                  {s.description && <span style={{ fontSize: 11, color: '#888' }}>{s.description}</span>}
+                </div>
+              </Card>
+            )
+          })}
+        </div>
+      </Modal>
+
+      {/* Subagents filter modal */}
+      <Modal title="Chat Subagents" open={subagentModalOpen} onCancel={() => setSubagentModalOpen(false)} footer={[
+        <Button key="none" onClick={() => updateSubagentFilter([])}>Remove all</Button>,
+        <Button key="all" onClick={() => updateSubagentFilter(null)}>Use all subagents</Button>,
+        <Button key="done" type="primary" onClick={() => setSubagentModalOpen(false)}>Done</Button>,
+      ]}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: '50vh', overflow: 'auto' }}>
+          {allSubagents.map(sa => {
+            const isOn = selectedSubagentIds === null || selectedSubagentIds.includes(sa.id)
+            return (
+              <Card key={sa.id} size="small" style={{ borderRadius: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Switch size="small" checked={isOn} onChange={on => {
+                    const current = selectedSubagentIds ?? allSubagents.map(x => x.id)
+                    updateSubagentFilter(on ? [...current, sa.id] : current.filter(x => x !== sa.id))
+                  }} />
+                  <span style={{ fontWeight: 500, fontSize: 13 }}>{sa.name}</span>
+                  {sa.agent_type && <Tag style={{ fontSize: 10 }}>{sa.agent_type}</Tag>}
+                </div>
+              </Card>
+            )
+          })}
+        </div>
+      </Modal>
+
+      {/* Guardrails config modal */}
+      <Modal title="Guardrails" open={guardrailModalOpen} onCancel={() => setGuardrailModalOpen(false)} footer={[
+        <Button key="none" onClick={() => updateGuardrailConfig(allGuardrails.map((g: any) => g.id))}>Disable all</Button>,
+        <Button key="all" onClick={() => updateGuardrailConfig([])}>Enable all</Button>,
+        <Button key="done" type="primary" onClick={() => setGuardrailModalOpen(false)}>Done</Button>,
+      ]}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: '50vh', overflow: 'auto' }}>
+          {allGuardrails.map((g: any) => {
+            const isOn = !guardrailDisabled.includes(g.id)
+            return (
+              <Card key={g.id} size="small" style={{ borderRadius: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Switch size="small" checked={isOn} onChange={on => {
+                    updateGuardrailConfig(on
+                      ? guardrailDisabled.filter(x => x !== g.id)
+                      : [...guardrailDisabled, g.id]
+                    )
+                  }} />
+                  <span style={{ fontWeight: 500, fontSize: 13 }}>{g.id.replace(/_/g, ' ')}</span>
+                  <Tag style={{ fontSize: 10 }}>{g.phase}</Tag>
+                  <Tag style={{ fontSize: 10 }} color={g.mode === 'user_approval' ? 'orange' : 'blue'}>{g.mode === 'user_approval' ? 'approval' : 'auto'}</Tag>
+                </div>
+              </Card>
+            )
+          })}
+        </div>
+      </Modal>
     </div>
   )
 }
@@ -662,6 +1031,44 @@ function MessageBubble({ message, onFileClick }: { message: AGUIMessage; onFileC
       }}>
         {isUser ? <span style={{ whiteSpace: 'pre-wrap' }}>{message.content}</span> : <MarkdownContent content={message.content} onFileClick={onFileClick} />}
       </div>
+    </div>
+  )
+}
+
+function CompactionDivider({ message }: { message: AGUIMessage }) {
+  const [expanded, setExpanded] = useState(false)
+  const summarized = message.compactedCount || 0
+  const kept = message.keptCount || 0
+  const label = summarized > 0
+    ? `${summarized} messages summarized${kept > 0 ? `, ${kept} kept for context` : ''}`
+    : 'Conversation summarized'
+  return (
+    <div style={{ margin: '16px 0', textAlign: 'center' }}>
+      <div
+        onClick={() => setExpanded(!expanded)}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 8,
+          padding: '6px 16px', borderRadius: 20,
+          background: '#f5f5f5', border: '1px solid #e8e8e8',
+          fontSize: 12, color: '#888', cursor: 'pointer',
+          userSelect: 'none',
+        }}
+      >
+        <span style={{ fontSize: 14 }}>---</span>
+        <span>{label}</span>
+        <span style={{ fontSize: 10 }}>{expanded ? '\u25B2' : '\u25BC'}</span>
+      </div>
+      {expanded && message.content && (
+        <div style={{
+          marginTop: 8, padding: '12px 16px', borderRadius: 8,
+          background: '#fafafa', border: '1px solid #f0f0f0',
+          textAlign: 'left', fontSize: 13, color: '#666',
+          lineHeight: 1.6, maxWidth: 700, margin: '8px auto 0',
+          whiteSpace: 'pre-wrap',
+        }}>
+          {message.content}
+        </div>
+      )}
     </div>
   )
 }

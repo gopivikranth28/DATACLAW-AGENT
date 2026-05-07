@@ -22,6 +22,27 @@ from jupyter_client import AsyncKernelManager
 logger = logging.getLogger(__name__)
 
 
+# Kernel-side setup that adds a `text/markdown` repr for pandas DataFrames.
+# Runs once per kernel start. Tries `to_markdown()` (which uses tabulate); if
+# tabulate isn't installed, falls back to `to_string()` so the output is at
+# least compact even if not strictly markdown. Wrapped so missing pandas or
+# any other failure doesn't break the kernel.
+_PANDAS_MARKDOWN_FORMATTER = """
+try:
+    import pandas as _dc_pd
+    def _dc_df_to_markdown(df):
+        try:
+            return df.to_markdown(index=False)
+        except Exception:
+            return df.to_string(index=False)
+    _dc_ip = get_ipython()
+    if _dc_ip is not None:
+        _dc_ip.display_formatter.formatters['text/markdown'].for_type(_dc_pd.DataFrame, _dc_df_to_markdown)
+except Exception:
+    pass
+"""
+
+
 @dataclass
 class NotebookState:
     name: str
@@ -107,7 +128,11 @@ class NotebookManager:
         if state.kernel_alive:
             return
 
-        python = self._resolve_python()
+        # _resolve_python() may shell out to `uv venv` and `uv pip install`
+        # for the first kernel start in a project — those subprocess.run
+        # calls would block the FastAPI event loop for up to 5 minutes,
+        # freezing every other request. Run them off the loop thread.
+        python = await asyncio.to_thread(self._resolve_python)
         km = AsyncKernelManager(kernel_name="python3")
         # Provide a kernel spec directly so jupyter_client doesn't look it up
         # from the filesystem (ipykernel may not be registered in the host env).
@@ -122,6 +147,14 @@ class NotebookManager:
         kc = km.client()
         kc.start_channels()
         await kc.wait_for_ready(timeout=30)
+
+        # Register a text/markdown display formatter for pandas DataFrames so
+        # cell outputs include a compact representation alongside the verbose
+        # text/html one. The LLM-redaction layer prefers markdown when present.
+        try:
+            kc.execute(_PANDAS_MARKDOWN_FORMATTER, store_history=False, silent=True)
+        except Exception:
+            logger.debug("Failed to install pandas markdown formatter", exc_info=True)
 
         state.kernel_manager = km
         state.kernel_client = kc

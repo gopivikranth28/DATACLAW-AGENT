@@ -1,0 +1,127 @@
+{
+  "id": "dataclaw",
+  "name": "Dataclaw",
+  "version": "0.1.0",
+  "description": "Dataclaw integration: registers Python tools and routes UI messages between Dataclaw and OpenClaw.",
+  "activation": {
+    "onStartup": true
+  },
+  "channels": [
+    "dataclaw"
+  ],
+  "channel": {
+    "id": "dataclaw",
+    "label": "Dataclaw",
+    "blurb": "Connect OpenClaw to the Dataclaw web frontend."
+  },
+  "channelConfigs": {
+    "dataclaw": {
+      "label": "Dataclaw",
+      "description": "Routes messages between Dataclaw UI and OpenClaw agents.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "token": {
+            "type": "string",
+            "description": "Shared bearer token expected in X-Dataclaw-Token header."
+          },
+          "dataclawApiUrl": {
+            "type": "string",
+            "description": "Dataclaw API base URL for message persistence.",
+            "default": "http://localhost:8000"
+          },
+          "allowFrom": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "dmSecurity": {
+            "type": "string",
+            "enum": [
+              "allowlist",
+              "open"
+            ],
+            "default": "allowlist"
+          },
+          "responseTimeoutMs": {
+            "type": "number",
+            "default": 30000
+          }
+        }
+      }
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "toolsPrefix": {
+        "type": "string",
+        "description": "Prefix prepended to every Dataclaw tool name when registered with OpenClaw.",
+        "default": "dataclaw_"
+      },
+      "toolsOptional": {
+        "type": "boolean",
+        "description": "When true, Dataclaw tool registration failures are logged but don't abort plugin load.",
+        "default": false
+      }
+    }
+  },
+  "skills": [
+    "./skills"
+  ],
+  "contracts": {
+    "tools": [
+      "dataclaw_fetch_skill",
+      "dataclaw_list_skills",
+      "dataclaw_data_list_datasets",
+      "dataclaw_data_preview_data",
+      "dataclaw_data_profile_dataset",
+      "dataclaw_data_describe_column",
+      "dataclaw_data_query_data",
+      "dataclaw_data_get_docs",
+      "dataclaw_kaggle_list_competitions",
+      "dataclaw_kaggle_competition_details",
+      "dataclaw_kaggle_leaderboard",
+      "dataclaw_kaggle_download_competition",
+      "dataclaw_kaggle_search_datasets",
+      "dataclaw_kaggle_download_dataset",
+      "dataclaw_kaggle_submit",
+      "dataclaw_kaggle_submissions",
+      "dataclaw_ws_list_files",
+      "dataclaw_ws_read_file",
+      "dataclaw_ws_write_file",
+      "dataclaw_ws_update_file",
+      "dataclaw_ws_exec",
+      "dataclaw_display_image",
+      "dataclaw_build_report",
+      "dataclaw_list_subagents",
+      "dataclaw_delegate_to_subagent",
+      "dataclaw_propose_plan",
+      "dataclaw_update_plan",
+      "dataclaw_list_plans",
+      "dataclaw_get_plan",
+      "dataclaw_query_mlflow_runs",
+      "dataclaw_open_notebook",
+      "dataclaw_close_notebook",
+      "dataclaw_list_notebooks",
+      "dataclaw_read_notebook",
+      "dataclaw_read_cell",
+      "dataclaw_insert_cell",
+      "dataclaw_edit_cell",
+      "dataclaw_edit_cell_source",
+      "dataclaw_move_cell",
+      "dataclaw_delete_cells",
+      "dataclaw_execute_cell",
+      "dataclaw_execute_code",
+      "dataclaw_display_cell_output"
+    ]
+  }
+}

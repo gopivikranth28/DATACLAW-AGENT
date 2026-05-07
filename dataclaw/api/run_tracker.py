@@ -33,6 +33,10 @@ class RunState:
     _waiters: list[asyncio.Event] = field(default_factory=list)
     _completion: asyncio.Event = field(default_factory=asyncio.Event)
 
+    # Guardrail user-approval synchronization
+    guardrail_approvals: dict[str, asyncio.Event] = field(default_factory=dict)
+    guardrail_decisions: dict[str, dict[str, Any]] = field(default_factory=dict)
+
     def append_event(self, event_str: str) -> int:
         """Append an event, notify all waiters, return cursor."""
         self.cursor += 1

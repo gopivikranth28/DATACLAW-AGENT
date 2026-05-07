@@ -45,7 +45,7 @@ async def sync_skill(skill_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Skill not found")
 
     ext_dir = _get_extensions_dir(request)
-    target_dir = ext_dir / "dataclaw-tools" / "skills" / skill_id
+    target_dir = ext_dir / "dataclaw" / "skills" / skill_id
     target_dir.mkdir(parents=True, exist_ok=True)
 
     target_path = target_dir / "SKILL.md"
@@ -59,6 +59,6 @@ async def sync_skill(skill_id: str, request: Request):
 async def remove_skill_sync(skill_id: str, request: Request):
     """Remove a skill from the OpenClaw extensions directory."""
     ext_dir = _get_extensions_dir(request)
-    target_dir = ext_dir / "dataclaw-tools" / "skills" / skill_id
+    target_dir = ext_dir / "dataclaw" / "skills" / skill_id
     if target_dir.exists():
         shutil.rmtree(target_dir)

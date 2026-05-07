@@ -32,8 +32,11 @@ RUN apt-get update \
        curl ca-certificates procps openssl git lsof \
     && rm -rf /var/lib/apt/lists/*
 
-# Install OpenClaw globally from npm
-RUN npm install -g openclaw@latest \
+# Install OpenClaw globally from npm. The Codex CLI is also installed
+# globally — `dataclaw/auth/codex_login.py` shells out to it for
+# browser-based / device-code OAuth flows when the user picks the
+# "OpenAI Codex" agent backend (the Python SDK alone isn't enough).
+RUN npm install -g openclaw@latest @openai/codex@latest \
     # Symlink ws into global node_modules so the OpenClaw CLI can resolve it
     # when invoked from any working directory (e.g. docker exec).
     && ln -sf /usr/local/lib/node_modules/openclaw/node_modules/ws /usr/local/lib/node_modules/ws
@@ -57,15 +60,20 @@ COPY --from=ui-build /build/dist ui/dist/
 # Copy OpenClaw plugins source
 COPY openclaw-plugins/ openclaw-plugins/
 
-# Pre-install plugin npm dependencies (dataclaw-tools needs @sinclair/typebox)
-RUN cd openclaw-plugins/dataclaw-tools && npm install --omit=dev
+# Build the dataclaw plugin: openclaw 2026.5+ requires the runtime entry to
+# exist on disk as JS at ./dist/index.js. The build script (esbuild from
+# devDependencies) bundles ./index.ts → ./dist/index.js with openclaw/* left
+# external. devDeps are required for the build, so don't pass --omit=dev here.
+RUN cd openclaw-plugins/dataclaw \
+    && npm install --no-audit --no-fund \
+    && npm run build
 
-# Create runtime directories
-RUN mkdir -p /dataclaw/workspaces /dataclaw/data
-
-# Copy entrypoint script
+# Copy entrypoint + install helper. install_dataclaw_plugin.py invokes the
+# canonical install_plugin_atomic flow (same code path the UI's Install
+# button runs) so the bundled bootstrap stays in lockstep with the UI.
 COPY scripts/entrypoint-bundled.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY scripts/install_dataclaw_plugin.py /dataclaw/scripts/install_dataclaw_plugin.py
+RUN chmod +x /entrypoint.sh /dataclaw/scripts/install_dataclaw_plugin.py
 
 # Environment
 ENV DISPLAY=:0

@@ -16,7 +16,7 @@ def llm_from_config(
     """Create an LLMProvider from the current configuration.
 
     Args:
-        backend: Override the configured backend (mock|anthropic|openai|gemini).
+        backend: Override the configured backend (mock|anthropic|openai|gemini|codex).
         model: Override the configured model ID.
 
     If backend is "mock" or no API key is configured for the selected
@@ -68,6 +68,23 @@ def llm_from_config(
 
         model_id = model or resolve("llm.gemini.model", "GEMINI_MODEL", "gemini-2.5-flash")
         return LangChainLLM(ChatGoogleGenerativeAI(model=model_id, google_api_key=api_key))  # type: ignore[arg-type]
+
+    elif backend == "codex":
+        from dataclaw.auth.codex_bridge import resolve_codex_credentials
+        from dataclaw.providers.llm.implementations.openai_responses import OpenAIResponsesLLM
+
+        auth_mode = resolve("llm.codex.auth_mode", "CODEX_AUTH_MODE", "default")
+        api_key = resolve("llm.codex.api_key", "OPENAI_API_KEY", "")
+        model_id = model or resolve("llm.codex.model", "CODEX_MODEL", "gpt-5.5")
+
+        creds = resolve_codex_credentials(auth_mode=auth_mode, api_key=api_key)
+        logger.info("Using Codex LLM backend (model=%s, auth=%s, base_url=%s)", model_id, auth_mode, creds.base_url)
+        return OpenAIResponsesLLM(
+            api_key=creds.api_key,
+            base_url=creds.base_url,
+            model=model_id,
+            default_headers=creds.headers,
+        )
 
     elif backend == "openclaw":
         # OpenClaw handles its own LLM — provide a mock for compaction/sub-agents

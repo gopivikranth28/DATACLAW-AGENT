@@ -10,6 +10,10 @@ from dataclaw.state import AgentState
 class NoopMemoryProvider:
     """Returns empty results for all memory operations."""
 
+    @classmethod
+    def config_schema(cls) -> list:
+        return []
+
     async def retrieve_memories(self, state: AgentState) -> list[str]:
         return []
 
@@ -22,4 +26,15 @@ class NoopMemoryProvider:
         return []
 
     def as_tool_definition(self) -> dict[str, Any] | None:
+        return None
+
+    async def save_memory(
+        self,
+        content: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return {}
+
+    def as_save_tool_definition(self) -> dict[str, Any] | None:
         return None

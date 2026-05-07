@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import { IpynbRenderer as IpynbView } from 'react-ipynb-renderer'
 import 'react-ipynb-renderer/dist/styles/default.css'
+import CellSourceView from './CellSourceView'
 
 interface CellOutput {
   type: string
@@ -13,11 +15,24 @@ interface CellData {
   outputs?: CellOutput[]
   caption?: string
   error?: string | null
-  code?: string  // present in execute_code results
+  code?: string    // present in execute_code results (inline code)
+  source?: string  // present in execute_cell results (cell source)
 }
 
-export default function CellOutputRenderer({ data }: { data: CellData }) {
+interface CellArgs {
+  // execute_code passes the inline source as `code`; execute_cell passes
+  // only `cell_index` (so source is unavailable from args alone).
+  code?: string
+  cell_index?: number
+}
+
+export default function CellOutputRenderer({ data, args }: { data: CellData; args?: CellArgs }) {
   const outputs = data.outputs || []
+  const [showSource, setShowSource] = useState(false)
+  // Prefer source from result; fall back to args.code for legacy execute_code
+  // results that didn't echo source on the result side.
+  const sourceForToggle = data.source ?? args?.code ?? ''
+  const hasToggleableSource = !!(sourceForToggle && sourceForToggle.trim())
 
   if (data.error && outputs.length === 0) {
     return (
@@ -61,6 +76,30 @@ export default function CellOutputRenderer({ data }: { data: CellData }) {
   return (
     <div>
       {data.cell_index !== undefined && <CellLabel index={data.cell_index} />}
+      {hasToggleableSource && (
+        <div style={{ marginBottom: 4 }}>
+          <button
+            onClick={() => setShowSource(s => !s)}
+            style={{
+              fontSize: 11, padding: '2px 8px', cursor: 'pointer',
+              border: '1px solid #d9d9d9', borderRadius: 4,
+              background: '#fafafa', color: '#444',
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+            }}
+          >
+            <span style={{
+              display: 'inline-block', transition: 'transform 0.15s',
+              transform: showSource ? 'rotate(90deg)' : 'rotate(0deg)',
+            }}>▸</span>
+            Source
+          </button>
+          {showSource && (
+            <div style={{ marginTop: 4 }}>
+              <CellSourceView source={sourceForToggle} />
+            </div>
+          )}
+        </div>
+      )}
       <div className="cell-output-only" style={{ borderRadius: 6, overflow: 'hidden', border: '1px solid #e8e8e8' }}>
         <IpynbView ipynb={notebook as any} syntaxTheme="vscDarkPlus" language="python" />
       </div>

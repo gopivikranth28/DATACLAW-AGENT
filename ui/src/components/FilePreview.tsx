@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import type React from 'react'
 import { Button, Empty, Modal, Spin, Table, Tag, Typography } from 'antd'
-import { FileTextOutlined, TableOutlined } from '@ant-design/icons'
+import { CopyOutlined, DownloadOutlined, FileTextOutlined, FilePdfOutlined, TableOutlined } from '@ant-design/icons'
+import PdfRenderer from './PdfRenderer'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { IpynbRenderer as IpynbView } from 'react-ipynb-renderer'
@@ -17,12 +18,17 @@ function isImageFile(name: string): boolean {
   return IMAGE_EXTENSIONS.has(ext)
 }
 
+function isPdfFile(name: string): boolean {
+  return name.split('.').pop()?.toLowerCase() === 'pdf'
+}
+
 export function FileViewerModal({ file, onClose }: {
   file: { name: string; path: string } | null
   onClose: () => void
 }) {
   const [content, setContent] = useState<string | null>(null)
   const [imageUrl, setImageUrl] = useState<string | null>(null)
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
@@ -30,10 +36,17 @@ export function FileViewerModal({ file, onClose }: {
     setLoading(true)
     setContent(null)
     setImageUrl(null)
+    setPdfUrl(null)
 
     const url = `${API}/workspace/files?path=${encodeURIComponent(file.path)}`
 
-    if (isImageFile(file.name)) {
+    if (isPdfFile(file.name)) {
+      fetch(url)
+        .then(r => r.ok ? r.blob() : Promise.reject('Not found'))
+        .then(blob => setPdfUrl(URL.createObjectURL(blob)))
+        .catch(() => setContent('Error loading PDF'))
+        .finally(() => setLoading(false))
+    } else if (isImageFile(file.name)) {
       fetch(url)
         .then(r => r.ok ? r.blob() : Promise.reject('Not found'))
         .then(blob => setImageUrl(URL.createObjectURL(blob)))
@@ -48,23 +61,50 @@ export function FileViewerModal({ file, onClose }: {
     }
 
     return () => {
-      // Clean up blob URL on unmount
+      // Clean up blob URLs on unmount
       setImageUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null })
+      setPdfUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null })
     }
   }, [file?.path])
+
+  const handleDownload = async () => {
+    if (!file) return
+    const url = `${API}/workspace/files?path=${encodeURIComponent(file.path)}`
+    const res = await fetch(url)
+    const blob = await res.blob()
+    const blobUrl = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = blobUrl
+    a.download = file.name
+    a.click()
+    URL.revokeObjectURL(blobUrl)
+  }
+
+  const isReady = !loading && file && (content !== null || imageUrl || pdfUrl)
 
   return (
     <Modal
       title={file ? <><FileIcon name={file.name} /> {file.name}</> : 'File'}
       open={!!file}
       onCancel={onClose}
-      footer={null}
+      footer={file ? (
+        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <Button
+            icon={<CopyOutlined />}
+            onClick={() => { navigator.clipboard.writeText(file.path) }}
+          >
+            Copy Path
+          </Button>
+          <Button icon={<DownloadOutlined />} onClick={handleDownload}>Download</Button>
+        </div>
+      ) : null}
       width={file?.name.endsWith('.svg') ? 800 : 960}
       styles={{ body: { maxHeight: '70vh', overflow: 'auto' } }}
     >
-      {loading || (!content && !imageUrl) || !file ? <div style={{ textAlign: 'center', padding: 32 }}><Spin /></div>
-        : imageUrl ? <div style={{ textAlign: 'center', padding: 16 }}><img src={imageUrl} alt={file.name} style={{ maxWidth: '100%', borderRadius: 8 }} /></div>
-        : <FileRenderer name={file.name} content={content!} />}
+      {!isReady ? <div style={{ textAlign: 'center', padding: 32 }}><Spin /></div>
+        : pdfUrl ? <PdfRenderer url={pdfUrl} />
+        : imageUrl ? <div style={{ textAlign: 'center', padding: 16 }}><img src={imageUrl} alt={file!.name} style={{ maxWidth: '100%', borderRadius: 8 }} /></div>
+        : <FileRenderer name={file!.name} content={content!} path={file!.path} />}
     </Modal>
   )
 }
@@ -73,7 +113,7 @@ function isMarimo(content: string) {
   return content.includes('marimo.App') || content.includes('import marimo')
 }
 
-export function FileRenderer({ name, content }: { name: string; content: string }) {
+export function FileRenderer({ name, content, path }: { name: string; content: string; path?: string }) {
   const ext = name.split('.').pop()?.toLowerCase()
   switch (ext) {
     case 'md':    return <MarkdownRenderer content={content} />
@@ -81,6 +121,8 @@ export function FileRenderer({ name, content }: { name: string; content: string 
     case 'svg':   return <SvgRenderer content={content} />
     case 'ipynb': return <IpynbFileRenderer content={content} />
     case 'py':    return isMarimo(content) ? <MarimoRenderer content={content} name={name} /> : <PythonRenderer content={content} />
+    case 'html':
+    case 'htm':   return <HtmlRenderer content={content} dirPath={path ? path.substring(0, path.lastIndexOf('/')) : undefined} />
     case 'json':  return <pre style={CODE_STYLE}>{tryPrettyJson(content)}</pre>
     default:      return <pre style={CODE_STYLE}>{content}</pre>
   }
@@ -133,6 +175,67 @@ function SvgRenderer({ content }: { content: string }) {
   return (
     <div style={{ textAlign: 'center', padding: 16, background: '#fafafa', borderRadius: 8 }}>
       <div dangerouslySetInnerHTML={{ __html: content }} style={{ maxWidth: 700, margin: '0 auto' }} />
+    </div>
+  )
+}
+
+export function resolveRelativePath(base: string, relative: string): string {
+  const parts = base.split('/')
+  for (const seg of relative.split('/')) {
+    if (seg === '..') parts.pop()
+    else if (seg !== '.') parts.push(seg)
+  }
+  return parts.join('/')
+}
+
+export function rewriteRelativeUrls(html: string, dirPath: string): string {
+  const origin = window.location.origin
+  return html.replace(
+    /(<(?:img|script|link|source|video|audio)\s[^>]*?\b(?:src|href)=["'])(?!https?:\/\/|data:|\/|#)([^"']+)(["'])/gi,
+    (_match, prefix, relativePath, suffix) => {
+      const absolutePath = resolveRelativePath(dirPath, relativePath)
+      const apiUrl = `${origin}${API}/workspace/files?path=${encodeURIComponent(absolutePath)}`
+      return `${prefix}${apiUrl}${suffix}`
+    },
+  )
+}
+
+function HtmlRenderer({ content, dirPath }: { content: string; dirPath?: string }) {
+  const [mode, setMode] = useState<'preview' | 'source'>('preview')
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (mode !== 'preview') return
+    const resolved = dirPath ? rewriteRelativeUrls(content, dirPath) : content
+    const blob = new Blob([resolved], { type: 'text/html' })
+    const url = URL.createObjectURL(blob)
+    setBlobUrl(url)
+    return () => URL.revokeObjectURL(url)
+  }, [content, dirPath, mode])
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12,
+        padding: '8px 14px', background: '#f0f5ff', border: '1px solid #adc6ff', borderRadius: 8 }}>
+        <span style={{ fontSize: 14, color: '#1d39c4', fontWeight: 600 }}>&lt;/&gt;</span>
+        <div style={{ flex: 1, fontSize: 12, color: '#1d39c4' }}>
+          <strong>HTML Document</strong>
+        </div>
+        <Button.Group size="small">
+          <Button type={mode === 'preview' ? 'primary' : 'default'} onClick={() => setMode('preview')}>Preview</Button>
+          <Button type={mode === 'source' ? 'primary' : 'default'} onClick={() => setMode('source')}>Source</Button>
+        </Button.Group>
+      </div>
+      {mode === 'preview' ? (
+        blobUrl ? (
+          <iframe
+            src={blobUrl}
+            style={{ width: '100%', minHeight: 500, border: '1px solid #f0f0f0', borderRadius: 8, background: '#fff' }}
+          />
+        ) : null
+      ) : (
+        <pre style={CODE_STYLE}>{content}</pre>
+      )}
     </div>
   )
 }
@@ -337,10 +440,12 @@ export function CellValue({ value }: { value: unknown }) {
 export function FileIcon({ name }: { name: string }) {
   const ext = name.split('.').pop()?.toLowerCase()
   const style = { marginRight: 2 }
+  if (ext === 'pdf') return <FilePdfOutlined style={{ ...style, color: '#ff4d4f' }} />
   if (ext === 'csv') return <TableOutlined style={{ ...style, color: '#52c41a' }} />
   if (ext === 'svg' || ext === 'png' || ext === 'jpg') return <span style={style}>&#x1F4CA;</span>
   if (ext === 'ipynb') return <span style={style}>&#x1F4D3;</span>
   if (ext === 'py') return <span style={style}>&#x1F40D;</span>
+  if (ext === 'html' || ext === 'htm') return <span style={style}>&lt;/&gt;</span>
   return <FileTextOutlined style={{ ...style, color: '#888' }} />
 }
 

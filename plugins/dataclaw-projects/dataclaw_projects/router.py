@@ -58,6 +58,9 @@ class ProjectUpdateRequest(BaseModel):
     name: str | None = None
     description: str | None = None
     dataset_ids: list[str] | None = None
+    tool_ids: list[str] | None = None
+    skill_ids: list[str] | None = None
+    subagent_ids: list[str] | None = None
 
 
 @projects_router.patch("/{project_id}")
