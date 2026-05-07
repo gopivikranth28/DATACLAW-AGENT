@@ -8,6 +8,9 @@ Its built on the current opensource tools, Dataclaw = Openclaw+ Gbrain from Gary
 
 > **Local use only.** Dataclaw is designed to run on your local machine or a trusted private server. It allows arbitrary code execution (shell commands, Python notebooks) on the host device. API keys and credentials are stored as plain text in `~/.dataclaw/dataclaw.config.json`. Do not expose Dataclaw to the public internet without additional security measures.
 
+
+https://github.com/user-attachments/assets/25dc8181-bd14-41ad-a81c-5f9fe108e30a
+
 ---
 
 ## Quick Start
