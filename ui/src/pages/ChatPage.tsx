@@ -15,6 +15,7 @@ import ToolCallCard from '../components/ToolCallCard'
 import GuardrailCard from '../components/GuardrailCard'
 import { FileViewerModal } from '../components/FilePreview'
 import FileIcon from '../components/FileIcon'
+import InsightsPanel from '../components/InsightsPanel'
 
 interface Session { id: string; title: string; createdAt: string }
 interface Plan { id: string; name: string; status: string; steps: any[]; iteration?: number; feedback?: string; progress_summary?: string; mlflow_experiment_id?: string; mlflow_run_ids?: string[] }
@@ -175,7 +176,7 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
 
   // File explorer
   const [hasWorkspacePlugin, setHasWorkspacePlugin] = useState(false)
-  const [sidebarTab, setSidebarTab] = useState<'plans' | 'files'>('plans')
+  const [sidebarTab, setSidebarTab] = useState<'plans' | 'files' | 'insights'>('plans')
   const [projectFiles, setProjectFiles] = useState<any[]>([])
   const [filePreviewTarget, setFilePreviewTarget] = useState<{ name: string; path: string } | null>(null)
 
@@ -478,7 +479,8 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
 
   const showPlansSidebar = hasPlansPlugin
   const showFilesSidebar = hasWorkspacePlugin && !!projectId
-  const showSidebar = showPlansSidebar || showFilesSidebar
+  // Insights is core (viz layer) — the sidebar is always available.
+  const showSidebar = true
 
   return (
     <div style={{ display: 'flex', height: '100%' }}>
@@ -715,6 +717,11 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
                 borderBottom: sidebarTab === 'files' ? '2px solid #1677ff' : '2px solid transparent',
               }}>Files</div>
             )}
+            <div onClick={() => setSidebarTab('insights')} style={{
+              flex: 1, padding: '8px 12px', textAlign: 'center', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+              color: sidebarTab === 'insights' ? '#1677ff' : '#999',
+              borderBottom: sidebarTab === 'insights' ? '2px solid #1677ff' : '2px solid transparent',
+            }}>Insights</div>
           </div>
 
           <div style={{ padding: 12 }}>
@@ -783,6 +790,11 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
                 </div>
                 <ChatFileTree items={projectFiles} depth={0} onPreview={(path, name) => setFilePreviewTarget({ name, path })} />
               </div>
+            )}
+
+            {/* Insights tab */}
+            {sidebarTab === 'insights' && (
+              <InsightsPanel toolCalls={toolCalls} />
             )}
           </div>
           </>)}

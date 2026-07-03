@@ -6,10 +6,11 @@ import PlanDisplay from './PlanDisplay'
 import NotebookLink from './NotebookLink'
 import { FileWriteDisplay, FileReadDisplay } from './FileDisplay'
 import ReportDisplay from './ReportDisplay'
+import MetricDisplay from './MetricDisplay'
 
 const AUTO_EXPAND_TOOLS = new Set([
   'execute_cell', 'display_cell_output', 'execute_code',
-  'display_image',
+  'display_image', 'display_metric',
   'propose_plan', 'update_plan',
   'open_notebook',
   'ws_write_file', 'ws_read_file',
@@ -49,6 +50,8 @@ export default function ToolResultRenderer({ toolName, result, args, onFileClick
       return <CellDiffRenderer data={parsed} args={parsedArgs} />
     case 'display_image':
       return <ImageDisplay data={parsed} />
+    case 'display_metric':
+      return <MetricDisplay data={parsed} />
     case 'propose_plan':
     case 'update_plan':
       return <PlanDisplay data={parsed} onFileClick={onFileClick} onDecision={onDecision} />

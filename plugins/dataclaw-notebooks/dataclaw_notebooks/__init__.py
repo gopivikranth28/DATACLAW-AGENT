@@ -161,6 +161,17 @@ class NotebooksPlugin:
                 },
                 "required": ["cell_index"],
             }),
+            ("display_metric", "Display a metric tile — a key number with a label and optional change indicator. Use for headline KPIs (2-3 per analysis).", tools.display_metric, {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string", "description": "Short metric name, e.g. 'AI Adoption Rate'"},
+                    "value": {"type": "string", "description": "Headline number, pre-formatted, e.g. '67%'"},
+                    "delta": {"type": "string", "description": "Change vs baseline, e.g. '+12 pp vs 2022'", "default": ""},
+                    "unit": {"type": "string", "description": "Unit shown after the value, e.g. 'developers'", "default": ""},
+                    "trend": {"type": "string", "description": "Direction of the delta: 'up', 'down', or 'flat'", "enum": ["up", "down", "flat", ""], "default": ""},
+                },
+                "required": ["label", "value"],
+            }),
         ]
 
         for name, description, fn, parameters in _tool_defs:

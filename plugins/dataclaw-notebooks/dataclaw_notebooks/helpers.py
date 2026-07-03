@@ -33,6 +33,8 @@ def format_cell_outputs(cell: Any) -> list[dict[str, str]]:
             data = output.get("data", {})
             if "image/png" in data:
                 results.append({"type": "image", "data": data["image/png"], "mimetype": "image/png"})
+            elif "application/vnd.plotly.v1+json" in data:
+                results.append({"type": "plotly", "figure": data["application/vnd.plotly.v1+json"]})
             elif "text/html" in data:
                 results.append({"type": "html", "text": data["text/html"]})
             elif "text/plain" in data:
@@ -57,6 +59,12 @@ def outputs_to_nbformat(outputs: list[dict]) -> list:
                 output_type="execute_result",
                 data={"text/html": out["text"]},
                 metadata={}, execution_count=None,
+            ))
+        elif out["type"] == "plotly":
+            nb_outputs.append(nbformat.v4.new_output(
+                output_type="display_data",
+                data={"application/vnd.plotly.v1+json": out["figure"]},
+                metadata={},
             ))
         elif out["type"] == "image":
             nb_outputs.append(nbformat.v4.new_output(

@@ -212,6 +212,28 @@ async def execute_code(*, code: str, timeout: int = 120, **kw: Any) -> dict[str,
     return {"outputs": outputs, "error": error}
 
 
+async def display_metric(
+    *,
+    label: str,
+    value: str,
+    delta: str = "",
+    unit: str = "",
+    trend: str = "",
+    **kw: Any,
+) -> dict[str, Any]:
+    """Display a metric tile — a key number with a label and optional change indicator."""
+    if trend not in ("", "up", "down", "flat"):
+        raise ValueError(f"trend must be 'up', 'down', 'flat', or empty — got {trend!r}")
+    return {
+        "type": "metric",
+        "label": label,
+        "value": value,
+        "delta": delta,
+        "unit": unit,
+        "trend": trend,
+    }
+
+
 async def display_cell_output(*, cell_index: int, caption: str = "", **kw: Any) -> dict[str, Any]:
     state = _mgr().get_current()
     _validate_index(cell_index, len(state.notebook.cells))
@@ -272,6 +294,14 @@ async def _execute_and_collect(kc: Any, code: str, timeout: int) -> list[dict]:
                     "type": "image",
                     "mimetype": "image/png",
                     "data": data["image/png"],
+                    "summary": data.get("text/plain", ""),
+                })
+            # Plotly emits both the JSON MIME and a text/html fallback;
+            # this branch must come before text/html to keep the JSON.
+            elif "application/vnd.plotly.v1+json" in data:
+                outputs.append({
+                    "type": "plotly",
+                    "figure": data["application/vnd.plotly.v1+json"],
                     "summary": data.get("text/plain", ""),
                 })
             elif "text/html" in data:

@@ -2,12 +2,14 @@ import { useState } from 'react'
 import { IpynbRenderer as IpynbView } from 'react-ipynb-renderer'
 import 'react-ipynb-renderer/dist/styles/default.css'
 import CellSourceView from './CellSourceView'
+import PlotlyRenderer, { type PlotlyFigure } from './PlotlyRenderer'
 
 interface CellOutput {
   type: string
   text?: string
   data?: string
   mimetype?: string
+  figure?: PlotlyFigure
 }
 
 interface CellData {
@@ -45,8 +47,13 @@ export default function CellOutputRenderer({ data, args }: { data: CellData; arg
     )
   }
 
+  // Plotly outputs render interactively via PlotlyRenderer; everything else
+  // goes through the nbformat/IpynbView path unchanged.
+  const plotlyOutputs = outputs.filter(o => o.type === 'plotly' && o.figure)
+  const standardOutputs = outputs.filter(o => o.type !== 'plotly')
+
   // Convert outputs to nbformat-compatible cell for IpynbView
-  const nbOutputs = outputs.map(out => {
+  const nbOutputs = standardOutputs.map(out => {
     if (out.type === 'image' && out.data) {
       return { output_type: 'display_data', data: { [out.mimetype || 'image/png']: out.data }, metadata: {} }
     }
@@ -100,9 +107,16 @@ export default function CellOutputRenderer({ data, args }: { data: CellData; arg
           )}
         </div>
       )}
-      <div className="cell-output-only" style={{ borderRadius: 6, overflow: 'hidden', border: '1px solid #e8e8e8' }}>
-        <IpynbView ipynb={notebook as any} syntaxTheme="vscDarkPlus" language="python" />
-      </div>
+      {(standardOutputs.length > 0 || plotlyOutputs.length === 0) && (
+        <div className="cell-output-only" style={{ borderRadius: 6, overflow: 'hidden', border: '1px solid #e8e8e8' }}>
+          <IpynbView ipynb={notebook as any} syntaxTheme="vscDarkPlus" language="python" />
+        </div>
+      )}
+      {plotlyOutputs.map((out, i) => (
+        <div key={i} style={{ borderRadius: 6, overflow: 'hidden', border: '1px solid #e8e8e8', marginTop: standardOutputs.length > 0 ? 4 : 0 }}>
+          <PlotlyRenderer figure={out.figure!} />
+        </div>
+      ))}
       {data.caption && <div style={{ fontSize: 11, color: '#666', fontStyle: 'italic', marginTop: 4 }}>{data.caption}</div>}
       {data.error && (
         <pre style={{ background: '#fff2f0', color: '#cf1322', padding: 6, borderRadius: 4, fontSize: 10, marginTop: 4, whiteSpace: 'pre-wrap' }}>
