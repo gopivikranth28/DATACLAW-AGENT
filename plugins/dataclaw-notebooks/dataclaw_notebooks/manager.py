@@ -211,7 +211,10 @@ class NotebookManager:
         """
         # 1. Explicit override from plugin config
         if self._kernel_python:
-            p = Path(self._kernel_python).expanduser().resolve()
+            # absolute(), not resolve(): a venv's bin/python is a symlink to the
+            # base interpreter — dereferencing it would launch the kernel without
+            # the venv's site-packages.
+            p = Path(self._kernel_python).expanduser().absolute()
             if p.exists():
                 return p
 
@@ -225,7 +228,7 @@ class NotebookManager:
         if mode == "custom":
             custom_path = kernel_cfg.get("python_path", "")
             if custom_path:
-                p = Path(custom_path).expanduser().resolve()
+                p = Path(custom_path).expanduser().absolute()
                 if p.exists():
                     return p
                 logger.warning("Custom kernel python not found: %s, falling back to venv", p)
