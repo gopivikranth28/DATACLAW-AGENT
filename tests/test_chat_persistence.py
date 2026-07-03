@@ -57,3 +57,29 @@ def test_empty_result_for_llm_falls_back_to_result():
     ])
     serialized = "\n".join(str(m) for m in msgs)
     assert "{\"x\": 1}" in serialized or '"x": 1' in serialized
+
+
+# ── App view layout persistence (publish route reads it from the session) ──
+
+
+def test_update_session_request_accepts_app_layout():
+    """appLayout must survive the PATCH model — it's how the published
+    /app/<session-id> route sees the author's hide/reorder curation."""
+    from dataclaw.api.routers.chat import UpdateSessionRequest
+
+    layout = {"hidden": ["chart-1", "metric-0"], "order": ["chart-2", "chart-0"]}
+    req = UpdateSessionRequest(appLayout=layout)
+    updates = req.model_dump(exclude_unset=True)
+    assert updates == {"appLayout": layout}
+
+
+async def test_app_layout_roundtrips_through_session_storage():
+    from dataclaw.storage import sessions
+
+    created = await sessions.create_session(title="Layout test")
+    layout = {"hidden": ["chart-1"], "order": ["chart-2", "chart-0", "chart-1"]}
+    await sessions.update_session(created["id"], {"appLayout": layout})
+
+    loaded = await sessions.get_session(created["id"])
+    assert loaded is not None
+    assert loaded["appLayout"] == layout

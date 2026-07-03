@@ -36,7 +36,7 @@ export default function PlotlyRenderer({ figure, caption }: { figure: PlotlyFigu
   return (
     <div>
       <div ref={ref} style={{ width: '100%', minHeight: 360 }} />
-      {caption && <div style={{ fontSize: 11, color: '#666', fontStyle: 'italic', marginTop: 4 }}>{caption}</div>}
+      {caption && <div style={{ fontSize: 11, color: '#666', fontStyle: 'italic', margin: '4px 0 0', padding: '0 8px 8px' }}>{caption}</div>}
     </div>
   )
 }

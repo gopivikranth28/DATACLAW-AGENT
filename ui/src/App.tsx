@@ -15,8 +15,14 @@ import ProjectsPage from './pages/ProjectsPage'
 import ProjectPage from './pages/ProjectPage'
 import SubagentsPage from './pages/SubagentsPage'
 import ToolsPage from './pages/ToolsPage'
+import AppPage from './pages/AppPage'
 
 const { Sider, Content } = Layout
+
+const THEME = {
+  token: { colorPrimary: '#2563eb', borderRadius: 8, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif" },
+  algorithm: theme.defaultAlgorithm,
+}
 
 interface PluginInfo {
   id: string; name: string; label: string; icon: string
@@ -100,8 +106,19 @@ export default function App() {
 
   const selected = nav.map(n => n.key).filter(k => pathname.startsWith(k)).at(-1) ?? ''
 
+  // Published app view — standalone surface, no navigation chrome.
+  if (pathname.startsWith('/app/')) {
+    return (
+      <ConfigProvider theme={THEME}>
+        <Routes>
+          <Route path="/app/:sessionId" element={<AppPage />} />
+        </Routes>
+      </ConfigProvider>
+    )
+  }
+
   return (
-    <ConfigProvider theme={{ token: { colorPrimary: '#2563eb', borderRadius: 8, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif" }, algorithm: theme.defaultAlgorithm }}>
+    <ConfigProvider theme={THEME}>
       <Layout style={{ height: '100vh' }}>
         <Sider theme="dark" width={200} style={{ overflow: 'auto', background: '#111827' }}>
           <div style={{ padding: '20px 20px 16px', color: '#f9fafb', fontWeight: 700, fontSize: 17, letterSpacing: '-0.3px', display: 'flex', alignItems: 'center', gap: 8 }}>

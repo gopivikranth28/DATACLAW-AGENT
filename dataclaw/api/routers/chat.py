@@ -981,6 +981,10 @@ class UpdateSessionRequest(BaseModel):
     autoMessage: str | None = None
     maxAutoTurns: int | None = None
     autoTurnsUsed: int | None = None
+    # App view curation (hidden element ids + chart order) — read by the
+    # published /app/<session-id> route, so it must live on the session,
+    # not in the author's browser.
+    appLayout: dict[str, Any] | None = None
 
 
 @router.patch("/sessions/{session_id}")

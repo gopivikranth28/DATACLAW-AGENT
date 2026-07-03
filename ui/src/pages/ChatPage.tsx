@@ -5,6 +5,7 @@ import {
   EyeOutlined, EyeInvisibleOutlined, CheckCircleOutlined, CloseCircleOutlined,
   ClockCircleOutlined, FolderOutlined, FolderOpenOutlined, ExperimentOutlined, StopOutlined, ReloadOutlined,
   ThunderboltOutlined, EditOutlined, ToolOutlined, BulbOutlined, TeamOutlined, SafetyOutlined,
+  ExportOutlined,
 } from '@ant-design/icons'
 import { useSearchParams } from 'react-router-dom'
 import { API } from '../api'
@@ -15,7 +16,7 @@ import ToolCallCard from '../components/ToolCallCard'
 import GuardrailCard from '../components/GuardrailCard'
 import { FileViewerModal } from '../components/FilePreview'
 import FileIcon from '../components/FileIcon'
-import InsightsPanel from '../components/InsightsPanel'
+import AppView, { collectAppItems, type AppLayout } from '../components/AppView'
 
 interface Session { id: string; title: string; createdAt: string }
 interface Plan { id: string; name: string; status: string; steps: any[]; iteration?: number; feedback?: string; progress_summary?: string; mlflow_experiment_id?: string; mlflow_run_ids?: string[] }
@@ -176,7 +177,11 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
 
   // File explorer
   const [hasWorkspacePlugin, setHasWorkspacePlugin] = useState(false)
-  const [sidebarTab, setSidebarTab] = useState<'plans' | 'files' | 'insights'>('plans')
+  const [sidebarTab, setSidebarTab] = useState<'plans' | 'files' | 'app'>('plans')
+
+  // App view curation — persisted on the session so the published
+  // /app/<session-id> route reflects it.
+  const [appLayout, setAppLayout] = useState<AppLayout | null>(null)
   const [projectFiles, setProjectFiles] = useState<any[]>([])
   const [filePreviewTarget, setFilePreviewTarget] = useState<{ name: string; path: string } | null>(null)
 
@@ -223,6 +228,30 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
 
   const { messages, toolCalls, timeline, isRunning, reconnecting, error, sendMessage, cancelRun, checkAndReconnect, reset } = useAGUI({ onRunFinished })
   sendMessageRef.current = sendMessage
+
+  // App view: collect chart/metric items from the session's tool calls;
+  // load saved curation from the session and persist edits back to it.
+  const appItems = useMemo(
+    () => collectAppItems(toolCalls.map(tc => ({ name: tc.name, result: tc.result }))),
+    [toolCalls],
+  )
+  useEffect(() => {
+    setAppLayout(null)
+    if (!activeSessionId) return
+    fetch(`${API}/chat/sessions/${activeSessionId}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(s => { if (s?.appLayout) setAppLayout(s.appLayout) })
+      .catch(() => {})
+  }, [activeSessionId])
+  const saveAppLayout = useCallback((layout: AppLayout) => {
+    setAppLayout(layout)
+    if (!activeSessionId) return
+    fetch(`${API}/chat/sessions/${activeSessionId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ appLayout: layout }),
+    }).catch(() => {})
+  }, [activeSessionId])
 
   // Check plugins
   useEffect(() => {
@@ -717,11 +746,11 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
                 borderBottom: sidebarTab === 'files' ? '2px solid #1677ff' : '2px solid transparent',
               }}>Files</div>
             )}
-            <div onClick={() => setSidebarTab('insights')} style={{
+            <div onClick={() => setSidebarTab('app')} style={{
               flex: 1, padding: '8px 12px', textAlign: 'center', cursor: 'pointer', fontSize: 12, fontWeight: 600,
-              color: sidebarTab === 'insights' ? '#1677ff' : '#999',
-              borderBottom: sidebarTab === 'insights' ? '2px solid #1677ff' : '2px solid transparent',
-            }}>Insights</div>
+              color: sidebarTab === 'app' ? '#1677ff' : '#999',
+              borderBottom: sidebarTab === 'app' ? '2px solid #1677ff' : '2px solid transparent',
+            }}>App</div>
           </div>
 
           <div style={{ padding: 12 }}>
@@ -792,9 +821,19 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
               </div>
             )}
 
-            {/* Insights tab */}
-            {sidebarTab === 'insights' && (
-              <InsightsPanel toolCalls={toolCalls} />
+            {/* App tab — auto-composed session app (metrics + charts), curatable + publishable */}
+            {sidebarTab === 'app' && (
+              <div>
+                {activeSessionId && appItems.length > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+                    <Button size="small" icon={<ExportOutlined />}
+                      href={`/app/${activeSessionId}`} target="_blank">
+                      Publish
+                    </Button>
+                  </div>
+                )}
+                <AppView items={appItems} layout={appLayout} editable onLayoutChange={saveAppLayout} />
+              </div>
             )}
           </div>
           </>)}
