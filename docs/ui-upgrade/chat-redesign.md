@@ -1,6 +1,11 @@
 # Chat Screen Redesign — critique, decisions, and mock
 
-Initiative: `ui_upgrade` · Drafted 2026-07-07 · Status: direction approved, mock v1 done, implementation not started.
+Initiative: `ui_upgrade` · Drafted 2026-07-07 · Status: direction approved, mock rev 4, implementation not started.
+
+This is the critique + decision log. The build-facing documents are
+[chat-redesign-prd.md](chat-redesign-prd.md) (requirements, validation gate) and
+[chat-redesign-spec.md](chat-redesign-spec.md) (layout, verb map, state machines, phases);
+the reference implementation is [mockups/chat-redesign.html](mockups/chat-redesign.html).
 
 The goal: **maximize the conversational console**. Thinking, intermediate steps, and cell
 operations dominate the screen today; the transcript format, nested scrolling, and plan
