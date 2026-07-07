@@ -1,0 +1,597 @@
+<title>Dataclaw Chat — redesign mock</title>
+<style>
+/* ============ tokens (mocks the app's light theme; deliberately single-theme) ============ */
+:root{
+  --ink:#1a222e; --muted:#667085; --faint:#98a2b3; --line:#e7ebf0; --line-soft:#f0f3f7;
+  --bg:#ffffff; --bg-soft:#f7f8fa; --rail:#10151e; --rail-ink:#e8ecf2; --rail-muted:#8b95a3;
+  --accent:#1677ff; --accent-soft:#eef4ff; --bad:#d92d20; --bad-soft:#fef3f2;
+  --good:#16a34a; --warn:#d97706; --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --shadow:0 1px 2px rgba(16,24,40,.05), 0 8px 24px -8px rgba(16,24,40,.12);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;color:var(--ink);background:var(--bg-soft)}
+button{font:inherit;color:inherit;background:none;border:none;padding:0;cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+/* ============ app frame ============ */
+.app{display:flex;height:100vh;overflow:hidden}
+.rail{width:200px;flex-shrink:0;background:var(--rail);color:var(--rail-ink);display:flex;flex-direction:column;padding:14px 10px}
+.rail .logo{display:flex;align-items:center;gap:8px;font-weight:700;font-size:16px;padding:4px 8px 16px}
+.rail .logo .mock{font:600 9px/1 var(--mono);letter-spacing:.08em;color:#0d1117;background:#e8b339;padding:3px 5px;border-radius:4px}
+.rail .group{font-size:11px;color:var(--rail-muted);text-transform:uppercase;letter-spacing:.06em;padding:10px 8px 4px}
+.rail a{display:flex;align-items:center;gap:9px;color:var(--rail-muted);text-decoration:none;padding:7px 10px;border-radius:8px;font-size:13.5px}
+.rail a.on{background:var(--accent);color:#fff}
+.rail a.sub{padding-left:26px;font-size:12.5px}
+.rail a:hover:not(.on){background:rgba(255,255,255,.06);color:var(--rail-ink)}
+.rail .ico{width:15px;text-align:center;opacity:.9}
+
+.main{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg)}
+
+/* ============ topbar — ONE row of chrome ============ */
+.topbar{display:flex;align-items:center;gap:10px;height:50px;padding:0 16px;border-bottom:1px solid var(--line);flex-shrink:0}
+.topbar .back{color:var(--muted);font-size:16px;padding:4px 6px;border-radius:6px}
+.topbar .back:hover{background:var(--bg-soft)}
+.topbar .title{font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:4px 11px;font-size:12px;color:var(--muted);white-space:nowrap;background:var(--bg)}
+.chip:hover{border-color:#cfd7e1;background:var(--bg-soft)}
+.chip .k{font-family:var(--mono);font-size:11px}
+.chip.branch{color:var(--muted)}
+.chip.plan{color:var(--ink)}
+.chip.plan .dot{width:7px;height:7px;border-radius:50%;background:var(--good)}
+.chip.plan b{font-weight:600}
+.chip.plan .frac{color:var(--faint);font-variant-numeric:tabular-nums}
+body.panel-open .chip.plan{border-color:var(--accent);background:var(--accent-soft)}
+.topbar .sp{flex:1}
+.topbar .auto{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--faint)}
+.sw{width:26px;height:15px;border-radius:999px;background:#d6dde6;position:relative;flex-shrink:0}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:11px;height:11px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+.topbar .kebab{color:var(--muted);font-size:16px;padding:2px 8px;border-radius:6px}
+.topbar .kebab:hover{background:var(--bg-soft)}
+
+/* ============ body split ============ */
+.split{display:flex;flex:1;min-height:0}
+.console{flex:1;display:flex;flex-direction:column;min-width:0}
+.thread{flex:1;overflow-y:auto;padding:26px 28px 12px}
+.thread-in{max-width:1000px;margin:0 auto}
+
+/* ============ messages ============ */
+.umsg{display:flex;justify-content:flex-end;margin:18px 0 6px;position:relative}
+.umsg .bubble{max-width:70%;background:var(--accent);color:#fff;padding:9px 15px;border-radius:14px 14px 4px 14px;font-size:14px}
+.umsg .tools{position:absolute;right:0;top:-26px;display:none;gap:4px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:3px 4px;box-shadow:var(--shadow);font-size:11.5px}
+.umsg:hover .tools{display:flex}
+.umsg .tools button{padding:3px 8px;border-radius:5px;color:var(--muted)}
+.umsg .tools button:hover{background:var(--bg-soft);color:var(--ink)}
+.amsg{margin:10px 0 4px;font-size:14.5px;line-height:1.65;max-width:76ch}
+.amsg p{margin:0 0 10px}
+.amsg b{font-weight:650}
+.sysline{display:flex;justify-content:center;margin:16px 0}
+.sysline span{font-size:11.5px;color:var(--faint);background:var(--bg-soft);border:1px solid var(--line-soft);border-radius:999px;padding:4px 14px}
+.sysline .ok{color:var(--good);margin-right:4px}
+
+/* ============ activity log (turn-grouped) ============ */
+.act{margin:6px 0 14px;max-width:860px}
+.act-head{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);padding:5px 8px 5px 4px;border-radius:8px;user-select:none;width:100%;text-align:left}
+.act-head:hover{background:var(--bg-soft)}
+.act-head .chev{font-size:9px;color:var(--faint);transition:transform .15s;width:10px}
+.act.open .act-head .chev{transform:rotate(90deg)}
+.act-head .sum{font-weight:550;color:var(--ink)}
+.act-head .meta{color:var(--faint);font-variant-numeric:tabular-nums}
+.act-head .err-note{color:var(--bad)}
+.act-body{display:none;border-left:2px solid var(--line);margin:2px 0 0 8px;padding:4px 0 2px 16px}
+.act.open .act-body{display:block}
+.step{font-size:12.5px;color:var(--muted);padding:3.5px 6px;border-radius:6px;display:flex;align-items:baseline;gap:8px}
+.step .t{color:#c2cad4;font-family:var(--mono);font-size:10.5px;min-width:34px;text-align:right;flex-shrink:0;font-variant-numeric:tabular-nums}
+.step .mono{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+.step.exp{cursor:pointer}
+.step.exp:hover{background:var(--bg-soft);color:var(--ink)}
+.step.exp .more{color:var(--faint);font-size:10px;margin-left:2px}
+.step.bad, .step.bad .mono{color:var(--bad)}
+.step.live{color:var(--ink)}
+.step .pulse{width:7px;height:7px;border-radius:50%;background:var(--accent);flex-shrink:0;align-self:center;animation:pulse 1.2s infinite}
+@keyframes pulse{0%,100%{opacity:.35;transform:scale(.85)}50%{opacity:1;transform:scale(1)}}
+.step-detail{display:none;margin:4px 0 8px 44px}
+.step.open + .step-detail{display:block}
+.spin{width:11px;height:11px;border:2px solid var(--accent);border-top-color:transparent;border-radius:50%;animation:rot 1s linear infinite;flex-shrink:0}
+@keyframes rot{to{transform:rotate(360deg)}}
+
+/* code blocks: capped, light theme, no inner document */
+.code{position:relative;background:#f8f9fb;border:1px solid var(--line);border-radius:8px;font:11.5px/1.6 var(--mono);overflow:hidden}
+.code pre{margin:0;padding:10px 14px;overflow-x:auto;max-height:200px}
+.code.full pre{max-height:none}
+.code .fade{position:absolute;left:1px;right:1px;bottom:26px;height:34px;background:linear-gradient(transparent,#f8f9fb);pointer-events:none}
+.code.full .fade{display:none}
+.code .morebtn{display:block;width:100%;text-align:center;font-size:11px;color:var(--accent);padding:5px;border-top:1px solid var(--line-soft);background:#fbfcfd}
+.code.bad{background:var(--bad-soft);border-color:#fecdca}
+.code.bad pre{color:#912018}
+.kw{color:#9333ea}.st{color:#0e7a4d}.fn{color:#1361d8}.cm{color:#98a2b3;font-style:italic}.nm{color:#b54708}
+
+/* ============ inline evidence (notebook-flavored) ============ */
+.cell{display:flex;gap:12px;margin:14px 0;max-width:960px}
+.cell .gut{flex-shrink:0;width:58px;text-align:right;font:10.5px/1.4 var(--mono);color:var(--faint);padding-top:8px}
+.cell .gut a{color:var(--faint);text-decoration:none;border-bottom:1px dotted #cfd7e1}
+.cell .body{flex:1;min-width:0;border:1px solid var(--line);border-left:3px solid var(--line);border-radius:8px;background:var(--bg);padding:14px 16px}
+.cell .cap{font-size:12px;color:var(--muted);margin-top:10px;max-width:70ch}
+.metric-row{display:flex;gap:12px;flex-wrap:wrap;margin:14px 0 4px;max-width:960px;padding-left:70px}
+.tile{flex:1;min-width:180px;border:1px solid var(--line);border-radius:10px;padding:12px 16px;background:var(--bg)}
+.tile .lb{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);font-weight:600}
+.tile .v{font-size:24px;font-weight:650;letter-spacing:-.01em;margin:3px 0 1px;font-variant-numeric:tabular-nums}
+.tile .d{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.tile .d .up{color:var(--good)}
+
+/* chart */
+.chart svg{display:block;width:100%;height:auto;max-width:660px}
+.chart .bar{transition:opacity .1s}
+.chart g:hover .bar{opacity:.82}
+.chart text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+.chart .yl{font-size:11.5px;fill:var(--ink)}
+.chart .vl{font-size:10.5px;fill:var(--muted);font-variant-numeric:tabular-nums}
+.chart .tick{font-size:10px;fill:var(--faint)}
+.chart .axt{font-size:10.5px;fill:var(--faint)}
+.chart .grid{stroke:var(--line-soft);stroke-width:1}
+.chart .ttl{font-size:12.5px;font-weight:600;fill:var(--ink)}
+
+/* table */
+table.df{border-collapse:collapse;width:100%;font-size:12.5px}
+table.df th{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);font-weight:600;text-align:right;padding:4px 10px;border-bottom:1px solid var(--line)}
+table.df th:nth-child(-n+2){text-align:left}
+table.df td{padding:5px 10px;border-bottom:1px solid var(--line-soft);text-align:right;font-variant-numeric:tabular-nums}
+table.df td:nth-child(-n+2){text-align:left}
+table.df tr.win td{background:var(--accent-soft)}
+table.df .foot{font-size:11.5px;color:var(--faint);padding-top:8px;border:none}
+table.df .foot a{color:var(--accent);text-decoration:none}
+
+/* ============ composer ============ */
+.composer{border-top:1px solid var(--line);padding:10px 28px 14px;flex-shrink:0;background:var(--bg)}
+.composer-in{max-width:1000px;margin:0 auto}
+.queue{display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.qchip{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);background:var(--bg-soft);border:1px dashed #cfd7e1;border-radius:999px;padding:4px 6px 4px 12px}
+.qchip .tag{font-size:9.5px;font-weight:700;letter-spacing:.06em;color:var(--warn);text-transform:uppercase}
+.qchip .x{color:var(--faint);padding:1px 6px;border-radius:50%}
+.qchip .x:hover{background:#e9edf2;color:var(--ink)}
+.crow{display:flex;gap:10px;align-items:flex-end}
+.cbox{flex:1;border:1px solid var(--line);border-radius:12px;padding:10px 14px;min-height:20px;font-size:14px;color:var(--faint);background:var(--bg)}
+.cbox:hover{border-color:#cfd7e1}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border-radius:10px;font-size:13px;font-weight:550;padding:9px 14px;flex-shrink:0}
+.btn.primary{background:var(--accent);color:#fff}
+.btn.stop{border:1px solid #fecdca;color:var(--bad);background:var(--bg)}
+.btn.stop:hover{background:var(--bad-soft)}
+.chint{font-size:11px;color:var(--faint);margin-top:6px;text-align:right}
+
+/* ============ right panel ============ */
+.panel{width:0;overflow:hidden;flex-shrink:0;border-left:1px solid transparent;background:var(--bg);transition:width .18s ease;display:flex;flex-direction:column}
+body.panel-open .panel{width:400px;border-left-color:var(--line)}
+.panel-tabs{display:flex;border-bottom:1px solid var(--line);flex-shrink:0}
+.panel-tabs button{flex:1;padding:10px;font-size:12.5px;font-weight:600;color:var(--faint);border-bottom:2px solid transparent}
+.panel-tabs button.on{color:var(--accent);border-bottom-color:var(--accent)}
+.panel-tabs .close{flex:0 0 40px;font-weight:400;color:var(--faint);font-size:14px}
+.panel-scroll{flex:1;overflow-y:auto;padding:14px 18px}
+.ptab{display:none}.ptab.on{display:block}
+.plan-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.ptag{font:500 10.5px var(--mono);border:1px solid var(--line);border-radius:6px;padding:2px 8px;color:var(--muted);background:var(--bg)}
+.ptag.done{color:var(--good);border-color:#bbe5c8;background:#f2fbf5;font-family:inherit;font-weight:600}
+.plan-doc{font-size:12.5px;line-height:1.6;color:#344054}
+.plan-doc h1{font-size:17px;line-height:1.3;margin:6px 0 8px;color:var(--ink);letter-spacing:-.01em}
+.plan-doc h2{font-size:13px;margin:16px 0 6px;color:var(--ink)}
+.plan-doc h3{font-size:12px;margin:12px 0 4px;color:var(--ink)}
+.plan-doc ul{margin:4px 0;padding-left:18px}
+.plan-doc li{margin:3px 0}
+.plan-doc .quiet{color:var(--muted)}
+.ftree{font:12px/1.9 var(--mono);color:#475467}
+.ftree .dir{color:var(--accent)}
+.ftree div{padding-left:0}.ftree div.d1{padding-left:16px}
+.ftree .sz{color:#c2cad4;font-size:10.5px;margin-left:8px}
+.rep-card{border:1px solid var(--line);border-radius:10px;padding:14px;box-shadow:none}
+.rep-card .nm2{font-weight:600;font-size:13px}
+.rep-card .pth{font:10.5px var(--mono);color:var(--faint);margin:4px 0 8px;word-break:break-all}
+.rep-card .row{display:flex;justify-content:space-between;align-items:center;font-size:11.5px;color:var(--muted)}
+.rep-card .open{color:var(--accent);font-weight:550}
+.panel-hint{font-size:11.5px;color:var(--faint);margin-top:14px;line-height:1.5}
+
+/* ============ design notes ============ */
+.fab{position:fixed;bottom:18px;right:18px;z-index:60;background:var(--rail);color:#fff;border-radius:999px;padding:9px 16px;font-size:12.5px;font-weight:550;box-shadow:var(--shadow);display:flex;gap:7px;align-items:center}
+.badge{display:none;position:absolute;z-index:50;width:18px;height:18px;border-radius:50%;background:#e8b339;color:#10151e;font:700 10.5px/18px var(--mono);text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+body.notes .badge{display:block}
+.notes-drawer{display:none;position:fixed;bottom:64px;right:18px;z-index:60;width:360px;max-height:min(520px,70vh);overflow-y:auto;background:var(--bg);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:14px 16px}
+body.notes .notes-drawer{display:block}
+.notes-drawer h4{margin:0 0 8px;font-size:13px}
+.notes-drawer ol{margin:0;padding-left:0;list-style:none}
+.notes-drawer li{display:flex;gap:9px;font-size:12px;color:var(--muted);padding:6px 0;border-top:1px solid var(--line-soft)}
+.notes-drawer li b{color:var(--ink);font-weight:600}
+.notes-drawer .n{flex-shrink:0;width:18px;height:18px;border-radius:50%;background:#e8b339;color:#10151e;font:700 10.5px/18px var(--mono);text-align:center}
+.hint-chip{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:60;display:flex;align-items:center;gap:10px;background:var(--rail);color:#dfe6ee;font-size:12px;border-radius:999px;padding:8px 10px 8px 16px;box-shadow:var(--shadow);max-width:min(620px,90vw)}
+.hint-chip .x{color:#8b95a3;padding:2px 8px;border-radius:50%}
+.hint-chip .x:hover{color:#fff}
+.toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:70;background:var(--rail);color:#fff;font-size:12.5px;border-radius:10px;padding:9px 16px;box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:opacity .2s}
+.toast.show{opacity:1}
+</style>
+
+<div class="app">
+  <!-- left rail: the ONLY nav (project tab bar removed) -->
+  <nav class="rail" style="position:relative">
+    <span class="badge" style="top:10px;right:6px">8</span>
+    <div class="logo">🦀 Dataclaw <span class="mock">MOCK</span></div>
+    <div class="group">Projects</div>
+    <a href="#" class="sub">test</a>
+    <a href="#" class="sub" style="color:var(--rail-ink)">New Chat</a>
+    <a href="#" class="sub">＋ New Project</a>
+    <div class="group">Workspace</div>
+    <a href="#" class="on"><span class="ico">💬</span> Chat</a>
+    <a href="#"><span class="ico">🗄</span> Data</a>
+    <a href="#"><span class="ico">👥</span> Subagents</a>
+    <a href="#"><span class="ico">🔧</span> Tools</a>
+    <a href="#"><span class="ico">💡</span> Skills</a>
+    <a href="#"><span class="ico">🧪</span> Experiments</a>
+    <div style="flex:1"></div>
+    <a href="#"><span class="ico">⚙️</span> Config</a>
+  </nav>
+
+  <div class="main">
+    <!-- single-row chrome -->
+    <header class="topbar" style="position:relative">
+      <button class="back" aria-label="Back to sessions">←</button>
+      <span class="title">which team has the best team composition?</span>
+      <span class="chip branch" title="Session branches — fork any message to start one"><span class="k">⑂</span> main</span>
+      <span class="sp"></span>
+      <span style="position:relative"><span class="badge" style="top:-7px;left:-10px">3</span>
+        <button class="chip plan" id="planPill" title="Open plan in side panel"><span class="dot"></span> Plan <b>WC2026</b> <span class="frac">5/5</span> completed</button>
+      </span>
+      <span style="position:relative"><span class="badge" style="top:-7px;left:-10px">6</span>
+        <button class="chip" title="Datasets, tools, skills, subagents & guardrails for this session">Scope · All</button>
+      </span>
+      <span class="auto"><span class="sw" role="switch" aria-checked="false" aria-label="Auto mode"></span> Auto</span>
+      <button class="kebab" aria-label="Session settings">⋯</button>
+    </header>
+
+    <div class="split">
+      <div class="console">
+        <div class="thread" style="position:relative">
+          <span class="badge" style="top:12px;left:12px">7</span>
+          <div class="thread-in">
+
+            <!-- user turn 1 -->
+            <div class="umsg">
+              <div class="tools" role="toolbar">
+                <button class="fork">⑂ Fork from here</button>
+                <button>✏️ Edit</button>
+              </div>
+              <div class="bubble" style="position:relative"><span class="badge" style="top:-8px;left:-26px">5</span>which team has the best team composition?</div>
+            </div>
+
+            <!-- assistant turn 1 -->
+            <div class="amsg"><p>I'll rank all 48 squads on a composite <b>Team Composition Index</b> — positional-line strength, squad balance, starting-XI quality, bench depth, and age profile — then profile the winner. Submitting a plan for review first.</p></div>
+            <div class="act" style="position:relative">
+              <span class="badge" style="top:2px;left:-24px">1</span>
+              <button class="act-head"><span class="chev">▶</span><span class="sum">Planned</span><span class="meta">3 steps · 12s</span></button>
+              <div class="act-body">
+                <div class="step"><span class="t">0:02</span><span>Profiled <span class="mono">fifa_world_cup_2026_player_performance.csv</span> — 54,600 rows · 75 cols · 42% bench/DNP rows</span></div>
+                <div class="step"><span class="t">0:05</span><span>Loaded skill <span class="mono">dataclaw_data_science</span></span></div>
+                <div class="step"><span class="t">0:12</span><span>Submitted plan <b>WC2026 — Best Team Composition</b> for review</span></div>
+              </div>
+            </div>
+
+            <div class="sysline"><span><span class="ok">✓</span> Plan approved · rev 1 · 8:57 AM</span></div>
+
+            <!-- assistant turn 2: the work turn -->
+            <div class="amsg"><p>Building player ratings and line strengths, then the composite index.</p></div>
+            <div class="act open">
+              <button class="act-head"><span class="chev">▶</span><span class="sum">Worked</span><span class="meta">14 steps · 4m 32s ·</span><span class="err-note">1 error fixed</span></button>
+              <div class="act-body">
+                <div class="step"><span class="t">0:04</span><span>Updated plan — step 1 <i>Build player-level ratings</i> started</span></div>
+                <div class="step exp" role="button" tabindex="0"><span class="t">0:11</span><span>Added code cell <span class="mono">[4]</span> · 38 lines</span><span class="more">▸ source</span></div>
+                <div class="step-detail">
+                  <div class="code" id="code4">
+                    <pre><span class="kw">import</span> pandas <span class="kw">as</span> pd
+
+df = pd.<span class="fn">read_csv</span>(DATA / <span class="st">"fifa_world_cup_2026_player_performance.csv"</span>)
+df = df[df.minutes &gt; <span class="nm">0</span>]                     <span class="cm"># drop bench/DNP rows (42%)</span>
+
+<span class="cm"># per-player rating: performance blended with market signal</span>
+agg = df.<span class="fn">groupby</span>([<span class="st">"team"</span>, <span class="st">"player_name"</span>, <span class="st">"position"</span>]).<span class="fn">agg</span>(
+    quality=(<span class="st">"performance_score"</span>, <span class="st">"mean"</span>),
+    minutes=(<span class="st">"minutes"</span>, <span class="st">"sum"</span>),
+    age=(<span class="st">"age"</span>, <span class="st">"first"</span>),
+    value=(<span class="st">"market_value_eur_m"</span>, <span class="st">"first"</span>),
+).<span class="fn">reset_index</span>()
+
+<span class="cm"># shrink low-minute players toward position mean</span>
+pos_mean = agg.<span class="fn">groupby</span>(<span class="st">"position"</span>).quality.<span class="fn">transform</span>(<span class="st">"mean"</span>)
+w = (agg.minutes / <span class="nm">450</span>).<span class="fn">clip</span>(upper=<span class="nm">1.0</span>)
+agg[<span class="st">"rating"</span>] = w * agg.quality + (<span class="nm">1</span> - w) * pos_mean</pre>
+                    <div class="fade"></div>
+                    <button class="morebtn">Show all 38 lines</button>
+                  </div>
+                </div>
+                <div class="step"><span class="t">0:13</span><span>Ran cell <span class="mono">[4]</span> · 2.1s</span></div>
+                <div class="step"><span class="t">0:26</span><span>Added code cell <span class="mono">[5]</span> · 24 lines — line strengths GK/DEF/MID/FWD</span></div>
+                <div class="step"><span class="t">0:27</span><span>Ran cell <span class="mono">[5]</span> · 0.8s</span></div>
+                <div class="step"><span class="t">0:41</span><span>Loaded skill <span class="mono">visualization</span></span></div>
+                <div class="step bad exp" role="button" tabindex="0"><span class="t">1:02</span><span>Ran cell <span class="mono">[6]</span> · <span class="mono">KeyError: 'market_value_eur'</span></span><span class="more">▸ traceback</span></div>
+                <div class="step-detail">
+                  <div class="code bad"><pre>KeyError: 'market_value_eur'
+  cell [6], line 3:
+    ratings["value_m"] = agg["market_value_eur"] / 1e6
+columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
+                </div>
+                <div class="step"><span class="t">1:18</span><span>Edited cell <span class="mono">[6]</span> — column is <span class="mono">market_value_eur_m</span>, already in millions</span></div>
+                <div class="step"><span class="t">1:19</span><span>Ran cell <span class="mono">[6]</span> · 1.2s</span></div>
+                <div class="step"><span class="t">1:30</span><span>Updated plan — steps 2–3 complete</span></div>
+                <div class="step"><span class="t">2:04</span><span>Added code cell <span class="mono">[7]</span> · 31 lines — composite TCI + ranking chart</span></div>
+                <div class="step"><span class="t">2:06</span><span>Ran cell <span class="mono">[7]</span> · 1.6s</span></div>
+                <div class="step"><span class="t">2:48</span><span>Added + ran cell <span class="mono">[8]</span> — full 48-team ranking table · 0.4s</span></div>
+                <div class="step"><span class="t">3:15</span><span>Logged run <span class="mono">tci_v1</span> to MLflow — <span class="mono">tci_top=81.9</span></span></div>
+                <div class="step"><span class="t">4:31</span><span>Updated plan — steps 4–5 complete</span></div>
+              </div>
+            </div>
+
+            <!-- evidence: metric tiles -->
+            <div class="metric-row">
+              <div class="tile"><div class="lb">Top composition</div><div class="v">Netherlands</div><div class="d"><span class="up">▲</span> TCI 81.9 · +2.5 vs Panama</div></div>
+              <div class="tile"><div class="lb">Teams ranked</div><div class="v">48</div><div class="d">54,600 player-match rows</div></div>
+              <div class="tile"><div class="lb">Rating correlation</div><div class="v">0.93</div><div class="d">vs performance_score · Pearson</div></div>
+            </div>
+
+            <!-- evidence: chart, notebook-flavored -->
+            <div class="cell chart" style="position:relative">
+              <span class="badge" style="top:-4px;left:-22px">2</span>
+              <div class="gut"><a href="#" title="Open cell 7 in notebook">Out [7]</a></div>
+              <div class="body">
+                <svg viewBox="0 0 660 342" role="img" aria-label="Bar chart: Team Composition Index, top 10 of 48 teams. Netherlands leads at 81.9.">
+                  <text class="ttl" x="0" y="14">Team Composition Index — top 10 of 48</text>
+                  <g transform="translate(0,26)">
+                    <line class="grid" x1="116" y1="4" x2="116" y2="288"/>
+                    <line class="grid" x1="230" y1="4" x2="230" y2="288"/>
+                    <line class="grid" x1="344" y1="4" x2="344" y2="288"/>
+                    <line class="grid" x1="458" y1="4" x2="458" y2="288"/>
+                    <line class="grid" x1="571" y1="4" x2="571" y2="288"/>
+                    <g><title>Netherlands — TCI 81.9 · XI 88 · balance 84 · depth 86</title>
+                      <text class="yl" x="108" y="24" text-anchor="end" font-weight="600">Netherlands</text>
+                      <path class="bar" fill="#1677ff" d="M116 12 h462 q4 0 4 4 v8 q0 4 -4 4 h-462 z"/>
+                      <text class="vl" x="590" y="24" font-weight="600" fill="#1a222e">81.9</text></g>
+                    <g><title>Panama — TCI 79.4 · XI 80 · balance 88 · depth 78</title>
+                      <text class="yl" x="108" y="52" text-anchor="end">Panama</text>
+                      <path class="bar" fill="#5B82C7" d="M116 40 h448 q4 0 4 4 v8 q0 4 -4 4 h-448 z"/>
+                      <text class="vl" x="576" y="52">79.4</text></g>
+                    <g><title>France — TCI 78.8 · XI 87 · balance 76 · depth 81</title>
+                      <text class="yl" x="108" y="80" text-anchor="end">France</text>
+                      <path class="bar" fill="#5B82C7" d="M116 68 h444 q4 0 4 4 v8 q0 4 -4 4 h-444 z"/>
+                      <text class="vl" x="572" y="80">78.8</text></g>
+                    <g><title>England — TCI 78.1 · XI 86 · balance 77 · depth 79</title>
+                      <text class="yl" x="108" y="108" text-anchor="end">England</text>
+                      <path class="bar" fill="#5B82C7" d="M116 96 h440 q4 0 4 4 v8 q0 4 -4 4 h-440 z"/>
+                      <text class="vl" x="568" y="108">78.1</text></g>
+                    <g><title>Spain — TCI 77.6 · XI 85 · balance 78 · depth 76</title>
+                      <text class="yl" x="108" y="136" text-anchor="end">Spain</text>
+                      <path class="bar" fill="#5B82C7" d="M116 124 h437 q4 0 4 4 v8 q0 4 -4 4 h-437 z"/>
+                      <text class="vl" x="565" y="136">77.6</text></g>
+                    <g><title>Portugal — TCI 77.2</title>
+                      <text class="yl" x="108" y="164" text-anchor="end">Portugal</text>
+                      <path class="bar" fill="#5B82C7" d="M116 152 h435 q4 0 4 4 v8 q0 4 -4 4 h-435 z"/>
+                      <text class="vl" x="563" y="164">77.2</text></g>
+                    <g><title>Argentina — TCI 76.9</title>
+                      <text class="yl" x="108" y="192" text-anchor="end">Argentina</text>
+                      <path class="bar" fill="#5B82C7" d="M116 180 h433 q4 0 4 4 v8 q0 4 -4 4 h-433 z"/>
+                      <text class="vl" x="561" y="192">76.9</text></g>
+                    <g><title>Brazil — TCI 76.4</title>
+                      <text class="yl" x="108" y="220" text-anchor="end">Brazil</text>
+                      <path class="bar" fill="#5B82C7" d="M116 208 h431 q4 0 4 4 v8 q0 4 -4 4 h-431 z"/>
+                      <text class="vl" x="559" y="220">76.4</text></g>
+                    <g><title>Germany — TCI 75.8</title>
+                      <text class="yl" x="108" y="248" text-anchor="end">Germany</text>
+                      <path class="bar" fill="#5B82C7" d="M116 236 h427 q4 0 4 4 v8 q0 4 -4 4 h-427 z"/>
+                      <text class="vl" x="555" y="248">75.8</text></g>
+                    <g><title>Morocco — TCI 75.1</title>
+                      <text class="yl" x="108" y="276" text-anchor="end">Morocco</text>
+                      <path class="bar" fill="#5B82C7" d="M116 264 h423 q4 0 4 4 v8 q0 4 -4 4 h-423 z"/>
+                      <text class="vl" x="551" y="276">75.1</text></g>
+                    <text class="tick" x="116" y="302" text-anchor="middle">0</text>
+                    <text class="tick" x="230" y="302" text-anchor="middle">20</text>
+                    <text class="tick" x="344" y="302" text-anchor="middle">40</text>
+                    <text class="tick" x="458" y="302" text-anchor="middle">60</text>
+                    <text class="tick" x="571" y="302" text-anchor="middle">80</text>
+                    <text class="axt" x="372" y="316" text-anchor="middle">Team Composition Index (0–100), zero baseline</text>
+                  </g>
+                </svg>
+                <div class="cap">Netherlands leads at 81.9; the top-10 spread is under 7 points — composition is tight at the top. Weights: XI .40 · balance .22 · depth .18 · star .12 · age .08.</div>
+              </div>
+            </div>
+
+            <!-- evidence: table, capped -->
+            <div class="cell">
+              <div class="gut"><a href="#" title="Open cell 8 in notebook">Out [8]</a></div>
+              <div class="body">
+                <table class="df">
+                  <thead><tr><th>#</th><th>Team</th><th>TCI</th><th>XI quality</th><th>Balance</th><th>Depth</th><th>Star</th><th>Age fit</th></tr></thead>
+                  <tbody>
+                    <tr class="win"><td>1</td><td><b>Netherlands</b></td><td><b>81.9</b></td><td>88.2</td><td>84.1</td><td>86.3</td><td>72.5</td><td>78.0</td></tr>
+                    <tr><td>2</td><td>Panama</td><td>79.4</td><td>80.1</td><td>88.4</td><td>77.9</td><td>65.2</td><td>81.3</td></tr>
+                    <tr><td>3</td><td>France</td><td>78.8</td><td>87.3</td><td>75.6</td><td>81.0</td><td>84.1</td><td>74.2</td></tr>
+                    <tr><td>4</td><td>England</td><td>78.1</td><td>86.0</td><td>76.8</td><td>79.4</td><td>80.6</td><td>73.9</td></tr>
+                    <tr><td>5</td><td>Spain</td><td>77.6</td><td>85.2</td><td>78.1</td><td>76.3</td><td>77.8</td><td>75.5</td></tr>
+                    <tr><td class="foot" colspan="8">43 more rows · <a href="#">open full table — outputs/tci_rankings.parquet</a></td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="amsg"><p><b>Netherlands</b> has the best overall composition — TCI <b>81.9</b>, and it holds #1 or #2 under every weighting tested. Its starting XI (88.2) pairs with the deepest bench in the field; the nearest rival is <b>Panama</b> at 79.4, driven by balance rather than star power. The full method is in the plan, and the ranking covers all 48 teams.</p></div>
+
+            <!-- user turn 2 -->
+            <div class="umsg">
+              <div class="tools" role="toolbar">
+                <button class="fork">⑂ Fork from here</button>
+                <button>✏️ Edit</button>
+              </div>
+              <div class="bubble">how sensitive is the ranking to the weights?</div>
+            </div>
+
+            <!-- assistant turn 3: running -->
+            <div class="act open">
+              <button class="act-head"><span class="spin" role="status" aria-label="Working"></span><span class="sum">Working</span><span class="meta">3 steps · 41s</span></button>
+              <div class="act-body">
+                <div class="step"><span class="t">0:06</span><span>Added code cell <span class="mono">[9]</span> — weight perturbation grid, ±50% per component</span></div>
+                <div class="step"><span class="t">0:10</span><span>Ran cell <span class="mono">[9]</span> · 3.8s</span></div>
+                <div class="step live"><span class="pulse"></span><span>Running cell <span class="mono">[10]</span> — bootstrap rank stability, 1,000 draws…</span></div>
+              </div>
+            </div>
+
+            <div style="height:8px"></div>
+          </div>
+        </div>
+
+        <!-- composer: enabled while running, queues -->
+        <div class="composer" style="position:relative">
+          <span class="badge" style="top:-9px;left:24px">4</span>
+          <div class="composer-in">
+            <div class="queue">
+              <span class="qchip"><span class="tag">Queued</span> "Also chart the age curves for the top-5 squads" <button class="x" aria-label="Remove queued message">×</button></span>
+            </div>
+            <div class="crow">
+              <div class="cbox">Message Dataclaw — sends when the current run finishes…</div>
+              <button class="btn stop">⏹ Stop</button>
+              <button class="btn primary">Queue ↵</button>
+            </div>
+            <div class="chint">⏎ queue · ⇧⏎ newline · plan feedback goes here too when a plan is pending</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- right panel: read-only home for plans / files / reports -->
+      <aside class="panel" aria-label="Session panel">
+        <div class="panel-tabs">
+          <button class="on" data-tab="plans">Plans</button>
+          <button data-tab="files">Files</button>
+          <button data-tab="reports">Reports</button>
+          <button class="close" id="panelClose" aria-label="Close panel">✕</button>
+        </div>
+        <div class="panel-scroll">
+          <div class="ptab on" id="tab-plans">
+            <div class="plan-meta">
+              <span class="ptag">plan.md</span>
+              <span class="ptag done">completed</span>
+              <span class="ptag">rev 1</span>
+              <span style="flex:1"></span>
+              <span class="ptag" style="cursor:pointer">⤢ Expand</span>
+            </div>
+            <div class="plan-doc">
+              <h1>WC2026 — Best Team Composition</h1>
+              <p class="quiet">Rank all 48 World Cup 2026 squads on a composite Team Composition Index built from positional-line strength (GK/DEF/MID/FWD), squad balance (no weak line), starting-XI quality, bench depth, and age balance — then identify the team with the best overall composition and explain why.</p>
+              <h2>Review Snapshot</h2>
+              <ul class="quiet">
+                <li>Status: completed · Revision: rev 1</li>
+                <li>Progress: 5/5 steps completed</li>
+                <li>Created 7/7/2026, 8:57 AM · Updated 9:04 AM</li>
+              </ul>
+              <h2>Current Understanding</h2>
+              <p class="quiet">No separate context was captured with this plan. The plan should be reviewed against the current chat request and any notebook state visible in the session.</p>
+              <h2>Proposed Workstreams</h2>
+              <h3>Data readiness and framing</h3>
+              <ul class="quiet">
+                <li><b>3. Compute composite index</b> (completed) — combine line strengths into TCI; penalize weakest line. Note: weights XI .40 · balance .22 · depth .18 · star .12 · age .08.</li>
+                <li><b>4. Rank &amp; profile top teams</b> (completed) — rank all 48; break down the winner line-by-line vs field average. Note: Netherlands #1 (TCI 81.9); Panama main rival.</li>
+              </ul>
+              <h3>Analysis workstreams</h3>
+              <ul class="quiet">
+                <li><b>1. Build player-level ratings</b> (completed) — aggregate player-match table to one row per player; shrink low-minute players.</li>
+                <li><b>2. Score positional lines</b> (completed) — GK/DEF/MID/FWD strength per squad from XI ratings.</li>
+              </ul>
+              <h3>Reporting and review</h3>
+              <ul class="quiet"><li><b>5. Publish composition report</b> (completed) — chart, ranking table, and narrative to <code>reports/wc26_composition.html</code>.</li></ul>
+              <h2>Validation And QA</h2>
+              <ul class="quiet">
+                <li>Confirm dataset scope, row counts, key fields, and grain before interpreting metrics.</li>
+                <li>Check nulls, ranges, duplicates, categorical coverage, and suspicious synthetic patterns.</li>
+                <li>Record assumptions and caveats in the notebook and final explain.md.</li>
+                <li>Tie each chart or metric back to a reproducible notebook cell and durable output path.</li>
+              </ul>
+              <h2>Expected Deliverables</h2>
+              <ul class="quiet">
+                <li>A notebook with executed cells, visible validation checks, and final summary.</li>
+                <li>Durable outputs for tables, charts, and report assets created by the plan.</li>
+                <li>A concise report surface plus explain.md as the written companion.</li>
+              </ul>
+              <h2>Risks And Open Questions</h2>
+              <ul class="quiet">
+                <li>Confirm whether the analysis is exploratory, explanatory, or reporting-first.</li>
+                <li>Flag data quality issues that could change rankings or conclusions.</li>
+                <li>Ask for retargeting before execution if a narrower cohort is wanted.</li>
+              </ul>
+              <h2>Latest Progress</h2>
+              <p class="quiet">Netherlands #1 (TCI 81.9). Report published to <code>reports/wc26_composition.html</code>.</p>
+            </div>
+          </div>
+          <div class="ptab" id="tab-files">
+            <div class="ftree">
+              <div>📓 notebook.ipynb <span class="sz">11 cells</span></div>
+              <div>📄 plan.md <span class="sz">4.2K</span></div>
+              <div class="dir">📁 data/</div>
+              <div class="d1">fifa_world_cup_2026_player_performance.csv <span class="sz">18.4M</span></div>
+              <div class="dir">📁 outputs/</div>
+              <div class="d1">tci_rankings.parquet <span class="sz">21K</span></div>
+              <div class="d1">wc26_composition_ranking.png <span class="sz">184K</span></div>
+              <div class="dir">📁 reports/</div>
+              <div class="d1">wc26_composition.html <span class="sz">96K</span></div>
+            </div>
+            <div class="panel-hint">Workspace for this session. Click any file to preview; heavy outputs live here instead of inside the transcript.</div>
+          </div>
+          <div class="ptab" id="tab-reports">
+            <div class="rep-card">
+              <div class="nm2">WC2026 — Player Performance</div>
+              <div class="pth">reports/wc26_composition.html</div>
+              <div class="row"><span>6 sections · updated 9:04 AM</span><a href="#" class="open">Open ↗</a></div>
+            </div>
+            <div class="panel-hint">Reports the agent builds with <code>report_add_section</code> collect here — read-only, publishable. (Artifacts layer lands later; this tab is its future home.)</div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+</div>
+
+<button class="fab" id="notesFab">✍️ Design notes</button>
+<div class="notes-drawer" role="note">
+  <h4>What changed & why</h4>
+  <ol>
+    <li><span class="n">1</span><span><b>Turn-grouped activity log</b> (Codex) with one-line steps that expand in place (Claude). Success is monochrome — only the fixed error wears color. Collapsed, a 14-step turn costs one line.</span></li>
+    <li><span class="n">2</span><span><b>Notebook feeling, kept — inside chat.</b> Evidence renders as light cells with an <b>Out [n]</b> gutter linking to the notebook. No embedded notebook documents, no dark-on-light code islands, heights capped — full outputs open from Files.</span></li>
+    <li><span class="n">3</span><span><b>One plan entry point.</b> The status pill replaces the banner, popover, and auto-focus choreography. Click → read-only doc on the right; approvals and feedback stay in the composer (act left, read right).</span></li>
+    <li><span class="n">4</span><span><b>Queue composer.</b> Typing is never disabled; messages sent mid-run stack as queued chips. Stop sits beside Queue.</span></li>
+    <li><span class="n">5</span><span><b>Fork from any message</b> (hover) → branches the session; the header chip shows the current branch.</span></li>
+    <li><span class="n">6</span><span><b>Scope chips folded</b> into one control; it shows counts only when something is restricted.</span></li>
+    <li><span class="n">7</span><span><b>Console maximized:</b> 1000px column, one row of chrome, standalone-alert removed.</span></li>
+    <li><span class="n">8</span><span><b>One nav.</b> The project tab bar is merged into the left rail (Files/Experiments included); the right panel opens at zero width until it has something to show.</span></li>
+  </ol>
+</div>
+<div class="hint-chip" id="hintChip"><span>Clickable mock — try the activity headers, step lines, plan pill, hover a user message, and “Design notes” ↘</span><button class="x" aria-label="Dismiss">×</button></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+// activity groups
+$$('.act-head').forEach(h=>h.addEventListener('click',()=>h.parentElement.classList.toggle('open')));
+// expandable steps
+$$('.step.exp').forEach(s=>{
+  const go=()=>s.classList.toggle('open');
+  s.addEventListener('click',go);
+  s.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go()}});
+});
+// code show-all
+$$('.morebtn').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const c=b.closest('.code');c.classList.toggle('full');b.textContent=c.classList.contains('full')?'Collapse':'Show all 38 lines'}));
+// plan pill ↔ panel
+$('#planPill').addEventListener('click',()=>document.body.classList.toggle('panel-open'));
+$('#panelClose').addEventListener('click',()=>document.body.classList.remove('panel-open'));
+// panel tabs
+$$('.panel-tabs button[data-tab]').forEach(b=>b.addEventListener('click',()=>{
+  $$('.panel-tabs button[data-tab]').forEach(x=>x.classList.toggle('on',x===b));
+  $$('.ptab').forEach(t=>t.classList.toggle('on',t.id==='tab-'+b.dataset.tab));
+}));
+// fork toast
+const toast=m=>{const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),2600)};
+$$('.fork').forEach(b=>b.addEventListener('click',()=>toast('⑂ Forked — new session branched from this message (mock)')));
+// queued chip remove
+$$('.qchip .x').forEach(b=>b.addEventListener('click',()=>b.closest('.qchip').remove()));
+// notes + hint
+$('#notesFab').addEventListener('click',()=>document.body.classList.toggle('notes'));
+$('#hintChip .x').addEventListener('click',()=>$('#hintChip').remove());
+</script>
