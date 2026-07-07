@@ -41,7 +41,9 @@ button{font:inherit;color:inherit;background:none;border:none;padding:0;cursor:p
 .chip.plan{color:var(--ink)}
 .chip.plan .dot{width:7px;height:7px;border-radius:50%;background:var(--good)}
 .chip.plan .dot.run{background:var(--accent);animation:pulse 1.2s infinite}
-.chip.plan b{font-weight:600}
+.chip.plan .dot.pend{background:var(--warn);animation:pulse 1.2s infinite}
+.chip.plan b{font-weight:600;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom}
+.chip.warn{border-color:#f0d29a;background:#fff8ec;color:#b7791f}
 .chip.plan .frac{color:var(--faint);font-variant-numeric:tabular-nums}
 .chip.plan .pcount{font:600 10px var(--mono);color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:1px 6px;margin-left:2px}
 body.panel-open .chip.plan{border-color:var(--accent);background:var(--accent-soft)}
@@ -67,7 +69,6 @@ body.panel-open .chip.plan{border-color:var(--accent);background:var(--accent-so
 .umsg .tools button:hover{background:var(--bg-soft);color:var(--ink)}
 /* narrative = markdown cells on the shared notebook rail */
 .cell.md{margin:12px 0 6px}
-.cell.md .gut::before{content:"md";opacity:.55}
 .cell.md .body{border:none;border-left:3px solid var(--line-soft);border-radius:0;background:transparent;padding:2px 16px;font-size:14.5px;line-height:1.65;max-width:76ch}
 .cell.md .body p{margin:0 0 10px}
 .cell.md .body p:last-child{margin-bottom:0}
@@ -79,7 +80,37 @@ body.panel-open .chip.plan{border-color:var(--accent);background:var(--accent-so
 /* queued ghost bubbles in the transcript */
 .umsg.queued .bubble{background:var(--accent-soft);color:var(--ink);border:1.5px dashed #9db8e8}
 .umsg.queued .qtag{display:block;font:700 9.5px var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--warn);margin-bottom:3px}
+.umsg.queued.paused .bubble{border-color:#d8dee6;background:var(--bg-soft)}
+.umsg.queued.paused .qtag{color:var(--faint)}
+.ucol{display:flex;flex-direction:column;align-items:flex-end;max-width:70%}
+.ucol .bubble{max-width:100%}
+.sent-tag{font:600 9px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--faint);margin-bottom:3px}
 .tools button{display:inline-flex;align-items:center;gap:4px}
+/* provenance footer on evidence */
+.prov{position:relative;display:flex;align-items:center;gap:6px;font:11px var(--mono);color:var(--faint);margin-top:9px;padding-top:8px;border-top:1px solid var(--line-soft)}
+.prov .pexp{font:11px var(--mono);color:var(--accent);background:none;border:none;cursor:pointer;padding:0}
+.prov-src{margin-top:6px}
+.metric-prov{font:11px var(--mono);color:var(--faint);padding-left:70px;margin:4px 0 0}
+.olink{margin-left:6px;font-size:10.5px;color:var(--accent);background:none;border:none;cursor:pointer;padding:0 3px}
+.flash{animation:flashbg 1.6s ease-out}
+@keyframes flashbg{0%{box-shadow:0 0 0 3px #1677ff55}100%{box-shadow:0 0 0 3px transparent}}
+/* approval strip + queue pause */
+.astrip{display:flex;align-items:center;gap:10px;border:1px solid #f0d29a;background:#fff8ec;border-radius:10px;padding:8px 12px;margin-bottom:8px;font-size:12.5px}
+.astrip[hidden]{display:none}
+.astrip .alink{color:var(--accent);font-size:12px;background:none;border:none;cursor:pointer}
+.btn.approve{background:var(--good);color:#fff;padding:7px 13px;font-size:12.5px}
+.btn.deny{border:1px solid #fecdca;color:var(--bad);background:var(--bg);padding:7px 13px;font-size:12.5px}
+.qpause{display:flex;align-items:center;gap:10px;font-size:12px;color:#b7791f;background:#fff8ec;border:1px dashed #f0d29a;border-radius:10px;padding:7px 12px;margin-bottom:8px}
+.qpause[hidden]{display:none}
+/* scope emphasis + bulk */
+#tab-scope .srow:has(.sw:not(.on)){background:#fff8ec;border-radius:6px;padding-left:6px;padding-right:6px}
+.bulkrow{display:flex;gap:10px;align-items:center;padding:3px 0 2px}
+/* laptop: panel overlays instead of pushing */
+@media (max-width:1400px){
+  .split{position:relative}
+  .panel{position:absolute;top:0;bottom:0;right:46px;z-index:30;box-shadow:-16px 0 36px rgba(16,24,40,.14)}
+}
+.fab.left{right:auto;left:18px;background:#8a6d1f}
 .sysline{display:flex;justify-content:center;margin:16px 0}
 .sysline span{font-size:11.5px;color:var(--faint);background:var(--bg-soft);border:1px solid var(--line-soft);border-radius:999px;padding:4px 14px}
 .sysline .ok{color:var(--good);margin-right:4px}
@@ -187,7 +218,9 @@ body.panel-open .panel{width:400px;border-left-color:var(--line)}
 body.panel-open .etab.on{color:var(--accent);background:var(--accent-soft)}
 .etab .eico{font-size:13px}
 .etab .elb{writing-mode:vertical-rl;font-size:10px;font-weight:600;letter-spacing:.05em}
-.etab .edot{position:absolute;top:5px;right:5px;width:6px;height:6px;border-radius:50%;background:var(--good)}
+.etab .edot{position:absolute;top:5px;left:5px;width:6px;height:6px;border-radius:50%;background:var(--good)}
+.etab .edot.run{background:var(--accent)}
+.etab .edot.pend{background:var(--warn)}
 .etab .ecount{position:absolute;top:3px;right:3px;min-width:13px;height:13px;border-radius:7px;background:var(--accent);color:#fff;font:600 9px/13px var(--mono);text-align:center;padding:0 2px}
 .panel-scroll{flex:1;overflow-y:auto;padding:14px 18px}
 .ptab{display:none}.ptab.on{display:block}
@@ -308,10 +341,9 @@ body.notes .notes-drawer{display:block}
     <header class="topbar" style="position:relative">
       <button class="back" aria-label="Back to sessions">←</button>
       <span class="title">which team has the best team composition?</span>
-      <span class="chip branch" title="Session branches — fork any message to start one"><span class="k">⑂</span> main</span>
       <span class="sp"></span>
       <span style="position:relative"><span class="badge" style="top:-7px;left:-10px">3</span>
-        <button class="chip plan" id="planPill" title="Active plan — click to open; browse all plans from the Plans rail tab"><span class="dot run"></span> Plan <b>Sensitivity</b> <span class="frac">1/3</span> running <span class="pcount">+1</span></button>
+        <button class="chip plan" id="planPill" title="Active plan — click to open; browse all plans from the Plans rail tab"><span class="dot run"></span> Plan <b>Weights Sensitivity</b> <span class="frac">1/3</span> running <span class="pcount">+1</span></button>
       </span>
       <span style="position:relative"><span class="badge" style="top:-7px;left:-10px">6</span>
         <button class="chip" id="scopeChip" title="Session scope — datasets, tools, skills, subagents & guardrails. Opens the Scope tab.">Scope · All</button>
@@ -329,10 +361,9 @@ body.notes .notes-drawer{display:block}
             <!-- user turn 1 -->
             <div class="umsg">
               <div class="tools" role="toolbar">
-                <button class="fork">⑂ Fork from here</button>
                 <button><svg class="svgi"><use href="#i-pencil"/></svg> Edit</button>
               </div>
-              <div class="bubble" style="position:relative"><span class="badge" style="top:-8px;left:-26px">5</span>which team has the best team composition?</div>
+              <div class="bubble">which team has the best team composition?</div>
             </div>
 
             <!-- assistant turn 1 -->
@@ -343,9 +374,9 @@ body.notes .notes-drawer{display:block}
               <span class="badge" style="top:2px;left:-24px">1</span>
               <button class="act-head"><span class="chev">▶</span><span class="sum">Planned</span><span class="meta">3 steps · 12s</span></button>
               <div class="act-body">
-                <div class="step"><span class="t">0:02</span><span>Profiled <span class="mono">fifa_world_cup_2026_player_performance.csv</span> — 54,600 rows · 75 cols · 42% bench/DNP rows</span></div>
-                <div class="step"><span class="t">0:05</span><span>Loaded skill <span class="mono">dataclaw_data_science</span></span></div>
-                <div class="step"><span class="t">0:12</span><span>Submitted plan <b>WC2026 — Best Team Composition</b> for review</span></div>
+                <div class="step"><span class="t">+0:02</span><span>Profiled <span class="mono">fifa_world_cup_2026_player_performance.csv</span> — 54,600 rows · 75 cols · 42% bench/DNP rows</span></div>
+                <div class="step"><span class="t">+0:05</span><span>Loaded skill <span class="mono">dataclaw_data_science</span></span></div>
+                <div class="step"><span class="t">+0:12</span><span>Submitted plan <b>WC2026 — Best Team Composition</b> for review</span></div>
               </div>
             </div>
 
@@ -358,8 +389,8 @@ body.notes .notes-drawer{display:block}
             <div class="act open">
               <button class="act-head"><span class="chev">▶</span><span class="sum">Worked</span><span class="meta">14 steps · 4m 32s ·</span><span class="err-note">1 error fixed</span></button>
               <div class="act-body">
-                <div class="step"><span class="t">0:04</span><span>Updated plan — step 1 <i>Build player-level ratings</i> started</span></div>
-                <div class="step exp" role="button" tabindex="0"><span class="t">0:11</span><span>Added code cell <span class="mono">[4]</span> · 38 lines</span><span class="more">▸ source</span></div>
+                <div class="step"><span class="t">+0:04</span><span>Updated plan — step 1 <i>Build player-level ratings</i> started</span></div>
+                <div class="step exp" role="button" tabindex="0"><span class="t">+0:11</span><span>Added code cell <span class="mono">[4]</span> · 38 lines</span><span class="more">▸ source</span></div>
                 <div class="step-detail">
                   <div class="code" id="code4">
                     <pre><span class="kw">import</span> pandas <span class="kw">as</span> pd
@@ -383,25 +414,25 @@ agg[<span class="st">"rating"</span>] = w * agg.quality + (<span class="nm">1</s
                     <button class="morebtn">Show all 38 lines</button>
                   </div>
                 </div>
-                <div class="step"><span class="t">0:13</span><span>Ran cell <span class="mono">[4]</span> · 2.1s</span></div>
-                <div class="step"><span class="t">0:26</span><span>Added code cell <span class="mono">[5]</span> · 24 lines — line strengths GK/DEF/MID/FWD</span></div>
-                <div class="step"><span class="t">0:27</span><span>Ran cell <span class="mono">[5]</span> · 0.8s</span></div>
-                <div class="step"><span class="t">0:41</span><span>Loaded skill <span class="mono">visualization</span></span></div>
-                <div class="step bad exp" role="button" tabindex="0"><span class="t">1:02</span><span>Ran cell <span class="mono">[6]</span> · <span class="mono">KeyError: 'market_value_eur'</span></span><span class="more">▸ traceback</span></div>
+                <div class="step"><span class="t">+0:13</span><span>Ran cell <span class="mono">[4]</span> · 2.1s</span></div>
+                <div class="step"><span class="t">+0:26</span><span>Added code cell <span class="mono">[5]</span> · 24 lines — line strengths GK/DEF/MID/FWD</span></div>
+                <div class="step"><span class="t">+0:27</span><span>Ran cell <span class="mono">[5]</span> · 0.8s</span></div>
+                <div class="step"><span class="t">+0:41</span><span>Loaded skill <span class="mono">visualization</span></span></div>
+                <div class="step bad exp" role="button" tabindex="0"><span class="t">+1:02</span><span>Ran cell <span class="mono">[6]</span> · <span class="mono">KeyError: 'market_value_eur'</span></span><span class="more">▸ traceback</span></div>
                 <div class="step-detail">
                   <div class="code bad"><pre>KeyError: 'market_value_eur'
   cell [6], line 3:
     ratings["value_m"] = agg["market_value_eur"] / 1e6
 columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
                 </div>
-                <div class="step"><span class="t">1:18</span><span>Edited cell <span class="mono">[6]</span> — column is <span class="mono">market_value_eur_m</span>, already in millions</span></div>
-                <div class="step"><span class="t">1:19</span><span>Ran cell <span class="mono">[6]</span> · 1.2s</span></div>
-                <div class="step"><span class="t">1:30</span><span>Updated plan — steps 2–3 complete</span></div>
-                <div class="step"><span class="t">2:04</span><span>Added code cell <span class="mono">[7]</span> · 31 lines — composite TCI + ranking chart</span></div>
-                <div class="step"><span class="t">2:06</span><span>Ran cell <span class="mono">[7]</span> · 1.6s</span></div>
-                <div class="step"><span class="t">2:48</span><span>Added + ran cell <span class="mono">[8]</span> — full 48-team ranking table · 0.4s</span></div>
-                <div class="step"><span class="t">3:15</span><span>Logged run <span class="mono">tci_v1</span> to MLflow — <span class="mono">tci_top=81.9</span></span></div>
-                <div class="step"><span class="t">4:31</span><span>Updated plan — steps 4–5 complete</span></div>
+                <div class="step"><span class="t">+1:18</span><span>Edited cell <span class="mono">[6]</span> — column is <span class="mono">market_value_eur_m</span>, already in millions</span></div>
+                <div class="step"><span class="t">+1:19</span><span>Ran cell <span class="mono">[6]</span> · 1.2s</span></div>
+                <div class="step"><span class="t">+1:30</span><span>Updated plan — steps 2–3 complete</span></div>
+                <div class="step"><span class="t">+2:04</span><span>Added code cell <span class="mono">[7]</span> · 31 lines — composite TCI + ranking chart</span></div>
+                <div class="step"><span class="t">+2:06</span><span>Ran cell <span class="mono">[7]</span> · 1.6s</span><button class="olink" data-target="#evChartBody">↓ output</button></div>
+                <div class="step"><span class="t">+2:48</span><span>Added + ran cell <span class="mono">[8]</span> — full 48-team ranking table · 0.4s</span><button class="olink" data-target="#evTableBody">↓ output</button></div>
+                <div class="step"><span class="t">+3:15</span><span>Logged run <span class="mono">tci_v1</span> to MLflow — <span class="mono">tci_top=81.9</span></span></div>
+                <div class="step"><span class="t">+4:31</span><span>Updated plan — steps 4–5 complete</span></div>
               </div>
             </div>
 
@@ -411,12 +442,13 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
               <div class="tile"><div class="lb">Teams ranked</div><div class="v">48</div><div class="d">54,600 player-match rows</div></div>
               <div class="tile"><div class="lb">Rating correlation</div><div class="v">0.93</div><div class="d">vs performance_score · Pearson</div></div>
             </div>
+            <div class="metric-prov">values from cell <span class="mono2">[6]</span> · reported at +2:52</div>
 
             <!-- evidence: chart, notebook-flavored -->
             <div class="cell chart" style="position:relative">
               <span class="badge" style="top:-4px;left:-22px">2</span>
               <div class="gut"><a href="#" title="Open cell 7 in notebook">Out [7]</a></div>
-              <div class="body">
+              <div class="body" id="evChartBody">
                 <svg viewBox="0 0 660 342" role="img" aria-label="Bar chart: Team Composition Index, top 10 of 48 teams. Netherlands leads at 81.9.">
                   <text class="ttl" x="0" y="14">Team Composition Index — top 10 of 48</text>
                   <g transform="translate(0,26)">
@@ -474,13 +506,20 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
                   </g>
                 </svg>
                 <div class="cap">Netherlands leads at 81.9; the top-10 spread is under 7 points — composition is tight at the top. Weights: XI .40 · balance .22 · depth .18 · star .12 · age .08.</div>
+                <div class="prov"><span class="badge" style="top:-4px;left:-26px">10</span>cell [7] · ran at +2:06 · 1.6s · <button class="pexp">▸ source</button></div>
+                <div class="code prov-src" hidden><pre><span class="cm"># composite TCI + ranking chart (cell [7], 31 lines)</span>
+w = {<span class="st">"xi"</span>: <span class="nm">.40</span>, <span class="st">"balance"</span>: <span class="nm">.22</span>, <span class="st">"depth"</span>: <span class="nm">.18</span>, <span class="st">"star"</span>: <span class="nm">.12</span>, <span class="st">"age"</span>: <span class="nm">.08</span>}
+tci = sum(w[k] * z[k] <span class="kw">for</span> k <span class="kw">in</span> w) - <span class="nm">0.5</span> * weak_line_penalty
+rank = tci.<span class="fn">sort_values</span>(ascending=<span class="kw">False</span>)
+fig = px.<span class="fn">bar</span>(rank.head(<span class="nm">10</span>), orientation=<span class="st">"h"</span>, title=<span class="st">"Team Composition Index — top 10 of 48"</span>)
+fig.<span class="fn">show</span>()</pre></div>
               </div>
             </div>
 
             <!-- evidence: table, capped -->
             <div class="cell">
               <div class="gut"><a href="#" title="Open cell 8 in notebook">Out [8]</a></div>
-              <div class="body">
+              <div class="body" id="evTableBody">
                 <table class="df">
                   <thead><tr><th>#</th><th>Team</th><th>TCI</th><th>XI quality</th><th>Balance</th><th>Depth</th><th>Star</th><th>Age fit</th></tr></thead>
                   <tbody>
@@ -492,6 +531,7 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
                     <tr><td class="foot" colspan="8">43 more rows · <a href="#">open full table — outputs/tci_rankings.parquet</a></td></tr>
                   </tbody>
                 </table>
+                <div class="prov">cell [8] · ran at +2:48 · 0.4s</div>
               </div>
             </div>
 
@@ -506,12 +546,12 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
             </div></div>
 
             <!-- user turn 2 -->
-            <div class="umsg">
-              <div class="tools" role="toolbar">
-                <button class="fork">⑂ Fork from here</button>
-                <button><svg class="svgi"><use href="#i-pencil"/></svg> Edit</button>
+            <div class="umsg" style="position:relative">
+              <span class="badge" style="top:-8px;left:calc(100% - 480px)">5</span>
+              <div class="ucol">
+                <div class="sent-tag">sent from queue · 9:12 AM</div>
+                <div class="bubble">how sensitive is the ranking to the weights?</div>
               </div>
-              <div class="bubble">how sensitive is the ranking to the weights?</div>
             </div>
 
             <div class="sysline"><span><span class="ok">✓</span> Plan Weights Sensitivity approved · rev 1 · 9:12 AM</span></div>
@@ -520,9 +560,9 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
             <div class="act open">
               <button class="act-head"><span class="spin" role="status" aria-label="Working"></span><span class="sum">Working</span><span class="meta">4 steps · 41s</span></button>
               <div class="act-body">
-                <div class="step"><span class="t">0:02</span><span>Updated plan — step 1 <i>Weight perturbation grid</i> started</span></div>
-                <div class="step"><span class="t">0:06</span><span>Added code cell <span class="mono">[9]</span> — weight perturbation grid, ±50% per component</span></div>
-                <div class="step"><span class="t">0:10</span><span>Ran cell <span class="mono">[9]</span> · 3.8s</span></div>
+                <div class="step"><span class="t">+0:02</span><span>Updated plan — step 1 <i>Weight perturbation grid</i> started</span></div>
+                <div class="step"><span class="t">+0:06</span><span>Added code cell <span class="mono">[9]</span> — weight perturbation grid, ±50% per component</span></div>
+                <div class="step"><span class="t">+0:10</span><span>Ran cell <span class="mono">[9]</span> · 3.8s</span></div>
                 <div class="step live"><span class="pulse"></span><span>Running cell <span class="mono">[10]</span> — bootstrap rank stability, 1,000 draws…</span></div>
               </div>
             </div>
@@ -552,12 +592,21 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
         <!-- composer: enabled while running, queues into the thread -->
         <div class="composer" style="position:relative">
           <div class="composer-in">
+            <div class="astrip" id="astrip" hidden>
+              <span style="color:var(--warn);font-weight:700">⚠</span>
+              <span>Plan <b>WC2026 — Age Curves</b> awaits your review</span>
+              <button class="alink" id="aview">View plan →</button>
+              <span style="flex:1"></span>
+              <button class="btn approve" id="aok">✓ Approve</button>
+              <button class="btn deny" id="ano">✗ Deny</button>
+            </div>
+            <div class="qpause" id="qpause" hidden>⏸ Queue paused — 2 messages held, nothing sent<span style="flex:1"></span><button class="smore" id="resumeQ">Resume queue</button></div>
             <div class="crow">
-              <div class="cbox">Message Dataclaw — sends when the current run finishes…</div>
-              <button class="btn stop"><svg class="svgi"><use href="#i-stop"/></svg> Stop</button>
+              <div class="cbox" id="cbox">Message Dataclaw — sends when the current run finishes…</div>
+              <button class="btn stop" id="stopBtn"><svg class="svgi"><use href="#i-stop"/></svg> Stop</button>
               <button class="btn primary">Queue ↵</button>
             </div>
-            <div class="chint">⏎ queue · ⇧⏎ newline · plan feedback goes here too when a plan is pending</div>
+            <div class="chint">⏎ send — queues during a run · ⇧⏎ newline</div>
           </div>
         </div>
       </div>
@@ -733,6 +782,7 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
                 <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span class="mono2">data_query</span><span class="sub2">data</span></div>
                 <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span class="mono2">report_add_section</span><span class="sub2">reports</span></div>
                 <button class="smore">Show 8 more…</button>
+                <div class="bulkrow"><button class="smore">Enable all</button><button class="smore">Disable all</button></div>
               </div>
             </div>
             <div class="sgroup">
@@ -742,6 +792,7 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
                 <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span>visualization</span></div>
                 <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span>structured_eda</span></div>
                 <button class="smore">Show 5 more…</button>
+                <div class="bulkrow"><button class="smore">Enable all</button><button class="smore">Disable all</button></div>
               </div>
             </div>
             <div class="sgroup">
@@ -757,7 +808,7 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
                 <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span>export review</span><span class="end"><span class="ptag">post-run</span><span class="ptag run">approval</span></span></div>
               </div>
             </div>
-            <div class="panel-hint">Scope is session settings, not content review — editing here is fine; plan and report approvals still happen only in the composer. Persisted per session.</div>
+            <div class="panel-hint">Scope is session settings, not content review — editing here is fine; plan and report approvals still happen only in the composer. Persisted per session. Changes apply from the <b>next</b> run; the current run keeps its scope.</div>
           </div>
         </div>
       </aside>
@@ -765,7 +816,7 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
       <!-- edge rail: panel tabs, always visible -->
       <nav class="edge" aria-label="Session panel tabs" style="position:relative">
         <span class="badge" style="top:-4px;left:-4px">8</span>
-        <button class="etab on" data-tab="plans" title="Plans — 2 in this session"><span class="ecount">2</span><svg class="svgi"><use href="#i-doc"/></svg><span class="elb">Plans</span></button>
+        <button class="etab on" data-tab="plans" title="Plans — 2 in this session, one running"><span class="edot run"></span><span class="ecount">2</span><svg class="svgi"><use href="#i-doc"/></svg><span class="elb">Plans</span></button>
         <button class="etab" data-tab="files" title="Files"><svg class="svgi"><use href="#i-folder"/></svg><span class="elb">Files</span></button>
         <button class="etab" data-tab="reports" title="Reports"><span class="ecount">1</span><svg class="svgi"><use href="#i-chart"/></svg><span class="elb">Reports</span></button>
         <button class="etab" data-tab="scope" title="Scope — everything available to this session"><svg class="svgi"><use href="#i-filter"/></svg><span class="elb">Scope</span></button>
@@ -775,21 +826,23 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
 </div>
 
 <button class="fab" id="notesFab">✍️ Design notes</button>
+<button class="fab left" id="simPending">⚠️ Simulate plan review</button>
 <div class="notes-drawer" role="note">
   <h4>What changed & why</h4>
   <ol>
     <li><span class="n">1</span><span><b>Turn-grouped activity log</b> (Codex) with one-line steps that expand in place (Claude). Success is monochrome — only the fixed error wears color. Collapsed, a 14-step turn costs one line.</span></li>
     <li><span class="n">2</span><span><b>Notebook feeling, kept — inside chat.</b> Narrative renders as <b>md</b> cells and evidence as <b>Out [n]</b> cells on one shared gutter rail, with real markdown formatting (headings, lists, inline code). No embedded notebook documents, heights capped — full outputs open from Files.</span></li>
     <li><span class="n">3</span><span><b>One plan entry point.</b> The status pill replaces the banner, popover, and auto-focus choreography. Click → read-only doc on the right; approvals and feedback stay in the composer (act left, read right).</span></li>
-    <li><span class="n">4</span><span><b>Queue in the thread.</b> Typing is never disabled; messages sent mid-run join the transcript as ordered ghost bubbles — edit, remove, or bump them until they dispatch in order as runs finish.</span></li>
-    <li><span class="n">5</span><span><b>Fork from any message</b> (hover) → branches the session; the header chip shows the current branch.</span></li>
+    <li><span class="n">4</span><span><b>Queue in the thread.</b> Typing is never disabled; mid-run messages join the transcript as ordered ghost bubbles (edit / remove / bump). <b>Stop pauses the queue</b> — nothing sends until you resume — and messages that dispatched from the queue carry a "sent from queue" tag (see the second user message).</span></li>
+    <li><span class="n">5</span><span><b>Plan approval, act-left.</b> A pending plan raises a slim strip above the composer — Approve / Deny / View plan — and the composer doubles as the feedback field. Reading stays on the right; deciding stays at the input. Try <b>"Simulate plan review"</b> (bottom left). Forking was considered and cut.</span></li>
     <li><span class="n">6</span><span><b>Scope moved into the panel.</b> The five toolbar chips and five modals become one <b>Scope</b> rail tab — collapsible groups for datasets, tools, skills, subagents, and guardrails, editable in place (settings, not content review). The top-bar chip is its status shortcut and turns amber with counts when anything is restricted.</span></li>
     <li><span class="n">7</span><span><b>Console maximized:</b> 1000px column, one row of chrome, standalone-alert removed.</span></li>
     <li><span class="n">8</span><span><b>One nav, persistent panel tabs.</b> The project tab bar merges into the left rail; Plans / Files / Reports stay visible as a slim edge rail on the right at all times — panel content opens on demand.</span></li>
     <li><span class="n">9</span><span><b>Many plans, one list.</b> The Plans tab opens list-first: every plan as a card with status, progress bar, and updated time — active sorts to top. The pill always deep-links to the plan needing attention (<b>+n</b> counts the rest); revisions live inside each plan as <b>rev</b> chips, so the list never fills with near-duplicates.</span></li>
+    <li><span class="n">10</span><span><b>Provenance on every result.</b> Evidence cells carry a footer — <b>cell [n] · ran at +t · duration</b> — with expandable source; the producing step links "↓ output"; metric tiles cite the cell their values came from. Step times are run-relative (+m:ss), syslines are wall-clock.</span></li>
   </ol>
 </div>
-<div class="hint-chip" id="hintChip"><span>Clickable mock — try the activity headers, step lines, plan pill, hover a user message, and “Design notes” ↘</span><button class="x" aria-label="Dismiss">×</button></div>
+<div class="hint-chip" id="hintChip"><span>Clickable mock — try the activity headers, “↓ output” links, plan pill, Stop, “Simulate plan review” ↙ and “Design notes” ↘</span><button class="x" aria-label="Dismiss">×</button></div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -831,15 +884,52 @@ $('#scopeChip').addEventListener('click',()=>{
   if(document.body.classList.contains('panel-open')&&$('.etab.on')?.dataset.tab==='scope'){document.body.classList.remove('panel-open');return}
   setTab('scope');document.body.classList.add('panel-open');
 });
-// scope groups + mock toggles
-$$('.sgroup-h').forEach(h=>h.addEventListener('click',()=>h.parentElement.classList.toggle('open')));
-$$('#tab-scope .sw').forEach(s=>s.addEventListener('click',()=>{s.classList.toggle('on');s.setAttribute('aria-checked',s.classList.contains('on'))}));
-// fork toast
 const toast=m=>{const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),2600)};
-$$('.fork').forEach(b=>b.addEventListener('click',()=>toast('⑂ Forked — new session branched from this message (mock)')));
-// queued messages (live in the transcript, dispatch in order)
+// scope groups + toggles; chip reflects restriction
+const scopeChipEl=$('#scopeChip');
+const refreshScope=()=>{const off=$$('#tab-scope .sw').filter(s=>!s.classList.contains('on')).length;
+  scopeChipEl.textContent=off?`Scope · ${off} off`:'Scope · All';
+  scopeChipEl.classList.toggle('warn',off>0)};
+$$('.sgroup-h').forEach(h=>h.addEventListener('click',()=>h.parentElement.classList.toggle('open')));
+$$('#tab-scope .sw').forEach(s=>s.addEventListener('click',()=>{s.classList.toggle('on');s.setAttribute('aria-checked',s.classList.contains('on'));refreshScope()}));
+$$('.bulkrow').forEach(r=>{const [on,off]=r.querySelectorAll('button');const g=r.closest('.sgroup-b');
+  on.addEventListener('click',()=>{g.querySelectorAll('.sw').forEach(s=>s.classList.add('on'));refreshScope()});
+  off.addEventListener('click',()=>{g.querySelectorAll('.sw').forEach(s=>s.classList.remove('on'));refreshScope()});});
+// queued messages (live in the transcript, dispatch in order; Stop pauses)
 $$('.umsg.queued .unqueue').forEach(b=>b.addEventListener('click',()=>{b.closest('.umsg').remove();toast('Removed from queue (mock)')}));
 $$('.umsg.queued .bump').forEach(b=>b.addEventListener('click',()=>toast('Moved to front of queue (mock)')));
+$('#stopBtn').addEventListener('click',()=>{
+  if(!$('#qpause').hidden)return;
+  $('#qpause').hidden=false;
+  $$('.umsg.queued').forEach(m=>m.classList.add('paused'));
+  toast('Run stopped — queue paused, nothing will send');
+});
+$('#resumeQ').addEventListener('click',()=>{
+  $('#qpause').hidden=true;
+  $$('.umsg.queued').forEach(m=>m.classList.remove('paused'));
+  toast('Queue resumed — dispatches when the agent is idle');
+});
+// provenance: expand source, jump to output
+$$('.pexp').forEach(b=>b.addEventListener('click',()=>{const d=b.closest('.body').querySelector('.prov-src');d.hidden=!d.hidden;b.textContent=d.hidden?'▸ source':'▾ source'}));
+$$('.olink').forEach(b=>b.addEventListener('click',()=>{const t=$(b.dataset.target);if(!t)return;
+  t.scrollIntoView({behavior:'smooth',block:'center'});
+  t.classList.remove('flash');void t.offsetWidth;t.classList.add('flash')}));
+// pending-plan simulation: pill, rail, approval strip, composer
+const pill=$('#planPill'), pillHTML=pill.innerHTML;
+const setPending=on=>{
+  document.body.classList.toggle('pending',on);
+  $('#astrip').hidden=!on;
+  pill.innerHTML=on
+    ? '<span class="dot pend"></span> Plan <b>WC2026 — Age Curves</b> needs review <span class="pcount">+2</span>'
+    : pillHTML;
+  $('#cbox').textContent=on?'Approve, deny, or type feedback for this plan…':'Message Dataclaw — sends when the current run finishes…';
+  const d=$('.etab[data-tab="plans"] .edot'); if(d){d.classList.toggle('pend',on);d.classList.toggle('run',!on)}
+  const c=$('.etab[data-tab="plans"] .ecount'); if(c)c.textContent=on?'3':'2';
+};
+$('#simPending').addEventListener('click',()=>setPending(!document.body.classList.contains('pending')));
+$('#aok').addEventListener('click',()=>{toast('Approval sent to the agent as a chat message (mock)');setPending(false)});
+$('#ano').addEventListener('click',()=>{toast('Denial sent to the agent as a chat message (mock)');setPending(false)});
+$('#aview').addEventListener('click',()=>{setTab('plans');showPlanList();document.body.classList.add('panel-open');toast('Would deep-link to the Age Curves doc (mock)')});
 // notes + hint
 $('#notesFab').addEventListener('click',()=>document.body.classList.toggle('notes'));
 $('#hintChip .x').addEventListener('click',()=>$('#hintChip').remove());

@@ -17,9 +17,10 @@ The DataClaw chat is now a working console, not a tool-call log. Agent turns col
 to a single line ("Worked · 14 steps · 4m 32s · 1 error fixed") that expands into
 plain-language steps; narrative and evidence render as notebook-style markdown and
 output cells on one shared rail; plans, files, reports, and session scope live behind
-an always-visible edge rail on the right; you can keep typing while the agent works —
-messages queue in the thread and dispatch in order — and any message can be forked
-into a new session branch.
+an always-visible edge rail on the right; and you can keep typing while the agent works —
+messages queue in the thread, pause when you press Stop, and dispatch in order.
+Every chart, table, and metric carries its provenance: which cell produced it, when,
+and the source one click away.
 
 ## Validation gate & degradation rule
 
@@ -78,7 +79,8 @@ is a minority of the pixels. Full critique with code references:
   persistent right edge rail; read-right/act-left for content review.
 - **G5** - Never block input: mid-run messages queue in the transcript, editable and
   reorderable until dispatch.
-- **G6** - Fork any message into a new session branch.
+- **G6** - Provenance on every result: evidence cites its producing cell, with source
+  and a step↔output link in both directions.
 - **G7** - Multi-plan legibility: list-first Plans tab; the top-bar pill always names
   the plan needing attention.
 
@@ -89,6 +91,8 @@ is a minority of the pixels. Full critique with code references:
 - No dedicated notebook page; the notebook stays a chat-area experience.
 - No theming/dark-mode expansion beyond the token layer itself.
 - No backend plan/tool schema changes; UI-only interpretation of existing events.
+- No session forking — considered and cut (2026-07-07): the workspace/notebook-state
+  semantics of a fork (copy vs. share vs. snapshot) are unresolved; revisit post-v1.
 
 ## 4. Users & Use Cases
 
@@ -101,7 +105,7 @@ is a minority of the pixels. Full critique with code references:
 | U5 | "Review the pending plan" | Pill names it, deep-links to its doc; approval/feedback happens in the composer |
 | U6 | "Which of my plans is which?" | Plans tab lists all plans with status/progress; revisions stay inside each plan |
 | U7 | "Ask the next question mid-run" | Composer never disabled; queued messages visible in-thread, ordered, editable |
-| U8 | "Try a different direction" | Fork from any message creates a branch; header shows branch identity |
+| U8 | "Where did this number come from?" | Every evidence cell footers its producing cell, run time, and duration; source expands inline; metrics cite their cell |
 | U9 | "Limit what it can touch" | Scope tab toggles datasets/tools/skills/subagents/guardrails; chip shows restriction state |
 
 ## 5. Functional Requirements
@@ -136,13 +140,19 @@ is a minority of the pixels. Full critique with code references:
 - **FR-12** PendingPlanBanner, plan popover, and sidebar auto-focus choreography are
   removed.
 
-### 5.4 Queue & fork
+### 5.4 Queue
 - **FR-13** Composer enabled during runs; Enter queues. Queued messages render
   in-thread as ordered ghost bubbles with edit / remove / send-next; dispatch FIFO on
-  run end; persisted on the session.
-- **FR-14** Any user/assistant message offers "Fork from here": new session with
-  history up to that message, `parentSessionId` + `forkedFromMessageId` recorded;
-  header shows branch chip.
+  natural run end; persisted on the session. Queue state is visible only in-thread —
+  no counters elsewhere.
+- **FR-13a** **Stop pauses the queue.** Cancelling a run never auto-dispatches; a
+  "Queue paused — {n} messages held" strip appears above the composer with explicit
+  Resume. Messages that dispatched from the queue carry a "sent from queue · {time}"
+  tag in the transcript.
+- **FR-14** Provenance: every inline evidence cell renders a footer
+  `cell [n] · ran at +t · {duration}` with expandable source; the producing step line
+  links "↓ output" (scroll + highlight); metric tiles cite their source cell
+  (optional `source_cell` param on `display_metric` — additive, backward-compatible).
 
 ### 5.5 Panel, rail & chrome
 - **FR-15** Right edge rail (Plans / Files / Reports / Scope) is always visible with

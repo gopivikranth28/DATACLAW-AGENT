@@ -20,6 +20,8 @@ defaults to tune, not constants to re-litigate.
 └──────────┴───────────────────────────────┴───────┴──────┘
 ```
 
+- Below 1400px viewport width the panel overlays the thread (absolute, shadowed)
+  instead of pushing it — the console never drops below ~900px usable.
 - Left nav absorbs the project tab bar: Projects tree + Chat / Data / Subagents /
   Tools / Skills / Experiments / Config. `ProjectPage` tab strip is deleted.
 - Topbar: back · session title · branch chip · (spacer) · plan pill · scope chip ·
@@ -54,6 +56,12 @@ success states in the transcript wear no color at all.
   `Working` while streaming; else `Worked`.
 - Default collapsed for completed turns; running turn open with spinner header and
   pulsing last line. Completed-turn expansion state is per-turn, not persisted.
+- Error headers: "· {k} errors fixed" only when a later run of the same cell
+  succeeded. A run that ends on an unresolved failure renders
+  `Worked · {n} steps · {k} errors` with the count in `--bad` and the failing step
+  auto-expanded.
+- Step timestamps are run-relative and prefixed `+m:ss`; syslines use wall-clock —
+  the prefix is the cue distinguishing the two.
 - Fix in the same PR: `useAGUI` emitting nameless tool events (`unknown` cards today).
 
 ### 3.2 Step-line verb map
@@ -100,6 +108,17 @@ Shared rail: 58px gutter + 12px gap; all assistant content aligns to it.
 - Every chart/table cell carries a one-line caption slot (stat + caveat, per
   `skill-library/visualization.md`).
 
+### 4.1 Provenance (every evidence cell)
+- Footer row on each evidence cell: `cell [n] · ran at +t · {duration}` plus
+  `▸ source` expanding the producing code inline (capped block, §3.3 rules).
+- Producing step lines gain `↓ output` — scrolls to the evidence cell and flashes
+  its border. Bidirectional with the `Out [n]` gutter link.
+- Metric rows footer `values from cell [n] · reported at +t`; needs an optional
+  `source_cell` param on `display_metric` (additive schema change, the one allowed
+  exception to "no tool changes").
+- The `md` gutter label was dropped — markdown cells show an empty gutter, matching
+  Jupyter.
+
 ## 5. Plans
 
 - Data: existing `usePlans`. Selection state (`showPlanList` / `showPlan(id)`) lives
@@ -114,31 +133,40 @@ Shared rail: 58px gutter + 12px gap; all assistant content aligns to it.
   blue pulsing=running, amber=pending (`needs review` replaces the fraction). Click →
   deep-link doc. Two+ pending → `Plans · {k} need review`, click → list filtered to
   pending (post-v1 acceptable: plain list).
-- Approvals: composer feedback mode only (placeholder swap + Approve/Deny buttons
-  adjacent to input when a plan is pending). Banner/popover/auto-focus deleted.
+- Approvals — the **approval strip**: when a plan is pending, a slim amber strip
+  renders above the composer (`⚠ Plan {name} awaits your review · View plan → ·
+  ✓ Approve · ✗ Deny`), the composer placeholder becomes
+  "Approve, deny, or type feedback for this plan…", the pill turns amber
+  (`needs review` replaces the fraction), and the rail Plans dot turns amber. This is
+  the single approval surface; the old banner/popover/auto-focus stay deleted. Typed
+  feedback = changes_requested (current behavior).
 - Lifecycle syslines: `✓ Plan {name} approved · rev {r} · {time}`, same for denied /
   changes requested.
 
 ## 6. Queue
 
-- State: `queuedMessages: [{id, text, ts}]` on the session (PATCH-persisted, survives
-  reload).
+- State: `queuedMessages: [{id, text, ts}]` + `queuePaused: bool` on the session
+  (PATCH-persisted, survives reload).
 - Composer Enter while `isRunning` → append + render ghost bubble at thread tail
   (dashed border, `QUEUED · NEXT|2ND|…` tag, hover: Edit / ⬆ Send next / × Remove).
-- Dispatch: on run end, shift head → normal send; repeat until empty or a run starts.
-  Queue preempts the auto-mode continuation message (auto turn only fires when the
-  queue is empty).
-- Stop cancels the run only; the queue stays (explicit × to drop items).
+- Dispatch: on **natural** run end and `!queuePaused`, shift head → normal send;
+  repeat until empty or a run starts. Dispatched messages render with a
+  `sent from queue · {time}` tag above the bubble. Queue preempts the auto-mode
+  continuation message (auto turn only fires when the queue is empty).
+- **Stop pauses the queue** (`queuePaused=true`): a "⏸ Queue paused — {n} messages
+  held, nothing sent" strip appears above the composer with a Resume action; queued
+  bubbles grey out. Nothing dispatches after a cancel until explicit Resume (or a new
+  manual send, which implicitly resumes).
+- Queue visibility is in-thread only — no counters in the composer or topbar
+  (decision 2026-07-07).
 
-## 7. Fork
+## 7. Fork — removed
 
-- `POST /chat/sessions/{id}/fork {message_id}` → new session: title `{old} (fork)`,
-  history through that message, copies scope/dataset filters; records
-  `parentSessionId`, `forkedFromMessageId`.
-- UI: hover toolbar on any message → `⑂ Fork from here`; navigates to the new
-  session. Topbar branch chip: `⑂ main` on originals, `⑂ fork of {parent-title}` on
-  forks (click → parent). Session picker groups forks under parents (flat list with
-  `⑂` prefix acceptable v1).
+Cut on 2026-07-07 after review: a fork's workspace/notebook-state semantics
+(copy-on-fork vs. shared vs. snapshot) are unresolved, and a chat-only fork whose
+transcript references cells the workspace no longer contains is broken by
+construction. No fork affordances anywhere in v1; revisit post-v1 with a real
+workspace-snapshot design.
 
 ## 8. Scope tab
 
@@ -166,7 +194,7 @@ by evidence allowlist) · `Plan 1/Plan 2` buttons in `PlanPanel`.
 | P0 | tokens.css; swap literals in touched files | no visual change; snapshot parity |
 | P1 | turn grouping + step lines + verb map + unknown fix; evidence allowlist; md/Out cells; capped blocks | fixture renders per PRD gate; height metric met |
 | P2 | edge rail + panel (Plans list/doc, Files, Reports); pill; syslines; remove banner/popover | plan review in 1 click; no plan UI in thread except syslines |
-| P3 | queue + fork (incl. session API) | queued fixture dispatches FIFO; fork carries history + metadata |
+| P3 | queue incl. pause/resume + session API; provenance footers + ↓ output links | queued fixture dispatches FIFO on natural end only; Stop holds the queue; every evidence cell footers its cell |
 | P4 | Scope tab; delete modals; chip states | scope edits persist; amber chip on restriction |
 | P5 | chrome merge (nav, alert), removals checklist, delete `chat_v2` flag | old paths deleted; both fixture types pass |
 
@@ -184,6 +212,7 @@ by evidence allowlist) · `Plan 1/Plan 2` buttons in `PlanPanel`.
 1. Auto toggle: stays in topbar (flip frequency) vs. Scope group with its settings —
    currently topbar.
 2. Revision diffs inside a plan doc (rev chips exist; diff view unspecified).
-3. Session picker UX once forks are common (tree vs flat-with-prefix).
-4. Whether `Working` turn groups should auto-collapse on completion or stay open
+3. Whether `Working` turn groups should auto-collapse on completion or stay open
    until the user collapses them — mock keeps them open.
+4. Multiple pending plans at once: pill reads `Plans · {k} need review` → list
+   filtered to pending (plain list acceptable v1).
