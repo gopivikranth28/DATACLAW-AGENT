@@ -40,8 +40,10 @@ button{font:inherit;color:inherit;background:none;border:none;padding:0;cursor:p
 .chip.branch{color:var(--muted)}
 .chip.plan{color:var(--ink)}
 .chip.plan .dot{width:7px;height:7px;border-radius:50%;background:var(--good)}
+.chip.plan .dot.run{background:var(--accent);animation:pulse 1.2s infinite}
 .chip.plan b{font-weight:600}
 .chip.plan .frac{color:var(--faint);font-variant-numeric:tabular-nums}
+.chip.plan .pcount{font:600 10px var(--mono);color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:1px 6px;margin-left:2px}
 body.panel-open .chip.plan{border-color:var(--accent);background:var(--accent-soft)}
 .topbar .sp{flex:1}
 .topbar .auto{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--faint)}
@@ -117,7 +119,7 @@ body.panel-open .chip.plan{border-color:var(--accent);background:var(--accent-so
 .code .morebtn{display:block;width:100%;text-align:center;font-size:11px;color:var(--accent);padding:5px;border-top:1px solid var(--line-soft);background:#fbfcfd}
 .code.bad{background:var(--bad-soft);border-color:#fecdca}
 .code.bad pre{color:#912018}
-.kw{color:#9333ea}.st{color:#0e7a4d}.fn{color:#1361d8}.cm{color:#98a2b3;font-style:italic}.nm{color:#b54708}
+.code .kw{color:#9333ea}.code .st{color:#0e7a4d}.code .fn{color:#1361d8}.code .cm{color:#98a2b3;font-style:italic}.code .nm{color:#b54708}
 
 /* ============ inline evidence (notebook-flavored) ============ */
 .cell{display:flex;gap:12px;margin:14px 0;max-width:960px}
@@ -192,6 +194,20 @@ body.panel-open .etab.on{color:var(--accent);background:var(--accent-soft)}
 .plan-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px}
 .ptag{font:500 10.5px var(--mono);border:1px solid var(--line);border-radius:6px;padding:2px 8px;color:var(--muted);background:var(--bg)}
 .ptag.done{color:var(--good);border-color:#bbe5c8;background:#f2fbf5;font-family:inherit;font-weight:600}
+.ptag.run{color:var(--accent);border-color:#c6dafc;background:var(--accent-soft);font-family:inherit;font-weight:600}
+/* plan list (master) ↔ plan doc (detail) */
+.plist-cap{font-size:11px;color:var(--faint);margin:2px 0 10px}
+.pcard{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px;cursor:pointer}
+.pcard:hover{border-color:#b9c6d6;background:var(--bg-soft)}
+.pcard .top{display:flex;align-items:center;gap:8px}
+.pcard .nm{font-weight:600;font-size:13px;flex:1;min-width:0}
+.pcard .desc{font-size:11.5px;color:var(--muted);margin-top:4px;line-height:1.5}
+.pcard .meta{font-size:10.5px;color:var(--faint);margin-top:7px;display:flex;gap:10px;font-variant-numeric:tabular-nums}
+.pbar{height:3px;background:var(--line-soft);border-radius:2px;overflow:hidden;margin-top:8px}
+.pbar i{display:block;height:100%;border-radius:2px;background:var(--good)}
+.pbar i.run{background:var(--accent)}
+.pback{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--accent);cursor:pointer;margin-bottom:10px;background:none;border:none;padding:2px 0}
+.pback:hover{text-decoration:underline}
 .plan-doc{font-size:12.5px;line-height:1.6;color:#344054}
 .plan-doc h1{font-size:17px;line-height:1.3;margin:6px 0 8px;color:var(--ink);letter-spacing:-.01em}
 .plan-doc h2{font-size:13px;margin:16px 0 6px;color:var(--ink)}
@@ -277,7 +293,7 @@ body.notes .notes-drawer{display:block}
       <span class="chip branch" title="Session branches — fork any message to start one"><span class="k">⑂</span> main</span>
       <span class="sp"></span>
       <span style="position:relative"><span class="badge" style="top:-7px;left:-10px">3</span>
-        <button class="chip plan" id="planPill" title="Open plan in side panel"><span class="dot"></span> Plan <b>WC2026</b> <span class="frac">5/5</span> completed</button>
+        <button class="chip plan" id="planPill" title="Active plan — click to open; browse all plans from the Plans rail tab"><span class="dot run"></span> Plan <b>Sensitivity</b> <span class="frac">1/3</span> running <span class="pcount">+1</span></button>
       </span>
       <span style="position:relative"><span class="badge" style="top:-7px;left:-10px">6</span>
         <button class="chip" title="Datasets, tools, skills, subagents & guardrails for this session">Scope · All</button>
@@ -480,10 +496,13 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
               <div class="bubble">how sensitive is the ranking to the weights?</div>
             </div>
 
+            <div class="sysline"><span><span class="ok">✓</span> Plan Weights Sensitivity approved · rev 1 · 9:12 AM</span></div>
+
             <!-- assistant turn 3: running -->
             <div class="act open">
-              <button class="act-head"><span class="spin" role="status" aria-label="Working"></span><span class="sum">Working</span><span class="meta">3 steps · 41s</span></button>
+              <button class="act-head"><span class="spin" role="status" aria-label="Working"></span><span class="sum">Working</span><span class="meta">4 steps · 41s</span></button>
               <div class="act-body">
+                <div class="step"><span class="t">0:02</span><span>Updated plan — step 1 <i>Weight perturbation grid</i> started</span></div>
                 <div class="step"><span class="t">0:06</span><span>Added code cell <span class="mono">[9]</span> — weight perturbation grid, ±50% per component</span></div>
                 <div class="step"><span class="t">0:10</span><span>Ran cell <span class="mono">[9]</span> · 3.8s</span></div>
                 <div class="step live"><span class="pulse"></span><span>Running cell <span class="mono">[10]</span> — bootstrap rank stability, 1,000 draws…</span></div>
@@ -533,6 +552,27 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
         </div>
         <div class="panel-scroll">
           <div class="ptab on" id="tab-plans">
+            <!-- master: all plans, active first -->
+            <div id="planList" style="position:relative">
+              <span class="badge" style="top:-6px;right:0">9</span>
+              <div class="plist-cap">2 plans in this session · active first</div>
+              <div class="pcard" data-plan="2">
+                <div class="top"><span class="nm">WC2026 — Weights Sensitivity</span><span class="ptag run">running</span></div>
+                <div class="desc">Perturb TCI weights ±50%, bootstrap rank stability, flag top-10 rank flips.</div>
+                <div class="meta"><span>1/3 steps</span><span>rev 1</span><span>updated 9:14 AM</span></div>
+                <div class="pbar"><i class="run" style="width:33%"></i></div>
+              </div>
+              <div class="pcard" data-plan="1">
+                <div class="top"><span class="nm">WC2026 — Best Team Composition</span><span class="ptag done">completed</span></div>
+                <div class="desc">Rank all 48 squads on a composite Team Composition Index; profile the winner.</div>
+                <div class="meta"><span>5/5 steps</span><span>rev 1</span><span>updated 9:04 AM</span></div>
+                <div class="pbar"><i style="width:100%"></i></div>
+              </div>
+            </div>
+
+            <!-- detail: plan 1 -->
+            <div class="plan-view" id="planView1" hidden>
+            <button class="pback">← All plans (2)</button>
             <div class="plan-meta">
               <span class="ptag">plan.md</span>
               <span class="ptag done">completed</span>
@@ -586,6 +626,56 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
               <h2>Latest Progress</h2>
               <p class="quiet">Netherlands #1 (TCI 81.9). Report published to <code>reports/wc26_composition.html</code>.</p>
             </div>
+            </div>
+
+            <!-- detail: plan 2 -->
+            <div class="plan-view" id="planView2" hidden>
+            <button class="pback">← All plans (2)</button>
+            <div class="plan-meta">
+              <span class="ptag">plan.md</span>
+              <span class="ptag run">running</span>
+              <span class="ptag">rev 1</span>
+              <span style="flex:1"></span>
+              <span class="ptag" style="cursor:pointer">⤢ Expand</span>
+            </div>
+            <div class="plan-doc">
+              <h1>WC2026 — Weights Sensitivity</h1>
+              <p class="quiet">Test how stable the TCI ranking is to its component weights: perturb each weight ±50% (renormalized), bootstrap rank stability over 1,000 resampled draws, and flag any top-10 team whose position flips.</p>
+              <h2>Review Snapshot</h2>
+              <ul class="quiet">
+                <li>Status: running · Revision: rev 1</li>
+                <li>Progress: 1/3 steps completed</li>
+                <li>Created 7/7/2026, 9:12 AM · Updated 9:14 AM</li>
+              </ul>
+              <h2>Proposed Workstreams</h2>
+              <h3>Analysis workstreams</h3>
+              <ul class="quiet">
+                <li><b>1. Weight perturbation grid</b> (completed) — ±50% per component. Note: Netherlands stays #1 in 94% of the grid.</li>
+                <li><b>2. Bootstrap rank stability</b> (running) — 1,000 resampled draws of player-match rows.</li>
+              </ul>
+              <h3>Reporting and review</h3>
+              <ul class="quiet"><li><b>3. Sensitivity section</b> (pending) — tornado chart + flip table appended to <code>reports/wc26_composition.html</code>.</li></ul>
+              <h2>Validation And QA</h2>
+              <ul class="quiet">
+                <li>Confirm dataset scope, row counts, key fields, and grain before interpreting metrics.</li>
+                <li>Check nulls, ranges, duplicates, categorical coverage, and suspicious synthetic patterns.</li>
+                <li>Record assumptions and caveats in the notebook and final explain.md.</li>
+                <li>Tie each chart or metric back to a reproducible notebook cell and durable output path.</li>
+              </ul>
+              <h2>Expected Deliverables</h2>
+              <ul class="quiet">
+                <li>A notebook with executed cells, visible validation checks, and final summary.</li>
+                <li>Durable outputs for tables, charts, and report assets created by the plan.</li>
+                <li>A concise report surface plus explain.md as the written companion.</li>
+              </ul>
+              <h2>Risks And Open Questions</h2>
+              <ul class="quiet">
+                <li>Bootstrap draws assume player-match rows are exchangeable within teams.</li>
+                <li>Flag data quality issues that could change rankings or conclusions.</li>
+                <li>Ask for retargeting before execution if a narrower cohort is wanted.</li>
+              </ul>
+            </div>
+            </div>
           </div>
           <div class="ptab" id="tab-files">
             <div class="ftree">
@@ -615,7 +705,7 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
       <!-- edge rail: panel tabs, always visible -->
       <nav class="edge" aria-label="Session panel tabs" style="position:relative">
         <span class="badge" style="top:-4px;left:-4px">8</span>
-        <button class="etab on" data-tab="plans" title="Plans"><span class="edot"></span><svg class="svgi"><use href="#i-doc"/></svg><span class="elb">Plans</span></button>
+        <button class="etab on" data-tab="plans" title="Plans — 2 in this session"><span class="ecount">2</span><svg class="svgi"><use href="#i-doc"/></svg><span class="elb">Plans</span></button>
         <button class="etab" data-tab="files" title="Files"><svg class="svgi"><use href="#i-folder"/></svg><span class="elb">Files</span></button>
         <button class="etab" data-tab="reports" title="Reports"><span class="ecount">1</span><svg class="svgi"><use href="#i-chart"/></svg><span class="elb">Reports</span></button>
       </nav>
@@ -635,6 +725,7 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
     <li><span class="n">6</span><span><b>Scope chips folded</b> into one control; it shows counts only when something is restricted.</span></li>
     <li><span class="n">7</span><span><b>Console maximized:</b> 1000px column, one row of chrome, standalone-alert removed.</span></li>
     <li><span class="n">8</span><span><b>One nav, persistent panel tabs.</b> The project tab bar merges into the left rail; Plans / Files / Reports stay visible as a slim edge rail on the right at all times — panel content opens on demand.</span></li>
+    <li><span class="n">9</span><span><b>Many plans, one list.</b> The Plans tab opens list-first: every plan as a card with status, progress bar, and updated time — active sorts to top. The pill always deep-links to the plan needing attention (<b>+n</b> counts the rest); revisions live inside each plan as <b>rev</b> chips, so the list never fills with near-duplicates.</span></li>
   </ol>
 </div>
 <div class="hint-chip" id="hintChip"><span>Clickable mock — try the activity headers, step lines, plan pill, hover a user message, and “Design notes” ↘</span><button class="x" aria-label="Dismiss">×</button></div>
@@ -658,13 +749,21 @@ const setTab=t=>{
   $$('.etab').forEach(x=>x.classList.toggle('on',x.dataset.tab===t));
   $$('.ptab').forEach(p=>p.classList.toggle('on',p.id==='tab-'+t));
 };
+// plans: master list ↔ per-plan doc
+const showPlanList=()=>{$('#planList').hidden=false;$$('.plan-view').forEach(v=>v.hidden=true)};
+const showPlan=n=>{$('#planList').hidden=true;$$('.plan-view').forEach(v=>v.hidden=(v.id!=='planView'+n))};
+$$('.pcard').forEach(c=>c.addEventListener('click',()=>showPlan(c.dataset.plan)));
+$$('.pback').forEach(b=>b.addEventListener('click',showPlanList));
 $$('.etab').forEach(b=>b.addEventListener('click',()=>{
   if(document.body.classList.contains('panel-open')&&b.classList.contains('on')){document.body.classList.remove('panel-open');return}
-  setTab(b.dataset.tab);document.body.classList.add('panel-open');
+  setTab(b.dataset.tab);
+  if(b.dataset.tab==='plans')showPlanList();   // rail = browse all plans
+  document.body.classList.add('panel-open');
 }));
 $('#planPill').addEventListener('click',()=>{
   if(document.body.classList.contains('panel-open')&&$('.etab.on')?.dataset.tab==='plans'){document.body.classList.remove('panel-open');return}
-  setTab('plans');document.body.classList.add('panel-open');
+  setTab('plans');showPlan('2');               // pill = deep-link to the active plan
+  document.body.classList.add('panel-open');
 });
 $('#panelClose').addEventListener('click',()=>document.body.classList.remove('panel-open'));
 // fork toast

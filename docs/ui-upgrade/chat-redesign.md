@@ -78,6 +78,7 @@ downstream of that.
 | 7 | **Chrome subtraction:** project tab bar merges into the left nav; scope chips fold into one `Scope · All` control (counts shown only when restricted); standalone-chat alert removed; column widens to ~1000px. |
 | 8 | **Plan boilerplate sections stay** (Validation/Deliverables/Risks) — content-model slimming deferred. |
 | 9 | Verbs, not tool names, in step lines ("Added code cell [4] · 38 lines", not `insert_cell`). Raw args/JSON stay one expand deeper. |
+| 10 | **Multi-plan review: list-first.** The Plans tab opens as a master list — one card per plan (name, status tag, progress bar, rev, updated), active/pending sorted to top — and clicking a card opens that plan's doc with an "← All plans (n)" back link. The top-bar pill always shows the plan needing attention (pending > running > latest) with a `+n` count of the others and deep-links to it; the rail tab badge shows the plan count. Revisions are not separate list entries — they live inside each plan's doc as `rev` chips. Replaces the old anonymous "Plan 1 / Plan 2" buttons. |
 
 ## 3. Implementation notes (for when we build)
 
