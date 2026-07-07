@@ -1,10 +1,16 @@
 ---
 name: data_profiling
-description: Comprehensive dataset profiling with statistics, distributions, and quality checks
+description: Quick dataset profiling for compact schema, summary statistics, missingness, duplicates, distributions, and obvious quality checks. For goal-directed or domain-sensitive EDA, use structured_eda instead.
 tags: [data, analysis, profiling]
 ---
 
-When asked to profile a dataset, follow these steps:
+## When to use
+
+Use this skill for a quick, compact dataset profile: shape, schema, summary statistics, missingness, duplicates, basic distributions, and obvious quality flags.
+
+If the user asks for exploratory data analysis, model readiness, dashboard/KPI preparation, survey/research analysis, time-series/event/text/geospatial/causal exploration, or any analysis where the user's goal/domain should change the path, fetch and follow `structured_eda` instead.
+
+## Quick profile steps
 
 1. **Load and inspect** the dataset. Show the shape (rows x columns), column names, and data types.
 
@@ -19,8 +25,12 @@ When asked to profile a dataset, follow these steps:
 
 5. **Distributions**: For numeric columns, note skewness. For categorical columns with <20 unique values, show value counts.
 
-6. **Correlations**: Compute pairwise correlations for numeric columns. Highlight strong correlations (|r| > 0.7).
+6. **Correlations**: For a quick profile, compute only a small numeric correlation summary after excluding identifiers, codes, constants, and obvious non-measures. Highlight strong correlations (|r| > 0.7) as relationship candidates, not conclusions.
 
 7. **Data quality flags**: Note any columns that appear to have constant values, high cardinality, or mixed types.
 
-Present results in clear tables and summarize key findings at the end.
+Present results in clear tables and summarize 3-5 key findings at the end.
+
+## Stop condition
+
+Do not continue into follow-up loops, causal interpretation, modeling recommendations, or domain-heavy conclusions from this skill alone. If the profile reveals material quality risks, target/metric questions, surprising relationships, or domain-specific caveats, switch to `structured_eda`.
