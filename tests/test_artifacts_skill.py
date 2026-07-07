@@ -5,7 +5,6 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_LIBRARY = ROOT / "skill-library"
-DOCS = ROOT / "docs"
 
 
 def _read(path: Path) -> str:
@@ -77,17 +76,3 @@ def test_openclaw_data_science_routes_final_reports_to_artifacts():
     assert "fetch the `artifacts` skill before publishing or revising" in bundled_data_science
     assert "published artifact or living report" in bundled_data_science
     assert "embedded in the App panel" not in bundled_data_science
-
-
-def test_artifacts_prd_covers_alignment_contracts():
-    prd = _read(DOCS / "artifacts-prd.md")
-
-    assert "artifact publishing unavailable" in prd
-    assert "FR-1a Tool namespace contract" in prd
-    assert "dataclaw_publish_artifact" in prd
-    assert "Skill convergence: `artifacts`, `dashboarding`, and `visualization`" in prd
-    assert "report-design" not in prd
-    assert "current `report_add_section` implementation must stop falling back" in prd
-    assert "Surface choice rule" in prd
-    assert "5 MB cap applies to a *published/exported* single file" in prd
-    assert "browser tooling is not installed" in prd

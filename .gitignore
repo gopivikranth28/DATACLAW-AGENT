@@ -46,3 +46,8 @@ CLAUDE.md
 ui/build/
 
 *.zip
+
+# Local-only planning, research, and PRD notes
+.local-planning/
+docs/*-prd.md
+docs/prd-portfolio.md
