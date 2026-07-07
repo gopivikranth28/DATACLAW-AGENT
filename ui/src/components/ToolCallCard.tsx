@@ -1,19 +1,21 @@
 import { useState, useEffect } from 'react'
 import { LoadingOutlined, CheckCircleOutlined, ExclamationCircleOutlined, RightOutlined, TeamOutlined, CodeOutlined } from '@ant-design/icons'
 import type { ToolCallState } from '../hooks/useAGUI'
-import ToolResultRenderer, { shouldAutoExpand } from './tool-renderers/ToolResultRenderer'
+import ToolResultRenderer, { shouldAutoExpand, shouldRenderWhileCalling } from './tool-renderers/ToolResultRenderer'
 import SubagentProgressPanel from './SubagentProgressPanel'
 
 interface Props {
   toolCall: ToolCallState
   onFileClick?: (path: string) => void
-  onDecision?: (proposalId: string, status: string, feedback?: string) => void
 }
 
-export default function ToolCallCard({ toolCall, onFileClick, onDecision }: Props) {
+export default function ToolCallCard({ toolCall, onFileClick }: Props) {
   const isDelegate = toolCall.name === 'delegate_to_subagent'
   const hasSubagent = isDelegate && !!toolCall.subagent
-  const autoExpand = hasSubagent || (shouldAutoExpand(toolCall.name) && toolCall.status === 'complete' && toolCall.result !== null)
+  const canRenderWhileCalling = shouldRenderWhileCalling(toolCall.name)
+  const autoExpand = hasSubagent || (shouldAutoExpand(toolCall.name) && (
+    (toolCall.status === 'complete' && toolCall.result !== null) || canRenderWhileCalling
+  ))
   const [expanded, setExpanded] = useState(autoExpand)
 
   // Auto-expand when a tool that should be expanded completes
@@ -102,14 +104,15 @@ export default function ToolCallCard({ toolCall, onFileClick, onDecision }: Prop
                   </pre>
                 </div>
               )}
-              {toolCall.result !== null && (
+              {(toolCall.result !== null || canRenderWhileCalling) && (
                 <div>
                   {!hasRichRenderer && (
                     <div style={{ fontSize: 11, color: '#888', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                       Result
                     </div>
                   )}
-                  <ToolResultRenderer toolName={toolCall.name} result={toolCall.result} args={toolCall.args} onFileClick={onFileClick} onDecision={onDecision} />
+                  <ToolResultRenderer toolName={toolCall.name} result={toolCall.result} args={toolCall.args}
+                    status={toolCall.status} onFileClick={onFileClick} />
                 </div>
               )}
             </>

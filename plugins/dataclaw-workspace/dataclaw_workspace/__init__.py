@@ -23,6 +23,7 @@ from dataclaw_workspace.tools import (
     ws_exec,
     display_image,
     build_report,
+    report_add_section,
     set_project_dir,
 )
 from dataclaw_workspace.config import WorkspaceConfig, load_config
@@ -158,6 +159,26 @@ class WorkspacePlugin:
                     "html_path": {"type": "string", "description": "Path to an HTML file in workspace"},
                     "output_path": {"type": "string", "description": "Output filename (relative to workspace)", "default": "report.html"},
                 },
+            },
+        ))
+
+        ctx.tool_registry.register_tool(PythonTool(
+            name="report_add_section",
+            description="Append a designed section to a live HTML report. Use this to build a polished visual report as analysis progresses: header, metric_row, chart, findings, callout, text, or table.",
+            fn=lambda **kw: report_add_section(cfg=cfg, **kw),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "section_type": {
+                        "type": "string",
+                        "description": "Section type",
+                        "enum": ["header", "metric_row", "chart", "findings", "callout", "text", "table"],
+                    },
+                    "data": {"type": "object", "description": "Section data payload"},
+                    "report_path": {"type": "string", "description": "Output report path", "default": "report.html"},
+                    "title": {"type": "string", "description": "Report title, used when creating a new report", "default": "Analysis Report"},
+                },
+                "required": ["section_type", "data"],
             },
         ))
 

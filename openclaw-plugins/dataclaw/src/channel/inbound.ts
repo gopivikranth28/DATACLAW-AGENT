@@ -69,7 +69,10 @@ export async function dispatchDataclawFrontendInbound(
     ctx, cfg,
     dispatcherOptions: {
       deliver: async (payload: ReplyPayload) => {
-        const text = [payload.text, payload.mediaUrl, ...(payload.mediaUrls ?? [])].filter(Boolean).join("\n");
+        const hasMedia = Boolean(payload.mediaUrl || (payload.mediaUrls && payload.mediaUrls.length > 0));
+        const text = [payload.text || (hasMedia ? "Visual output captured in Dataclaw artifacts. Open the App panel/report surface to view it." : "")]
+          .filter(Boolean)
+          .join("\n");
         if (!text) return;
         lastMessageId = `dc-out-${Date.now()}-${rand()}`;
         deliveredChunks.push(text);
@@ -102,9 +105,17 @@ function rand(): string {
 
 function buildContext(message: DataclawInboundMessage, sessionKey: string, accountId: string): InboundContext {
   const messageId = message.messageId ?? `dc-in-${Date.now()}-${rand()}`;
+  const dataclawInstructions = [
+    "[Dataclaw runtime instructions]",
+    "- Use Dataclaw tools as the source of truth for plans, notebooks, data work, visual reports, and files.",
+    "- Before running notebooks, code, or data tools for analysis, call dataclaw_propose_plan unless the user explicitly asks for a quick/no-plan answer. If Dataclaw auto mode is active the plan tool will auto-approve; otherwise wait for approval before execution.",
+    "- Keep notebook work visible by using notebook/cell execution tools rather than hiding work in final prose.",
+    "- For analytical answers, build the in-app visual report with dataclaw_report_add_section; do not answer with raw media paths or OpenClaw canvas-pairing language.",
+    "",
+  ].join("\n");
   const scopedText = message.projectId
-    ? `[Dataclaw project_id=${message.projectId} workspace_id=${message.workspaceId ?? message.projectId}]\n${message.text}`
-    : message.text;
+    ? `${dataclawInstructions}[Dataclaw project_id=${message.projectId} workspace_id=${message.workspaceId ?? message.projectId}]\n${message.text}`
+    : `${dataclawInstructions}${message.text}`;
   return {
     Body: scopedText, RawBody: scopedText, CommandBody: scopedText, CommandAuthorized: true,
     From: message.userId, To: message.sessionId, SessionKey: sessionKey, AccountId: accountId,

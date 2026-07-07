@@ -1,13 +1,20 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useParams } from 'react-router-dom'
 import { API } from '../api'
-import AppView, { collectAppItems, type AppCall, type AppLayout } from '../components/AppView'
+import AppView, {
+  collectAppItems,
+  itemsFromVisualArtifacts,
+  type AppCall,
+  type AppLayout,
+  type VisualArtifact,
+} from '../components/AppView'
 
 interface PublishedSession {
   id: string
   title?: string
   createdAt?: string
   appLayout?: AppLayout | null
+  visualArtifacts?: VisualArtifact[]
   messages?: Array<{ role?: string; toolName?: string; result?: string }>
 }
 
@@ -27,6 +34,8 @@ export default function AppPage() {
   }, [sessionId])
 
   const items = useMemo(() => {
+    const artifacts = itemsFromVisualArtifacts(session?.visualArtifacts)
+    if (artifacts.length > 0) return artifacts
     const calls: AppCall[] = (session?.messages ?? [])
       .filter(m => m.role === 'tool_call')
       .map(m => ({ name: m.toolName ?? '', result: m.result ?? null }))

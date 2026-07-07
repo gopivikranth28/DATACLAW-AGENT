@@ -60,12 +60,14 @@ async def test_propose_plan_persists_snapshot():
     result = await propose_plan(
         name="Plan", description="d",
         steps=[{"name": "s1", "description": "d1"}],
+        plan_markdown="# Plan\n\n## QA\n\nCheck row counts before ranking.",
         session_id="sess-1",
     )
     snap = find_snapshot(result["snapshot_id"])
     assert snap["proposal_id"] == result["proposal_id"]
     assert snap["trigger"] == "propose"
     assert snap["plan"]["steps"][0]["name"] == "s1"
+    assert "Check row counts" in snap["plan"]["plan_markdown"]
 
 
 @pytest.mark.asyncio
@@ -94,6 +96,37 @@ async def test_propose_plan_auto_resolve():
 
     # Only one proposal in store
     assert len(read_proposals()) == 1
+
+
+@pytest.mark.asyncio
+async def test_reproposal_returns_prior_snapshot_and_stable_step_ids():
+    """Revision cards can diff against the previous proposal snapshot."""
+    r1 = await propose_plan(
+        name="Plan v1", description="d",
+        steps=[
+            {"name": "Keep me", "description": "d1"},
+            {"name": "Drop me", "description": "d2"},
+        ],
+        session_id="sess-1",
+    )
+    first = await get_plan(proposal_id=r1["proposal_id"])
+    kept_id = first["steps"][0]["id"]
+
+    r2 = await propose_plan(
+        name="Plan v2", description="d",
+        steps=[
+            {"name": "Keep me", "description": "d1 updated"},
+            {"name": "Add me", "description": "d3"},
+        ],
+        session_id="sess-1",
+    )
+
+    assert r2["previous_snapshot_id"].startswith("snap-")
+    prior = find_snapshot(r2["previous_snapshot_id"])
+    assert prior["plan"]["name"] == "Plan v1"
+    revised = await get_plan(proposal_id=r2["proposal_id"])
+    assert revised["steps"][0]["id"] == kept_id
+    assert revised["steps"][1]["id"].startswith("step-")
 
 
 # ── Update ──────────────────────────────────────────────────────────────────

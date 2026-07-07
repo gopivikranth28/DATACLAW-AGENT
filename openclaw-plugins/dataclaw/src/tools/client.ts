@@ -7,7 +7,7 @@ export function createDataclawToolsClient(config: DataclawToolsConfig) {
     /**
      * Call a tool on Dataclaw's POST /tools/{name}/call endpoint.
      */
-    async callTool(toolName: string, params: Record<string, unknown>): Promise<unknown> {
+    async callTool(toolName: string, params: Record<string, unknown>, toolCallId?: string): Promise<unknown> {
       const { toolParams, sessionId, sessionKey, agentId } = splitContextParams(params);
       const response = await fetch(`${baseUrl}/api/tools/${encodeURIComponent(toolName)}/call`, {
         method: "POST",
@@ -27,9 +27,56 @@ export function createDataclawToolsClient(config: DataclawToolsConfig) {
       if (!response.ok || !body.ok) {
         throw new Error(`Dataclaw tool ${toolName} failed: ${response.status} ${JSON.stringify(body)}`);
       }
-      return body.result;
+      const result = body.result;
+      if (sessionId) {
+        await persistToolCall(config, baseUrl, {
+          sessionId,
+          toolName,
+          toolCallId: toolCallId || `oc-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          args: toolParams,
+          result,
+        });
+      }
+      return result;
     },
   };
+}
+
+async function persistToolCall(
+  config: DataclawToolsConfig,
+  baseUrl: string,
+  entry: {
+    sessionId: string;
+    toolName: string;
+    toolCallId: string;
+    args: Record<string, unknown>;
+    result: unknown;
+  },
+): Promise<void> {
+  try {
+    const response = await fetch(`${baseUrl}/api/chat/sessions/${encodeURIComponent(entry.sessionId)}/message`, {
+      method: "POST",
+      headers: {
+        ...authHeaders(config),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        role: "tool_call",
+        messageId: `tc-${entry.toolCallId}`,
+        toolCallId: entry.toolCallId,
+        toolName: entry.toolName,
+        args: entry.args,
+        result: entry.result,
+        status: "complete",
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) {
+      console.warn(`[dataclaw] tool-call persist failed for ${entry.toolName}: ${response.status}`);
+    }
+  } catch (error) {
+    console.warn(`[dataclaw] tool-call persist error for ${entry.toolName}: ${error}`);
+  }
 }
 
 function splitContextParams(params: Record<string, unknown>): {

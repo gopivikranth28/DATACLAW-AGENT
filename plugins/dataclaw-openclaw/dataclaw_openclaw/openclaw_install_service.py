@@ -684,7 +684,8 @@ async def install_plugin_atomic(
 
 
 def _healthz_url_from_cfg(openclaw_cfg: dict[str, Any]) -> str:
-    return openclaw_cfg.get("url", "http://127.0.0.1:18789").rstrip("/") + "/healthz"
+    url = openclaw_cfg.get("url") or "http://127.0.0.1:18789"
+    return url.rstrip("/") + "/healthz"
 
 
 # ── Install-state snapshot ────────────────────────────────────────────────────

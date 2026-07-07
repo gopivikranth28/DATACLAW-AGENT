@@ -34,11 +34,21 @@ class PlansPlugin:
                 "properties": {
                     "name": {"type": "string", "description": "Plan name"},
                     "description": {"type": "string", "description": "What the plan will accomplish"},
+                    "plan_markdown": {
+                        "type": "string",
+                        "description": (
+                            "Detailed Markdown review document for plan.md. Include objective, prior observations, "
+                            "assumptions or data limits, grouped workstreams, validation checks, deliverables, "
+                            "risks or open questions, and execution notes. This should be richer than the compact steps."
+                        ),
+                        "default": "",
+                    },
                     "steps": {
                         "type": "array",
                         "items": {
                             "type": "object",
                             "properties": {
+                                "id": {"type": "string", "description": "Stable step id; generated automatically when omitted"},
                                 "name": {"type": "string", "description": "Step name"},
                                 "description": {"type": "string", "description": "What this step will do"},
                                 "status": {"type": "string", "description": "Step status", "enum": ["not_started", "in_progress", "completed", "error", "blocked"], "default": "not_started"},
@@ -62,6 +72,7 @@ class PlansPlugin:
                         "items": {
                             "type": "object",
                             "properties": {
+                                "id": {"type": "string", "description": "Stable step id; optional, name is used as fallback"},
                                 "name": {"type": "string", "description": "Step name to update"},
                                 "status": {"type": "string", "description": "New step status", "enum": ["not_started", "in_progress", "completed", "error", "blocked"]},
                                 "summary": {"type": "string", "description": "Step summary"},

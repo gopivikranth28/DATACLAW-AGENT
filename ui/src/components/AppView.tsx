@@ -1,5 +1,7 @@
-import type { CSSProperties } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import { EyeOutlined, EyeInvisibleOutlined, UpOutlined, DownOutlined } from '@ant-design/icons'
+import { API } from '../api'
+import { rewriteRelativeUrls } from './FilePreview'
 import MetricDisplay, { type MetricData } from './tool-renderers/MetricDisplay'
 import PlotlyRenderer, { type PlotlyFigure } from './tool-renderers/PlotlyRenderer'
 
@@ -15,9 +17,22 @@ export interface AppLayout {
 
 interface MetricItem { id: string; kind: 'metric'; metric: MetricData }
 interface ChartItem { id: string; kind: 'chart'; figure: PlotlyFigure; caption?: string }
-export type AppItem = MetricItem | ChartItem
+interface ReportItem { id: string; kind: 'report'; htmlPath: string; title?: string; updatedAt?: string }
+export type AppItem = MetricItem | ChartItem | ReportItem
+
+export interface VisualArtifact {
+  id: string
+  kind: 'metric' | 'chart' | 'report'
+  metric?: MetricData
+  figure?: PlotlyFigure
+  caption?: string
+  html_path?: string
+  title?: string
+  updated_at?: string
+}
 
 const CELL_OUTPUT_TOOLS = new Set(['execute_cell', 'display_cell_output', 'execute_code'])
+const REPORT_TOOLS = new Set(['build_report', 'report_add_section'])
 
 // Item ids are sequence-based (metric-0, chart-1, ...). Session history is
 // append-only, so ids stay stable as the session grows — which is what lets
@@ -25,6 +40,7 @@ const CELL_OUTPUT_TOOLS = new Set(['execute_cell', 'display_cell_output', 'execu
 export function collectAppItems(calls: AppCall[]): AppItem[] {
   const items: AppItem[] = []
   const chartByFigure = new Map<string, ChartItem>()
+  const reportByPath = new Map<string, ReportItem>()
   let metricSeq = 0
   let chartSeq = 0
 
@@ -35,6 +51,22 @@ export function collectAppItems(calls: AppCall[]): AppItem[] {
 
     if (call.name === 'display_metric' && data?.type === 'metric') {
       items.push({ id: `metric-${metricSeq++}`, kind: 'metric', metric: data })
+    } else if (REPORT_TOOLS.has(call.name) && data?.html_path) {
+      const item: ReportItem = {
+        id: `report-${data.html_path}`,
+        kind: 'report',
+        htmlPath: data.html_path,
+        title: data.title || data.html_path.split('/').pop(),
+        updatedAt: String(data.size ?? Date.now()),
+      }
+      const existing = reportByPath.get(data.html_path)
+      if (existing) {
+        existing.title = item.title || existing.title
+        existing.updatedAt = item.updatedAt
+      } else {
+        reportByPath.set(data.html_path, item)
+        items.push(item)
+      }
     } else if (CELL_OUTPUT_TOOLS.has(call.name) && Array.isArray(data?.outputs)) {
       const caption = typeof data.caption === 'string' && data.caption ? data.caption : undefined
       for (const out of data.outputs) {
@@ -57,6 +89,71 @@ export function collectAppItems(calls: AppCall[]): AppItem[] {
   return items
 }
 
+export function itemsFromVisualArtifacts(artifacts?: VisualArtifact[] | null): AppItem[] {
+  if (!artifacts?.length) return []
+  const items: AppItem[] = []
+  for (const artifact of artifacts) {
+    if (artifact.kind === 'metric' && artifact.metric) {
+      items.push({ id: artifact.id, kind: 'metric', metric: artifact.metric })
+    } else if (artifact.kind === 'chart' && artifact.figure) {
+      items.push({
+        id: artifact.id,
+        kind: 'chart',
+        figure: artifact.figure,
+        caption: artifact.caption,
+      })
+    } else if (artifact.kind === 'report' && artifact.html_path) {
+      items.push({
+        id: artifact.id,
+        kind: 'report',
+        htmlPath: artifact.html_path,
+        title: artifact.title,
+        updatedAt: artifact.updated_at,
+      })
+    }
+  }
+  return items
+}
+
+function appItemPayloadKey(item: AppItem): string {
+  if (item.kind === 'metric') return `metric:${JSON.stringify(item.metric)}`
+  if (item.kind === 'report') return `report:${item.htmlPath}`
+  return `chart:${JSON.stringify(item.figure.data)}`
+}
+
+export function mergeAppItems(primary: AppItem[], fallback: AppItem[]): AppItem[] {
+  if (primary.length === 0) return dedupeAppItems(fallback)
+  const seen = new Set(primary.map(appItemPayloadKey))
+  const merged = [...primary]
+  for (const item of fallback) {
+    const key = appItemPayloadKey(item)
+    if (seen.has(key)) {
+      const idx = merged.findIndex(existing => appItemPayloadKey(existing) === key)
+      if (idx >= 0 && merged[idx].kind === 'report' && item.kind === 'report') merged[idx] = item
+      continue
+    }
+    seen.add(key)
+    merged.push(item)
+  }
+  return merged
+}
+
+function dedupeAppItems(items: AppItem[]): AppItem[] {
+  const seen = new Set<string>()
+  const deduped: AppItem[] = []
+  for (const item of items) {
+    const key = appItemPayloadKey(item)
+    if (seen.has(key)) {
+      const idx = deduped.findIndex(existing => appItemPayloadKey(existing) === key)
+      if (idx >= 0 && deduped[idx].kind === 'report' && item.kind === 'report') deduped[idx] = item
+      continue
+    }
+    seen.add(key)
+    deduped.push(item)
+  }
+  return deduped
+}
+
 function orderCharts(charts: ChartItem[], order?: string[]): ChartItem[] {
   if (!order || order.length === 0) return charts
   const pos = new Map(order.map((id, i) => [id, i]))
@@ -77,6 +174,7 @@ export default function AppView({ items, layout, editable = false, onLayoutChang
   onLayoutChange?: (layout: AppLayout) => void
 }) {
   const hidden = new Set(layout?.hidden ?? [])
+  const reports = items.filter((i): i is ReportItem => i.kind === 'report')
   const metrics = items.filter((i): i is MetricItem => i.kind === 'metric')
   const charts = orderCharts(items.filter((i): i is ChartItem => i.kind === 'chart'), layout?.order)
 
@@ -102,10 +200,11 @@ export default function AppView({ items, layout, editable = false, onLayoutChang
 
   // Published (non-editable) view drops hidden items; editable view dims them
   // so the author can unhide.
+  const visibleReports = editable ? reports : reports.filter(r => !hidden.has(r.id))
   const visibleMetrics = editable ? metrics : metrics.filter(m => !hidden.has(m.id))
   const visibleCharts = editable ? charts : charts.filter(c => !hidden.has(c.id))
 
-  if (visibleMetrics.length === 0 && visibleCharts.length === 0) {
+  if (visibleReports.length === 0 && visibleMetrics.length === 0 && visibleCharts.length === 0) {
     return (
       <div style={{ padding: 24, color: '#8c8c8c', fontSize: 13, textAlign: 'center' }}>
         No insights yet. Run an analysis to see metrics and charts here.
@@ -115,6 +214,20 @@ export default function AppView({ items, layout, editable = false, onLayoutChang
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {visibleReports.map(r => (
+        <div key={r.id} style={{
+          position: 'relative', border: '1px solid #e5e7eb', borderRadius: 10,
+          overflow: 'hidden', background: '#f5f6f8', opacity: hidden.has(r.id) ? 0.35 : 1,
+        }}>
+          {editable && (
+            <span onClick={() => toggleHide(r.id)} title={hidden.has(r.id) ? 'Show' : 'Hide'}
+              style={{ ...CONTROL_STYLE, position: 'absolute', top: 8, right: 8, zIndex: 2, background: '#fff', borderRadius: 4 }}>
+              {hidden.has(r.id) ? <EyeOutlined /> : <EyeInvisibleOutlined />}
+            </span>
+          )}
+          <ReportFrame htmlPath={r.htmlPath} title={r.title} updatedAt={r.updatedAt} />
+        </div>
+      ))}
       {visibleMetrics.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
           {visibleMetrics.map(m => (
@@ -149,6 +262,53 @@ export default function AppView({ items, layout, editable = false, onLayoutChang
           <PlotlyRenderer figure={c.figure} caption={c.caption} />
         </div>
       ))}
+    </div>
+  )
+}
+
+function ReportFrame({ htmlPath, title, updatedAt }: { htmlPath: string; title?: string; updatedAt?: string }) {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+  const dirPath = htmlPath.substring(0, htmlPath.lastIndexOf('/'))
+
+  useEffect(() => {
+    const url = `${API}/workspace/files?path=${encodeURIComponent(htmlPath)}`
+    fetch(url)
+      .then(r => r.ok ? r.text() : Promise.reject('Not found'))
+      .then(html => {
+        const resolved = dirPath ? rewriteRelativeUrls(html, dirPath) : html
+        const blob = new Blob([resolved], { type: 'text/html' })
+        setBlobUrl(prev => {
+          if (prev) URL.revokeObjectURL(prev)
+          return URL.createObjectURL(blob)
+        })
+      })
+      .catch(() => setBlobUrl(null))
+
+    return () => setBlobUrl(prev => {
+      if (prev) URL.revokeObjectURL(prev)
+      return null
+    })
+  }, [htmlPath, updatedAt])
+
+  return (
+    <div>
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '10px 14px', background: '#fff', borderBottom: '1px solid #e5e7eb',
+      }}>
+        <div style={{ fontSize: 13, fontWeight: 650, color: '#1f2937' }}>{title || 'Report'}</div>
+        <a href={`${API}/workspace/files?path=${encodeURIComponent(htmlPath)}`} target="_blank" rel="noreferrer"
+          style={{ fontSize: 12, color: '#2563eb' }}>Open</a>
+      </div>
+      {blobUrl ? (
+        <iframe
+          src={blobUrl}
+          title={title || 'Report'}
+          style={{ width: '100%', minHeight: 760, border: 0, display: 'block', background: '#f5f6f8' }}
+        />
+      ) : (
+        <div style={{ padding: 24, color: '#8c8c8c', fontSize: 13 }}>Report preview unavailable.</div>
+      )}
     </div>
   )
 }

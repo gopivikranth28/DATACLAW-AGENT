@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import html as html_lib
+import json
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +20,8 @@ from dataclaw.config.paths import workspaces_dir
 from dataclaw_workspace.config import WorkspaceConfig
 
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
+_REPORT_SECTION_START = "<!-- DATACLAW_REPORT_SECTIONS_START -->"
+_REPORT_SECTION_END = "<!-- DATACLAW_REPORT_SECTIONS_END -->"
 
 # Project directory override — set per-request via hook when a project is active.
 _project_dir: Path | None = None
@@ -299,6 +304,250 @@ async def build_report(
         result["docx_path"] = str(resolved_docx)
 
     return result
+
+
+async def report_add_section(
+    *,
+    cfg: WorkspaceConfig,
+    section_type: str,
+    data: dict[str, Any],
+    report_path: str = "report.html",
+    title: str = "Analysis Report",
+    workspace_id: str = "default",
+    **_: Any,
+) -> dict[str, Any]:
+    """Append a designed section to a live HTML report.
+
+    This is the presentation layer counterpart to notebooks: notebooks do the
+    computation, while this tool builds the readable report surface as findings
+    emerge.
+    """
+    if not report_path.endswith(".html"):
+        report_path = report_path.rsplit(".", 1)[0] + ".html"
+
+    resolved = _resolve_path(workspace_id, report_path)
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+
+    section_html = _render_report_section(section_type, data)
+    if resolved.exists():
+        doc = resolved.read_text(encoding="utf-8")
+        if _REPORT_SECTION_END in doc:
+            doc = doc.replace(_REPORT_SECTION_END, section_html + "\n" + _REPORT_SECTION_END, 1)
+        else:
+            doc += "\n" + section_html
+    else:
+        doc = _report_shell(title=title, first_section=section_html)
+
+    resolved.write_text(doc, encoding="utf-8")
+    return {
+        "type": "report",
+        "html_path": str(resolved),
+        "section_type": section_type,
+        "title": title,
+        "size": resolved.stat().st_size,
+        "updated": True,
+    }
+
+
+def _report_shell(*, title: str, first_section: str) -> str:
+    safe_title = html_lib.escape(title)
+    plotly_script = _plotly_script_tag()
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{safe_title}</title>
+  {plotly_script}
+  <style>
+    :root {{
+      --bg: #f4f6f8;
+      --paper: #ffffff;
+      --ink: #17202a;
+      --muted: #667085;
+      --line: #e6e9ef;
+      --accent: #2563eb;
+      --accent-soft: #eaf1ff;
+      --good: #15803d;
+      --warn: #b45309;
+      --radius: 10px;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+    }}
+    .r-page {{ max-width: 1040px; margin: 0 auto; padding: 28px 22px 40px; }}
+    .r-hero {{
+      background: linear-gradient(135deg, #0f172a 0%, #1d4ed8 100%);
+      color: #fff;
+      border-radius: 14px;
+      padding: 30px;
+      margin-bottom: 18px;
+      box-shadow: 0 18px 50px rgba(15, 23, 42, 0.18);
+    }}
+    .r-kicker {{ font-size: 12px; text-transform: uppercase; letter-spacing: .08em; opacity: .78; font-weight: 700; }}
+    .r-hero h1 {{ margin: 8px 0 8px; font-size: 34px; line-height: 1.08; letter-spacing: 0; }}
+    .r-hero p {{ max-width: 760px; margin: 0; color: rgba(255,255,255,.82); font-size: 15px; }}
+    .r-section {{
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 18px;
+      margin: 14px 0;
+      box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+    }}
+    .r-section h2, .r-section h3 {{ margin: 0 0 10px; line-height: 1.18; letter-spacing: 0; }}
+    .r-section h2 {{ font-size: 21px; }}
+    .r-section h3 {{ font-size: 16px; color: var(--muted); font-weight: 650; }}
+    .r-grid {{ display: grid; gap: 12px; }}
+    .r-grid.cols-2 {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+    .r-metrics {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }}
+    .r-metric {{ border: 1px solid var(--line); border-radius: 9px; padding: 14px; background: #fbfcfe; }}
+    .r-metric-label {{ font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }}
+    .r-metric-value {{ font-size: 30px; font-weight: 760; margin-top: 4px; line-height: 1.1; }}
+    .r-metric-delta {{ font-size: 12px; margin-top: 6px; color: var(--muted); }}
+    .r-metric-delta.up {{ color: var(--good); }}
+    .r-metric-delta.down {{ color: #b91c1c; }}
+    .r-callout {{ border-left: 4px solid var(--accent); background: var(--accent-soft); padding: 13px 14px; border-radius: 8px; }}
+    .r-findings {{ display: grid; gap: 10px; padding: 0; margin: 0; list-style: none; }}
+    .r-finding {{ padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }}
+    .r-chart-target {{ width: 100%; min-height: 390px; }}
+    .r-caption {{ color: var(--muted); font-size: 12px; margin: 8px 2px 0; }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+    th, td {{ padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }}
+    th {{ color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }}
+    @media (max-width: 720px) {{
+      .r-page {{ padding: 16px 12px 28px; }}
+      .r-hero {{ padding: 22px; }}
+      .r-hero h1 {{ font-size: 26px; }}
+      .r-grid.cols-2 {{ grid-template-columns: 1fr; }}
+    }}
+  </style>
+</head>
+<body>
+  <main class="r-page">
+    {_REPORT_SECTION_START}
+{first_section}
+    {_REPORT_SECTION_END}
+  </main>
+</body>
+</html>
+"""
+
+
+def _plotly_script_tag() -> str:
+    """Inline Plotly when available so generated reports work offline."""
+    try:
+        import plotly.io as pio
+
+        plotly_js = pio.get_plotlyjs().replace("</", "<\\/")
+        return f"<script>{plotly_js}</script>"
+    except Exception:
+        return '<script src="https://cdn.plot.ly/plotly-2.35.0.min.js"></script>'
+
+
+def _render_report_section(section_type: str, data: dict[str, Any]) -> str:
+    st = section_type.strip().lower()
+    if st == "header":
+        title = _esc(data.get("title", "Analysis Report"))
+        kicker = _esc(data.get("kicker", "Dataclaw report"))
+        subtitle = _esc(data.get("subtitle", data.get("summary", "")))
+        return f"""    <section class="r-hero">
+      <div class="r-kicker">{kicker}</div>
+      <h1>{title}</h1>
+      {f'<p>{subtitle}</p>' if subtitle else ''}
+    </section>"""
+
+    if st == "metric_row":
+        metrics = data.get("metrics", [])
+        cards = []
+        for m in metrics if isinstance(metrics, list) else []:
+            if not isinstance(m, dict):
+                continue
+            trend = _esc(m.get("trend", ""))
+            cards.append(f"""<div class="r-metric">
+        <div class="r-metric-label">{_esc(m.get("label", ""))}</div>
+        <div class="r-metric-value">{_esc(m.get("value", ""))}{f'<span style="font-size:13px;color:var(--muted);margin-left:5px">{_esc(m.get("unit", ""))}</span>' if m.get("unit") else ''}</div>
+        {f'<div class="r-metric-delta {trend}">{_esc(m.get("delta", ""))}</div>' if m.get("delta") else ''}
+      </div>""")
+        return f"""    <section class="r-section">
+      {f'<h2>{_esc(data.get("title", ""))}</h2>' if data.get("title") else ''}
+      <div class="r-metrics">{''.join(cards)}</div>
+    </section>"""
+
+    if st == "chart":
+        chart_id = f"chart-{uuid.uuid4().hex[:10]}"
+        figure = data.get("figure")
+        if not figure and data.get("figure_json"):
+            figure = json.loads(str(data["figure_json"]))
+        if not isinstance(figure, dict):
+            raise ValueError("chart section requires 'figure' dict or 'figure_json'")
+        figure_json = json.dumps(figure, default=str).replace("</", "<\\/")
+        title = _esc(data.get("title", figure.get("layout", {}).get("title", {}).get("text", "Chart") if isinstance(figure.get("layout"), dict) else "Chart"))
+        caption = _esc(data.get("caption", ""))
+        return f"""    <section class="r-section">
+      <h2>{title}</h2>
+      <div id="{chart_id}" class="r-chart-target"></div>
+      {f'<p class="r-caption">{caption}</p>' if caption else ''}
+      <script>
+        (function() {{
+          var fig = {figure_json};
+          Plotly.newPlot("{chart_id}", fig.data || [], fig.layout || {{}}, {{responsive: true, displaylogo: false}});
+        }})();
+      </script>
+    </section>"""
+
+    if st == "findings":
+        items = data.get("items", data.get("findings", []))
+        lis = "".join(f'<li class="r-finding">{_esc(str(item))}</li>' for item in (items if isinstance(items, list) else []))
+        return f"""    <section class="r-section">
+      <h2>{_esc(data.get("title", "Key findings"))}</h2>
+      <ul class="r-findings">{lis}</ul>
+    </section>"""
+
+    if st in {"callout", "text"}:
+        title = _esc(data.get("title", "Note"))
+        body = _paragraphs(data.get("body", data.get("text", "")))
+        class_name = "r-callout" if st == "callout" else ""
+        return f"""    <section class="r-section">
+      <div class="{class_name}">
+        <h2>{title}</h2>
+        {body}
+      </div>
+    </section>"""
+
+    if st == "table":
+        columns = data.get("columns", [])
+        rows = data.get("rows", [])
+        if not isinstance(columns, list) or not isinstance(rows, list):
+            raise ValueError("table section requires list 'columns' and list 'rows'")
+        head = "".join(f"<th>{_esc(str(c))}</th>" for c in columns)
+        body_rows = []
+        for row in rows[: int(data.get("max_rows", 20) or 20)]:
+            if isinstance(row, dict):
+                cells = [_esc(row.get(c, "")) for c in columns]
+            else:
+                cells = [_esc(v) for v in (row if isinstance(row, list) else [])]
+            body_rows.append("<tr>" + "".join(f"<td>{cell}</td>" for cell in cells) + "</tr>")
+        return f"""    <section class="r-section">
+      <h2>{_esc(data.get("title", "Table"))}</h2>
+      <table><thead><tr>{head}</tr></thead><tbody>{''.join(body_rows)}</tbody></table>
+    </section>"""
+
+    raise ValueError(f"Unsupported report section_type: {section_type}")
+
+
+def _esc(value: Any) -> str:
+    return html_lib.escape("" if value is None else str(value))
+
+
+def _paragraphs(value: Any) -> str:
+    text = "" if value is None else str(value)
+    parts = [p.strip() for p in text.split("\n\n") if p.strip()]
+    return "".join(f"<p>{_esc(p)}</p>" for p in parts)
 
 
 async def display_image(

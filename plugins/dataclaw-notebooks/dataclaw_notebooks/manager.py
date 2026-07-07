@@ -42,6 +42,18 @@ except Exception:
     pass
 """
 
+# Kernel-side setup that pins Plotly's default renderer to the bare mime-type
+# bundle. Left to environment auto-detection, fig.show() can pick an HTML
+# renderer that emits a CDN <script> tag the chat UI never executes; the
+# plotly mime output is what _collect_outputs captures as a native chart.
+_PLOTLY_RENDERER_SETUP = """
+try:
+    import plotly.io as _dc_pio
+    _dc_pio.renderers.default = "plotly_mimetype"
+except Exception:
+    pass
+"""
+
 
 @dataclass
 class NotebookState:
@@ -155,6 +167,11 @@ class NotebookManager:
             kc.execute(_PANDAS_MARKDOWN_FORMATTER, store_history=False, silent=True)
         except Exception:
             logger.debug("Failed to install pandas markdown formatter", exc_info=True)
+
+        try:
+            kc.execute(_PLOTLY_RENDERER_SETUP, store_history=False, silent=True)
+        except Exception:
+            logger.debug("Failed to set plotly default renderer", exc_info=True)
 
         state.kernel_manager = km
         state.kernel_client = kc
@@ -288,9 +305,9 @@ class NotebookManager:
                 packages = list(DEFAULT_PACKAGES)
             except ImportError:
                 packages = [
-                    "ipykernel", "pandas", "numpy", "matplotlib", "seaborn",
-                    "scikit-learn", "scipy", "plotly", "duckdb", "requests",
-                    "mlflow",
+                    "ipykernel", "nbformat>=4.2.0", "pandas", "numpy",
+                    "matplotlib", "seaborn", "scikit-learn", "scipy",
+                    "plotly", "duckdb", "requests", "mlflow",
                 ]
 
         # Ensure required packages are always included

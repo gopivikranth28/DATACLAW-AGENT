@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { Button, Card, Input, Select, Empty, Popconfirm, Alert, Modal, Switch, Tag, Collapse, Tooltip, Table } from 'antd'
+import { Button, Card, Input, Select, Empty, Popconfirm, Alert, Modal, Switch, Tag, Tooltip, Table } from 'antd'
 import {
   PlusOutlined, DeleteOutlined, SendOutlined, SettingOutlined, DatabaseOutlined,
-  EyeOutlined, EyeInvisibleOutlined, CheckCircleOutlined, CloseCircleOutlined,
-  ClockCircleOutlined, FolderOutlined, FolderOpenOutlined, ExperimentOutlined, StopOutlined, ReloadOutlined,
+  EyeOutlined, EyeInvisibleOutlined,
+  FolderOutlined, FolderOpenOutlined, ExperimentOutlined, StopOutlined, ReloadOutlined,
   ThunderboltOutlined, EditOutlined, ToolOutlined, BulbOutlined, TeamOutlined, SafetyOutlined,
   ExportOutlined,
 } from '@ant-design/icons'
@@ -14,12 +14,21 @@ import type { AGUIMessage } from '../hooks/useAGUI'
 import MarkdownContent from '../components/MarkdownContent'
 import ToolCallCard from '../components/ToolCallCard'
 import GuardrailCard from '../components/GuardrailCard'
+import PlanPanel from '../components/PlanPanel'
+import PendingPlanBanner from '../components/PendingPlanBanner'
+import { usePlans, PlansContext } from '../hooks/usePlans'
+import type { Plan } from '../hooks/usePlans'
 import { FileViewerModal } from '../components/FilePreview'
 import FileIcon from '../components/FileIcon'
-import AppView, { collectAppItems, type AppLayout } from '../components/AppView'
+import AppView, {
+  collectAppItems,
+  itemsFromVisualArtifacts,
+  mergeAppItems,
+  type AppLayout,
+  type VisualArtifact,
+} from '../components/AppView'
 
 interface Session { id: string; title: string; createdAt: string }
-interface Plan { id: string; name: string; status: string; steps: any[]; iteration?: number; feedback?: string; progress_summary?: string; mlflow_experiment_id?: string; mlflow_run_ids?: string[] }
 
 interface ChatPageProps { projectId?: string; initialSessionId?: string | null; initialDatasetIds?: string[] | null; onSessionChange?: (id: string | null) => void }
 
@@ -71,14 +80,16 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
   const maxAutoTurnsRef = useRef(10)
   const autoMessageRef = useRef(DEFAULT_AUTO_MESSAGE)
   const activeSessionIdRef = useRef<string | null>(null)
+  const pendingPlanDecisionRef = useRef<{ sessionId: string; text: string } | null>(null)
 
-  // Plans sidebar
-  const [plans, setPlans] = useState<Plan[]>([])
-  const [expandedPlanKeys, setExpandedPlanKeys] = useState<string[]>([])
-  const prevPlanIdsRef = useRef<Set<string>>(new Set())
+  // Plans — shared state lives in usePlans (wired after useAGUI below);
+  // reviewed on the right (PlanPanel), referenced from the chat/bottom banner.
   const [hasPlansPlugin, setHasPlansPlugin] = useState(false)
-  const [feedbackModal, setFeedbackModal] = useState<string | null>(null)
-  const [feedbackText, setFeedbackText] = useState('')
+  // Fresh object per focusPlan() call so repeat clicks re-trigger the panel's
+  // expand-and-scroll effect even for the same plan id.
+  const [focusedPlan, setFocusedPlan] = useState<{ id: string } | null>(null)
+  const [planPopoverOpen, setPlanPopoverOpen] = useState(false)
+  const [planReaderExpanded, setPlanReaderExpanded] = useState(false)
 
   // Dataset filters
   const [hasDataPlugin, setHasDataPlugin] = useState(false)
@@ -182,6 +193,7 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
   // App view curation — persisted on the session so the published
   // /app/<session-id> route reflects it.
   const [appLayout, setAppLayout] = useState<AppLayout | null>(null)
+  const [visualArtifacts, setVisualArtifacts] = useState<VisualArtifact[]>([])
   const [projectFiles, setProjectFiles] = useState<any[]>([])
   const [filePreviewTarget, setFilePreviewTarget] = useState<{ name: string; path: string } | null>(null)
 
@@ -192,7 +204,7 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
   const [mlflowSessionId, setMlflowSessionId] = useState('')
 
   // Resizable sidebar
-  const [sidebarWidth, setSidebarWidth] = useState(320)
+  const [sidebarWidth, setSidebarWidth] = useState(420)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const resizingRef = useRef(false)
 
@@ -229,18 +241,114 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
   const { messages, toolCalls, timeline, isRunning, reconnecting, error, sendMessage, cancelRun, checkAndReconnect, reset } = useAGUI({ onRunFinished })
   sendMessageRef.current = sendMessage
 
+  // Auto-send a chat message so the agent knows the decision
+  const onPlanDecided = useCallback((planId: string, status: string, feedback: string) => {
+    if (!activeSessionId) return
+    const labels: Record<string, string> = { approved: 'approved', denied: 'denied', changes_requested: 'needs changes' }
+    let text = `Plan ${planId} is ${labels[status] || status}.`
+    if (feedback) text += ` Feedback: ${feedback}`
+
+    if (isRunning) {
+      pendingPlanDecisionRef.current = { sessionId: activeSessionId, text }
+      return
+    }
+
+    const history = messages.map(m => ({ role: m.role, content: m.content }))
+    sendMessage(activeSessionId, history, text)
+  }, [isRunning, activeSessionId, messages, sendMessage])
+
+  useEffect(() => {
+    if (isRunning) return
+    const pending = pendingPlanDecisionRef.current
+    if (!pending) return
+    pendingPlanDecisionRef.current = null
+    sendMessage(pending.sessionId, [], pending.text)
+  }, [isRunning, sendMessage])
+
+  // Refresh plan state as soon as a plan tool result lands in the stream —
+  // the hook's 5s poll is only a backstop.
+  const planToolResultCount = useMemo(
+    () => toolCalls.filter(tc => (tc.name === 'propose_plan' || tc.name === 'update_plan') && tc.status === 'complete').length,
+    [toolCalls])
+  const { plans, refresh: refreshPlans, submitDecision } = usePlans(
+    activeSessionId,
+    hasPlansPlugin || planToolResultCount > 0,
+    onPlanDecided,
+  )
+  useEffect(() => { if (planToolResultCount > 0) refreshPlans() }, [planToolResultCount, refreshPlans])
+
+  const activePlanDraft = useMemo<Partial<Plan> | null>(() => {
+    const draftCall = [...toolCalls].reverse().find(tc => tc.name === 'propose_plan' && tc.status === 'calling')
+    if (!draftCall) return null
+    try {
+      const parsed = JSON.parse(draftCall.args || '{}')
+      return {
+        id: 'draft-plan',
+        name: parsed.name || 'Drafting analysis plan...',
+        description: parsed.description || '',
+        plan_markdown: parsed.plan_markdown || '',
+        status: 'drafting',
+        steps: Array.isArray(parsed.steps) ? parsed.steps : [],
+      }
+    } catch {
+      return { id: 'draft-plan', name: 'Drafting analysis plan...', status: 'drafting', steps: [] }
+    }
+  }, [toolCalls])
+
+  const wasDraftingPlanRef = useRef(false)
+  useEffect(() => {
+    const isDraftingPlan = !!activePlanDraft
+    if (isDraftingPlan && !wasDraftingPlanRef.current) setPlanPopoverOpen(true)
+    wasDraftingPlanRef.current = isDraftingPlan
+  }, [activePlanDraft])
+
+  const focusPlan = useCallback((planId: string) => {
+    setSidebarTab('plans')
+    setSidebarCollapsed(false)
+    setFocusedPlan({ id: planId })
+  }, [setSidebarTab, setSidebarCollapsed, setFocusedPlan])
+
+  // A new pending plan blocks the agent — bring it into view (open a collapsed
+  // sidebar, switch tab, expand). Covers changes_requested → re-propose too,
+  // since the same record flips back to pending. Keyboard focus is not moved.
+  const prevPendingIdsRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    const pendingIds = plans.filter(p => p.status === 'pending').map(p => p.id)
+    const newPending = pendingIds.filter(id => !prevPendingIdsRef.current.has(id))
+    prevPendingIdsRef.current = new Set(pendingIds)
+    if (newPending.length > 0) {
+      focusPlan(newPending[newPending.length - 1])
+      setPlanPopoverOpen(true)
+    }
+  }, [plans, focusPlan])
+
+  const pendingPlans = useMemo(() => plans.filter(p => p.status === 'pending'), [plans])
+  const latestPendingPlan = pendingPlans[pendingPlans.length - 1] ?? null
+  const composerPlaceholder = latestPendingPlan
+    ? 'Type feedback or revision notes for this plan...'
+    : 'Send a message...'
+
+  const plansCtx = useMemo(
+    () => ({ plans, submitDecision, focusPlan }),
+    [plans, submitDecision, focusPlan])
+
   // App view: collect chart/metric items from the session's tool calls;
   // load saved curation from the session and persist edits back to it.
-  const appItems = useMemo(
-    () => collectAppItems(toolCalls.map(tc => ({ name: tc.name, result: tc.result }))),
-    [toolCalls],
-  )
+  const appItems = useMemo(() => {
+    const persisted = itemsFromVisualArtifacts(visualArtifacts)
+    const live = collectAppItems(toolCalls.map(tc => ({ name: tc.name, result: tc.result })))
+    return mergeAppItems(persisted, live)
+  }, [toolCalls, visualArtifacts])
   useEffect(() => {
     setAppLayout(null)
+    setVisualArtifacts([])
     if (!activeSessionId) return
     fetch(`${API}/chat/sessions/${activeSessionId}`)
       .then(r => r.ok ? r.json() : null)
-      .then(s => { if (s?.appLayout) setAppLayout(s.appLayout) })
+      .then(s => {
+        if (s?.appLayout) setAppLayout(s.appLayout)
+        if (Array.isArray(s?.visualArtifacts)) setVisualArtifacts(s.visualArtifacts)
+      })
       .catch(() => {})
   }, [activeSessionId])
   const saveAppLayout = useCallback((layout: AppLayout) => {
@@ -313,31 +421,6 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
     checkAndReconnect(activeSessionId)
   }, [activeSessionId, reset, checkAndReconnect])
 
-  // Load plans for session
-  useEffect(() => {
-    if (!hasPlansPlugin || !activeSessionId) { setPlans([]); setExpandedPlanKeys([]); prevPlanIdsRef.current = new Set(); return }
-    const load = () => {
-      fetch(`${API}/plans?session_id=${activeSessionId}`)
-        .then(r => r.ok ? r.json() : []).then(setPlans).catch(() => {})
-    }
-    load()
-    const interval = setInterval(load, 5000)
-    return () => clearInterval(interval)
-  }, [hasPlansPlugin, activeSessionId])
-
-  // Auto-expand new plans, collapse old ones
-  useEffect(() => {
-    const currentIds = new Set(plans.map(p => p.id))
-    const newIds = plans.filter(p => !prevPlanIdsRef.current.has(p.id)).map(p => p.id)
-    if (newIds.length > 0) {
-      setExpandedPlanKeys(newIds)
-    } else if (prevPlanIdsRef.current.size === 0 && plans.length > 0) {
-      // Initial load — expand pending plans
-      setExpandedPlanKeys(plans.filter(p => p.status === 'pending' || p.status === 'running').map(p => p.id))
-    }
-    prevPlanIdsRef.current = currentIds
-  }, [plans])
-
   // Load datasets for filter
   useEffect(() => {
     if (!hasDataPlugin) return
@@ -363,10 +446,13 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
   useEffect(() => { loadProjectFiles() }, [loadProjectFiles])
 
   // Filtered timeline (pre-filter tool calls when hidden)
-  const filteredTimeline = useMemo(() =>
-    showTools ? timeline : timeline.filter(e => e.type !== 'toolCall'),
-    [timeline, showTools]
-  )
+  const filteredTimeline = useMemo(() => {
+    const visible = showTools ? timeline : timeline.filter(e => e.type !== 'toolCall')
+    return visible.filter(e => {
+      if (e.type !== 'message') return true
+      return !isPlanApprovalRecap((e.item as AGUIMessage).content)
+    })
+  }, [timeline, showTools])
 
   // Windowed slice: only render the tail, expand on "load more"
   const windowedTimeline = useMemo(() => {
@@ -444,6 +530,13 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
       }).catch(() => {})
     }
 
+    // Pending-plan composer mode: the user's message doubles as plan feedback.
+    // silent — this same message informs the agent, no synthetic one needed.
+    if (latestPendingPlan) {
+      await submitDecision(latestPendingPlan.id, 'changes_requested', text, true)
+      setPlanPopoverOpen(false)
+    }
+
     const history = messages.map(m => ({ role: m.role, content: m.content }))
     sendMessage(sessionId!, history, text)
   }
@@ -463,7 +556,7 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
     const onMove = (e: MouseEvent) => {
       if (!resizingRef.current) return
       const delta = startX - e.clientX
-      setSidebarWidth(Math.max(200, Math.min(600, startWidth + delta)))
+      setSidebarWidth(Math.max(360, Math.min(900, startWidth + delta)))
     }
     const onUp = () => { resizingRef.current = false; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
     window.addEventListener('mousemove', onMove)
@@ -487,32 +580,25 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
     setPromptModalOpen(false)
   }
 
-  const submitDecision = async (planId: string, status: string, feedback: string = '') => {
-    await fetch(`${API}/plans/${planId}/decision`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status, feedback }),
-    })
-    // Refresh plans
-    if (activeSessionId) {
-      fetch(`${API}/plans?session_id=${activeSessionId}`).then(r => r.ok ? r.json() : []).then(setPlans).catch(() => {})
-    }
-    // Auto-send a chat message so the agent knows the decision
-    if (!isRunning && activeSessionId) {
-      const labels: Record<string, string> = { approved: 'approved', denied: 'denied', changes_requested: 'needs changes' }
-      let text = `Plan ${planId} is ${labels[status] || status}.`
-      if (feedback) text += ` Feedback: ${feedback}`
-      const history = messages.map(m => ({ role: m.role, content: m.content }))
-      sendMessage(activeSessionId, history, text)
-    }
-  }
-
-  const showPlansSidebar = hasPlansPlugin
+  const showPlansSidebar = hasPlansPlugin || plans.length > 0 || planToolResultCount > 0
   const showFilesSidebar = hasWorkspacePlugin && !!projectId
   // Insights is core (viz layer) — the sidebar is always available.
   const showSidebar = true
+  const planSidebarOverlay = planReaderExpanded && sidebarTab === 'plans' && !sidebarCollapsed
+  const sidebarPanelWidth = planSidebarOverlay
+    ? 'min(1120px, calc(100vw - 32px))'
+    : sidebarCollapsed ? 36 : sidebarWidth
 
   return (
-    <div style={{ display: 'flex', height: '100%' }}>
+    <PlansContext.Provider value={plansCtx}>
+    <div style={{ display: 'flex', height: '100%', position: 'relative' }}>
+      <style>{`
+        textarea.dataclaw-plan-feedback-composer::placeholder,
+        .dataclaw-plan-feedback-composer textarea::placeholder {
+          color: #98a2b3;
+          font-style: italic;
+        }
+      `}</style>
       {/* Main chat area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         {/* Top bar */}
@@ -652,7 +738,7 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
                       : <MessageBubble message={entry.item as AGUIMessage} onFileClick={previewFile} />
                     : entry.type === 'guardrail'
                     ? <GuardrailCard guardrail={entry.item as any} threadId={activeSessionId || ''} />
-                    : <ToolCallCard toolCall={entry.item as any} onFileClick={previewFile} onDecision={submitDecision} />
+                    : <ToolCallCard toolCall={entry.item as any} onFileClick={previewFile} />
                   }
                 </div>
               ))}
@@ -683,10 +769,21 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
 
         {/* Input */}
         <div style={{ padding: '12px 24px 16px', borderTop: '1px solid #f0f0f0', background: '#fff' }}>
+          <PendingPlanBanner
+            pendingPlans={pendingPlans}
+            draftPlan={activePlanDraft}
+            open={planPopoverOpen}
+            onOpenChange={setPlanPopoverOpen}
+            onView={focusPlan}
+            onApprove={id => submitDecision(id, 'approved')}
+            onDeny={id => submitDecision(id, 'denied')}
+          />
           <div style={{ maxWidth: 800, margin: '0 auto', display: 'flex', gap: 10, alignItems: 'flex-end' }}>
             <Input.TextArea value={input} onChange={e => setInput(e.target.value)}
               onPressEnter={e => { if (!e.shiftKey) { e.preventDefault(); handleSend() } }}
-              placeholder="Send a message..." autoSize={{ minRows: 1, maxRows: 6 }}
+              placeholder={composerPlaceholder}
+              className={latestPendingPlan ? 'dataclaw-plan-feedback-composer' : undefined}
+              autoSize={{ minRows: 1, maxRows: 6 }}
               style={{ borderRadius: 10 }} disabled={isRunning} />
             {isRunning ? (
               <Button danger icon={<StopOutlined />} onClick={() => {
@@ -712,18 +809,39 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
 
       {/* Sidebar: Plans + Files — resizable + collapsible */}
       {showSidebar && (
-        <div style={{ display: 'flex', flexShrink: 0 }}>
+        <div style={{
+          display: 'flex',
+          flexShrink: 0,
+          ...(planSidebarOverlay ? {
+            position: 'absolute',
+            top: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 20,
+            boxShadow: '-18px 0 42px rgba(15, 23, 42, 0.16)',
+          } : {}),
+        }}>
           {/* Resize handle */}
-          <div onMouseDown={startResize} style={{
-            width: 4, cursor: 'col-resize', background: 'transparent', flexShrink: 0,
-            borderLeft: '1px solid #f0f0f0',
-          }}
-            onMouseEnter={e => (e.currentTarget.style.background = '#ddd')}
-            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-          />
-        <div style={{ width: sidebarCollapsed ? 36 : sidebarWidth, overflow: 'auto', background: '#fafafa', transition: sidebarCollapsed ? 'width 0.2s' : 'none', position: 'relative' }}>
+          {!planSidebarOverlay && (
+            <div onMouseDown={startResize} style={{
+              width: 4, cursor: 'col-resize', background: 'transparent', flexShrink: 0,
+              borderLeft: '1px solid #f0f0f0',
+            }}
+              onMouseEnter={e => (e.currentTarget.style.background = '#ddd')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+            />
+          )}
+        <div style={{
+          width: sidebarPanelWidth,
+          overflow: 'auto',
+          background: '#fafafa',
+          transition: sidebarCollapsed || planSidebarOverlay ? 'width 0.2s' : 'none',
+          position: 'relative',
+          height: planSidebarOverlay ? '100%' : undefined,
+          borderLeft: planSidebarOverlay ? '1px solid #eaecf0' : undefined,
+        }}>
           {/* Collapse toggle */}
-          <div onClick={() => setSidebarCollapsed(!sidebarCollapsed)} style={{
+          <div onClick={() => { setPlanReaderExpanded(false); setSidebarCollapsed(!sidebarCollapsed) }} style={{
             position: 'absolute', top: 8, right: 8, cursor: 'pointer', fontSize: 11, color: '#999', zIndex: 1,
             padding: '2px 6px', borderRadius: 4, background: '#f0f0f0',
           }}>{sidebarCollapsed ? '◀' : '▶'}</div>
@@ -740,13 +858,13 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
               }}>Plans</div>
             )}
             {showFilesSidebar && (
-              <div onClick={() => setSidebarTab('files')} style={{
+              <div onClick={() => { setPlanReaderExpanded(false); setSidebarTab('files') }} style={{
                 flex: 1, padding: '8px 12px', textAlign: 'center', cursor: 'pointer', fontSize: 12, fontWeight: 600,
                 color: sidebarTab === 'files' ? '#1677ff' : '#999',
                 borderBottom: sidebarTab === 'files' ? '2px solid #1677ff' : '2px solid transparent',
               }}>Files</div>
             )}
-            <div onClick={() => setSidebarTab('app')} style={{
+            <div onClick={() => { setPlanReaderExpanded(false); setSidebarTab('app') }} style={{
               flex: 1, padding: '8px 12px', textAlign: 'center', cursor: 'pointer', fontSize: 12, fontWeight: 600,
               color: sidebarTab === 'app' ? '#1677ff' : '#999',
               borderBottom: sidebarTab === 'app' ? '2px solid #1677ff' : '2px solid transparent',
@@ -754,61 +872,12 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
           </div>
 
           <div style={{ padding: 12 }}>
-            {/* Plans tab */}
+            {/* Plans tab — read-only companion view; decisions live in the plan card */}
             {sidebarTab === 'plans' && showPlansSidebar && (
-              <Collapse size="small" activeKey={expandedPlanKeys} onChange={keys => setExpandedPlanKeys(keys as string[])}
-                items={plans.map(plan => ({
-                  key: plan.id,
-                  label: (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span style={{ fontWeight: 500, fontSize: 13 }}>{plan.name}</span>
-                      <PlanStatusTag status={plan.status} />
-                    </div>
-                  ),
-                  children: (
-                    <div style={{ fontSize: 12 }}>
-                      {plan.steps?.map((step: any, i: number) => (
-                        <div key={i} style={{ padding: '4px 0', borderBottom: '1px solid #eee' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <StepStatusIcon status={step.status} />
-                            <span style={{ fontWeight: 500 }}>{step.name}</span>
-                          </div>
-                          {step.description && <div style={{ color: '#888', marginTop: 2, paddingLeft: 18, fontSize: 11 }}>{step.description}</div>}
-                          {step.summary && <div style={{ color: '#666', marginTop: 2, paddingLeft: 18 }}>{step.summary}</div>}
-                          {step.outputs?.length > 0 && (
-                            <div style={{ paddingLeft: 18, marginTop: 2, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                              {step.outputs.map((p: string, j: number) => (
-                                <span key={j} onClick={() => previewFile(p)} style={{
-                                  cursor: 'pointer', color: '#1677ff', fontSize: 10,
-                                  background: '#f0f5ff', padding: '1px 6px', borderRadius: 3,
-                                }}>{p.split('/').pop()}</span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                      {plan.progress_summary && (
-                        <div style={{ marginTop: 8, padding: 6, background: '#f0f5ff', borderRadius: 4, fontSize: 11 }}>{plan.progress_summary}</div>
-                      )}
-                      {plan.status === 'pending' && (
-                        <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
-                          <Button size="small" type="primary" onClick={() => submitDecision(plan.id, 'approved')}>Approve</Button>
-                          <Button size="small" onClick={() => { setFeedbackModal(plan.id); setFeedbackText('') }}>Suggest Edits</Button>
-                          <Button size="small" danger onClick={() => submitDecision(plan.id, 'denied')}>Deny</Button>
-                        </div>
-                      )}
-                      {plan.feedback && <div style={{ marginTop: 6, fontSize: 11, color: '#888' }}>Feedback: {plan.feedback}</div>}
-                      {plan.mlflow_experiment_id && activeSessionId && (
-                        <Button size="small" icon={<ExperimentOutlined />}
-                          style={{ marginTop: 8, fontSize: 11 }}
-                          onClick={() => openMlflowModal(activeSessionId!)}>
-                          View Experiments
-                        </Button>
-                      )}
-                    </div>
-                  ),
-                }))}
-              />
+              <PlanPanel plans={plans} focusedPlan={focusedPlan} onFileClick={previewFile}
+                expanded={planReaderExpanded}
+                onExpandedChange={setPlanReaderExpanded}
+                onViewExperiments={activeSessionId ? () => openMlflowModal(activeSessionId) : undefined} />
             )}
 
             {/* Files tab */}
@@ -887,14 +956,6 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
         {promptDraft && (
           <Button size="small" style={{ marginTop: 8 }} onClick={() => setPromptDraft('')}>Clear</Button>
         )}
-      </Modal>
-
-      {/* Feedback modal */}
-      <Modal title="Suggest Edits" open={!!feedbackModal} onCancel={() => setFeedbackModal(null)}
-        onOk={() => { submitDecision(feedbackModal!, 'changes_requested', feedbackText); setFeedbackModal(null) }}
-        okText="Submit Feedback">
-        <Input.TextArea value={feedbackText} onChange={e => setFeedbackText(e.target.value)}
-          rows={4} placeholder="Describe what should be changed..." />
       </Modal>
 
       {/* Auto message editor modal */}
@@ -1065,7 +1126,17 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
         </div>
       </Modal>
     </div>
+    </PlansContext.Provider>
   )
+}
+
+function isPlanApprovalRecap(content: string): boolean {
+  const text = content.trim().toLowerCase()
+  if (!text) return false
+  const mentionsApproval = /waiting on your approval|awaiting your approval|awaiting approval|approve it and/.test(text)
+  const mentionsPlanSteps = /plan'?s submitted|plan submitted|steps:/.test(text)
+  const mentionsRetarget = /retarget before executing|narrower in mind|before executing/.test(text)
+  return mentionsApproval && (mentionsPlanSteps || mentionsRetarget)
 }
 
 function MessageBubble({ message, onFileClick }: { message: AGUIMessage; onFileClick?: (path: string) => void }) {
@@ -1122,21 +1193,6 @@ function CompactionDivider({ message }: { message: AGUIMessage }) {
       )}
     </div>
   )
-}
-
-function PlanStatusTag({ status }: { status: string }) {
-  const colors: Record<string, string> = {
-    pending: 'orange', approved: 'blue', running: 'processing', completed: 'green', denied: 'red', changes_requested: 'purple',
-  }
-  return <Tag color={colors[status] || 'default'} style={{ fontSize: 10 }}>{status}</Tag>
-}
-
-function StepStatusIcon({ status }: { status: string }) {
-  if (status === 'completed') return <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 12 }} />
-  if (status === 'in_progress') return <ClockCircleOutlined style={{ color: '#1677ff', fontSize: 12 }} />
-  if (status === 'error') return <CloseCircleOutlined style={{ color: '#ff4d4f', fontSize: 12 }} />
-  if (status === 'blocked') return <CloseCircleOutlined style={{ color: '#faad14', fontSize: 12 }} />
-  return <span style={{ width: 12, height: 12, borderRadius: '50%', border: '1px solid #d9d9d9', display: 'inline-block' }} />
 }
 
 function ChatFileTree({ items, depth, onPreview }: { items: any[]; depth: number; onPreview?: (path: string, name: string) => void }) {

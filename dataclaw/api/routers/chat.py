@@ -8,9 +8,11 @@ This allows reconnection, cancellation, and message queuing.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -35,6 +37,126 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 agent_router = APIRouter()
+
+APP_CELL_OUTPUT_TOOLS = {"execute_cell", "display_cell_output", "execute_code"}
+APP_REPORT_TOOLS = {"build_report", "report_add_section"}
+
+
+def _stable_app_payload_key(payload: Any) -> str:
+    raw = json.dumps(payload, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _extract_visual_artifacts(
+    *,
+    tool_name: str,
+    tool_call_id: str,
+    tool_input: dict[str, Any],
+    result: Any,
+) -> list[dict[str, Any]]:
+    """Normalize visual tool results into session App artifacts.
+
+    Notebook cells remain the compute/reproducibility layer. These artifacts
+    are the presentation contract consumed by the App panel and publish route.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    artifacts: list[dict[str, Any]] = []
+
+    if tool_name == "display_metric" and isinstance(result, dict) and result.get("type") == "metric":
+        payload = {
+            "label": result.get("label", ""),
+            "value": result.get("value", ""),
+            "delta": result.get("delta", ""),
+            "unit": result.get("unit", ""),
+            "trend": result.get("trend", ""),
+        }
+        key = _stable_app_payload_key({"kind": "metric", "payload": payload})
+        artifacts.append({
+            "id": f"metric-{key}",
+            "kind": "metric",
+            "metric": payload,
+            "source_tool_call_id": tool_call_id,
+            "source_tool_name": tool_name,
+            "created_at": now,
+        })
+        return artifacts
+
+    if tool_name not in APP_CELL_OUTPUT_TOOLS or not isinstance(result, dict):
+        if tool_name in APP_REPORT_TOOLS and isinstance(result, dict) and result.get("html_path"):
+            key = _stable_app_payload_key({"kind": "report", "html_path": result.get("html_path")})
+            artifacts.append({
+                "id": f"report-{key}",
+                "kind": "report",
+                "html_path": result.get("html_path"),
+                "title": result.get("title") or result.get("html_path", "Report").split("/")[-1],
+                "source_tool_call_id": tool_call_id,
+                "source_tool_name": tool_name,
+                "created_at": now,
+                "updated_at": now,
+            })
+        return artifacts
+
+    caption = result.get("caption") if isinstance(result.get("caption"), str) else ""
+    cell_index = result.get("cell_index")
+    outputs = result.get("outputs")
+    if not isinstance(outputs, list):
+        return artifacts
+
+    for out in outputs:
+        if not isinstance(out, dict) or out.get("type") != "plotly" or not out.get("figure"):
+            continue
+        figure = out["figure"]
+        key = _stable_app_payload_key({
+            "kind": "chart",
+            "figure_data": figure.get("data") if isinstance(figure, dict) else figure,
+        })
+        artifact: dict[str, Any] = {
+            "id": f"chart-{key}",
+            "kind": "chart",
+            "figure": figure,
+            "caption": caption,
+            "source_tool_call_id": tool_call_id,
+            "source_tool_name": tool_name,
+            "created_at": now,
+        }
+        if cell_index is not None:
+            artifact["cell_index"] = cell_index
+        if "cell_index" in tool_input:
+            artifact["source_cell_index"] = tool_input.get("cell_index")
+        artifacts.append(artifact)
+
+    return artifacts
+
+
+async def _append_visual_artifacts(
+    session_id: str,
+    artifacts: list[dict[str, Any]],
+) -> None:
+    if not artifacts:
+        return
+    session = await sessions.get_session(session_id)
+    if session is None:
+        return
+
+    existing = list(session.get("visualArtifacts") or [])
+    by_id = {a.get("id"): a for a in existing if isinstance(a, dict)}
+    order = [a.get("id") for a in existing if isinstance(a, dict)]
+
+    for artifact in artifacts:
+        artifact_id = artifact.get("id")
+        if not artifact_id:
+            continue
+        current = by_id.get(artifact_id)
+        if current:
+            if artifact.get("caption") and not current.get("caption"):
+                current["caption"] = artifact["caption"]
+            current["updated_at"] = artifact.get("created_at")
+        else:
+            by_id[artifact_id] = artifact
+            order.append(artifact_id)
+
+    merged = [by_id[i] for i in order if i in by_id]
+    await sessions.update_session(session_id, {"visualArtifacts": merged})
 
 
 # ── Agent Background Task ──────────────────────────────────────────────────
@@ -440,6 +562,15 @@ async def _run_agent_loop(
                         if llm_view_json != result_json:
                             msg_record["result_for_llm"] = llm_view_json
                         await sessions.append_message(thread_id, msg_record)
+                        await _append_visual_artifacts(
+                            thread_id,
+                            _extract_visual_artifacts(
+                                tool_name=tc.tool_name,
+                                tool_call_id=tc.call_id,
+                                tool_input=tc.tool_input,
+                                result=result,
+                            ),
+                        )
                     except Exception as e:
                         logger.exception("Tool %s failed", tc.tool_name)
                         results_list.append({})
@@ -1018,14 +1149,97 @@ class IncomingMessage(BaseModel):
     role: str = "assistant"
     content: str = ""
     messageId: str | None = None
+    toolCallId: str | None = None
+    toolName: str | None = None
+    args: Any | None = None
+    result: Any | None = None
+    result_for_llm: str | None = None
+    status: str | None = None
 
 
 @router.post("/sessions/{session_id}/message")
 async def receive_message(session_id: str, msg: IncomingMessage) -> dict[str, Any]:
     """Persist a message to a session. Used by OpenClaw's fire-and-forget callback."""
-    await sessions.append_message(session_id, {
-        "role": msg.role,
-        "content": msg.content,
-        **({"messageId": msg.messageId} if msg.messageId else {}),
-    })
+    message_id = msg.messageId or f"msg-{uuid.uuid4()}"
+
+    existing = await sessions.get_session(session_id)
+    if existing and any(m.get("messageId") == message_id for m in existing.get("messages", [])):
+        return {"ok": True, "duplicate": True}
+
+    record: dict[str, Any]
+    if msg.role == "tool_call":
+        tool_call_id = msg.toolCallId or message_id
+        tool_name = _normalize_openclaw_tool_name(msg.toolName or "unknown")
+        args_text = _json_text(msg.args if msg.args is not None else {})
+        result_text = _json_text(msg.result if msg.result is not None else msg.content)
+        try:
+            parsed_args = json.loads(args_text) if args_text else {}
+        except Exception:
+            parsed_args = {}
+        try:
+            parsed_result = json.loads(result_text) if result_text else result_text
+        except Exception:
+            parsed_result = result_text
+        result_for_llm = msg.result_for_llm or _json_text(redact_for_llm(parsed_result))
+        record = {
+            "role": "tool_call",
+            "messageId": message_id,
+            "toolCallId": tool_call_id,
+            "toolName": tool_name,
+            "args": args_text,
+            "result": result_text,
+            "result_for_llm": result_for_llm,
+            "status": msg.status or "complete",
+        }
+        await sessions.append_message(session_id, record)
+
+        await _append_visual_artifacts(
+            session_id,
+            _extract_visual_artifacts(
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+                tool_input=parsed_args if isinstance(parsed_args, dict) else {},
+                result=parsed_result,
+            ),
+        )
+        _emit_external_tool_call(session_id, record)
+    else:
+        record = {
+            "role": msg.role,
+            "content": msg.content,
+            "messageId": message_id,
+        }
+        await sessions.append_message(session_id, record)
     return {"ok": True}
+
+
+def _json_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, default=str)
+
+
+def _normalize_openclaw_tool_name(tool_name: str) -> str:
+    return tool_name.removeprefix("dataclaw_")
+
+
+def _emit_external_tool_call(session_id: str, record: dict[str, Any]) -> None:
+    tracker = get_run_tracker()
+    run = tracker.get_run(session_id)
+    if run is None:
+        return
+
+    emitter = AgentEventEmitter(session_id, run.run_id)
+    tool_call_id = record.get("toolCallId") or record.get("messageId") or str(uuid.uuid4())
+    tool_name = record.get("toolName") or "unknown"
+    tracker.append_event(session_id, emitter.tool_call_start(tool_call_id, tool_name))
+    tracker.append_event(session_id, emitter.tool_call_args(tool_call_id, record.get("args") or "{}"))
+    tracker.append_event(session_id, emitter.tool_call_end(tool_call_id))
+    tracker.append_event(
+        session_id,
+        emitter.tool_call_result(
+            tool_call_id,
+            record.get("result") or "",
+            f"result-{tool_call_id}",
+        ),
+    )

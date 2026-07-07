@@ -11,6 +11,7 @@ from dataclaw_workspace.tools import (
     ws_update_file,
     ws_exec,
     display_image,
+    report_add_section,
     _base_dir,
 )
 
@@ -153,3 +154,30 @@ async def test_display_image_bad_format(cfg):
     (base / "file.txt").write_text("not an image")
     with pytest.raises(ValueError, match="Unsupported"):
         await display_image(cfg=cfg, path="file.txt")
+
+
+@pytest.mark.asyncio
+async def test_report_add_section_builds_live_html_report(cfg):
+    header = await report_add_section(
+        cfg=cfg,
+        section_type="header",
+        report_path="reports/live.html",
+        title="Live Report",
+        data={"title": "World Cup Analysis", "subtitle": "A visual report"},
+    )
+    assert header["type"] == "report"
+    assert header["updated"] is True
+
+    await report_add_section(
+        cfg=cfg,
+        section_type="metric_row",
+        report_path="reports/live.html",
+        data={"metrics": [{"label": "Rows", "value": "54,600"}]},
+    )
+
+    report_path = Path(header["html_path"])
+    html = report_path.read_text()
+    assert "World Cup Analysis" in html
+    assert "Rows" in html
+    assert "54,600" in html
+    assert "DATACLAW_REPORT_SECTIONS_START" in html

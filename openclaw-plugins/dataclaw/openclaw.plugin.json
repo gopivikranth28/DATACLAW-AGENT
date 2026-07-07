@@ -102,6 +102,7 @@
       "dataclaw_ws_exec",
       "dataclaw_display_image",
       "dataclaw_build_report",
+      "dataclaw_report_add_section",
       "dataclaw_list_subagents",
       "dataclaw_delegate_to_subagent",
       "dataclaw_propose_plan",
@@ -121,7 +122,8 @@
       "dataclaw_delete_cells",
       "dataclaw_execute_cell",
       "dataclaw_execute_code",
-      "dataclaw_display_cell_output"
+      "dataclaw_display_cell_output",
+      "dataclaw_display_metric"
     ]
   }
 }
