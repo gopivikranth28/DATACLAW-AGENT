@@ -63,15 +63,27 @@ body.panel-open .chip.plan{border-color:var(--accent);background:var(--accent-so
 .umsg:hover .tools{display:flex}
 .umsg .tools button{padding:3px 8px;border-radius:5px;color:var(--muted)}
 .umsg .tools button:hover{background:var(--bg-soft);color:var(--ink)}
-.amsg{margin:10px 0 4px;font-size:14.5px;line-height:1.65;max-width:76ch}
-.amsg p{margin:0 0 10px}
-.amsg b{font-weight:650}
+/* narrative = markdown cells on the shared notebook rail */
+.cell.md{margin:12px 0 6px}
+.cell.md .gut::before{content:"md";opacity:.55}
+.cell.md .body{border:none;border-left:3px solid var(--line-soft);border-radius:0;background:transparent;padding:2px 16px;font-size:14.5px;line-height:1.65;max-width:76ch}
+.cell.md .body p{margin:0 0 10px}
+.cell.md .body p:last-child{margin-bottom:0}
+.cell.md .body h4{font-size:15px;font-weight:650;letter-spacing:-.01em;margin:0 0 8px}
+.cell.md .body ul{margin:6px 0 10px;padding-left:20px}
+.cell.md .body li{margin:4px 0}
+.cell.md .body b{font-weight:650}
+.mdc{font-family:var(--mono);font-size:.85em;background:var(--bg-soft);border:1px solid var(--line-soft);padding:1px 5px;border-radius:4px}
+/* queued ghost bubbles in the transcript */
+.umsg.queued .bubble{background:var(--accent-soft);color:var(--ink);border:1.5px dashed #9db8e8}
+.umsg.queued .qtag{display:block;font:700 9.5px var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--warn);margin-bottom:3px}
+.tools button{display:inline-flex;align-items:center;gap:4px}
 .sysline{display:flex;justify-content:center;margin:16px 0}
 .sysline span{font-size:11.5px;color:var(--faint);background:var(--bg-soft);border:1px solid var(--line-soft);border-radius:999px;padding:4px 14px}
 .sysline .ok{color:var(--good);margin-right:4px}
 
 /* ============ activity log (turn-grouped) ============ */
-.act{margin:6px 0 14px;max-width:860px}
+.act{margin:6px 0 14px 70px;max-width:860px}
 .act-head{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);padding:5px 8px 5px 4px;border-radius:8px;user-select:none;width:100%;text-align:left}
 .act-head:hover{background:var(--bg-soft)}
 .act-head .chev{font-size:9px;color:var(--faint);transition:transform .15s;width:10px}
@@ -162,10 +174,19 @@ table.df .foot a{color:var(--accent);text-decoration:none}
 /* ============ right panel ============ */
 .panel{width:0;overflow:hidden;flex-shrink:0;border-left:1px solid transparent;background:var(--bg);transition:width .18s ease;display:flex;flex-direction:column}
 body.panel-open .panel{width:400px;border-left-color:var(--line)}
-.panel-tabs{display:flex;border-bottom:1px solid var(--line);flex-shrink:0}
-.panel-tabs button{flex:1;padding:10px;font-size:12.5px;font-weight:600;color:var(--faint);border-bottom:2px solid transparent}
-.panel-tabs button.on{color:var(--accent);border-bottom-color:var(--accent)}
-.panel-tabs .close{flex:0 0 40px;font-weight:400;color:var(--faint);font-size:14px}
+.panel-head{display:flex;align-items:center;gap:8px;padding:9px 16px;border-bottom:1px solid var(--line);flex-shrink:0}
+.panel-head .panel-title{font-size:12.5px;font-weight:600}
+.panel-head .close{margin-left:auto;color:var(--faint);font-size:13px;padding:2px 6px;border-radius:6px}
+.panel-head .close:hover{background:var(--bg-soft);color:var(--ink)}
+/* edge rail: Plans/Files/Reports always visible */
+.edge{width:46px;flex-shrink:0;border-left:1px solid var(--line);background:var(--bg);display:flex;flex-direction:column;gap:8px;padding:12px 6px;align-items:center}
+.etab{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 3px 12px;border-radius:9px;color:var(--faint);width:34px;position:relative}
+.etab:hover{background:var(--bg-soft);color:var(--ink)}
+body.panel-open .etab.on{color:var(--accent);background:var(--accent-soft)}
+.etab .eico{font-size:13px}
+.etab .elb{writing-mode:vertical-rl;font-size:10px;font-weight:600;letter-spacing:.05em}
+.etab .edot{position:absolute;top:5px;right:5px;width:6px;height:6px;border-radius:50%;background:var(--good)}
+.etab .ecount{position:absolute;top:3px;right:3px;min-width:13px;height:13px;border-radius:7px;background:var(--accent);color:#fff;font:600 9px/13px var(--mono);text-align:center;padding:0 2px}
 .panel-scroll{flex:1;overflow-y:auto;padding:14px 18px}
 .ptab{display:none}.ptab.on{display:block}
 .plan-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px}
@@ -205,26 +226,47 @@ body.notes .notes-drawer{display:block}
 .hint-chip .x:hover{color:#fff}
 .toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:70;background:var(--rail);color:#fff;font-size:12.5px;border-radius:10px;padding:9px 16px;box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:opacity .2s}
 .toast.show{opacity:1}
+/* line icons (AntD-outline style), inherit currentColor */
+.svgi{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.tools .svgi, .btn .svgi{width:12px;height:12px}
+.ftree .svgi{width:12px;height:12px;vertical-align:-2px;margin-right:6px}
+.etab .svgi{width:15px;height:15px}
 </style>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+<symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/></symbol>
+<symbol id="i-team" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+<symbol id="i-tool" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></symbol>
+<symbol id="i-bulb" viewBox="0 0 24 24"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.4 1 2.3h6c0-.9.4-1.8 1-2.3A7 7 0 0 0 12 2z"/></symbol>
+<symbol id="i-flask" viewBox="0 0 24 24"><path d="M10 2v6L4.5 18a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 8V2"/><path d="M8.5 2h7"/><path d="M7 15h10"/></symbol>
+<symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1"/></symbol>
+<symbol id="i-doc" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></symbol>
+<symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></symbol>
+<symbol id="i-folder" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></symbol>
+<symbol id="i-book" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></symbol>
+<symbol id="i-chart" viewBox="0 0 24 24"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></symbol>
+<symbol id="i-pencil" viewBox="0 0 24 24"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></symbol>
+<symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5"/></symbol>
+</defs></svg>
 
 <div class="app">
   <!-- left rail: the ONLY nav (project tab bar removed) -->
   <nav class="rail" style="position:relative">
     <span class="badge" style="top:10px;right:6px">8</span>
-    <div class="logo">🦀 Dataclaw <span class="mock">MOCK</span></div>
+    <div class="logo">Dataclaw <span class="mock">MOCK</span></div>
     <div class="group">Projects</div>
     <a href="#" class="sub">test</a>
     <a href="#" class="sub" style="color:var(--rail-ink)">New Chat</a>
     <a href="#" class="sub">＋ New Project</a>
     <div class="group">Workspace</div>
-    <a href="#" class="on"><span class="ico">💬</span> Chat</a>
-    <a href="#"><span class="ico">🗄</span> Data</a>
-    <a href="#"><span class="ico">👥</span> Subagents</a>
-    <a href="#"><span class="ico">🔧</span> Tools</a>
-    <a href="#"><span class="ico">💡</span> Skills</a>
-    <a href="#"><span class="ico">🧪</span> Experiments</a>
+    <a href="#" class="on"><svg class="svgi"><use href="#i-chat"/></svg> Chat</a>
+    <a href="#"><svg class="svgi"><use href="#i-db"/></svg> Data</a>
+    <a href="#"><svg class="svgi"><use href="#i-team"/></svg> Subagents</a>
+    <a href="#"><svg class="svgi"><use href="#i-tool"/></svg> Tools</a>
+    <a href="#"><svg class="svgi"><use href="#i-bulb"/></svg> Skills</a>
+    <a href="#"><svg class="svgi"><use href="#i-flask"/></svg> Experiments</a>
     <div style="flex:1"></div>
-    <a href="#"><span class="ico">⚙️</span> Config</a>
+    <a href="#"><svg class="svgi"><use href="#i-gear"/></svg> Config</a>
   </nav>
 
   <div class="main">
@@ -254,13 +296,15 @@ body.notes .notes-drawer{display:block}
             <div class="umsg">
               <div class="tools" role="toolbar">
                 <button class="fork">⑂ Fork from here</button>
-                <button>✏️ Edit</button>
+                <button><svg class="svgi"><use href="#i-pencil"/></svg> Edit</button>
               </div>
               <div class="bubble" style="position:relative"><span class="badge" style="top:-8px;left:-26px">5</span>which team has the best team composition?</div>
             </div>
 
             <!-- assistant turn 1 -->
-            <div class="amsg"><p>I'll rank all 48 squads on a composite <b>Team Composition Index</b> — positional-line strength, squad balance, starting-XI quality, bench depth, and age profile — then profile the winner. Submitting a plan for review first.</p></div>
+            <div class="cell md"><div class="gut"></div><div class="body">
+              <p>I'll rank all 48 squads on a composite <b>Team Composition Index</b> — positional-line strength, squad balance, starting-XI quality, bench depth, and age profile — then profile the winner. Submitting a plan for review first.</p>
+            </div></div>
             <div class="act" style="position:relative">
               <span class="badge" style="top:2px;left:-24px">1</span>
               <button class="act-head"><span class="chev">▶</span><span class="sum">Planned</span><span class="meta">3 steps · 12s</span></button>
@@ -274,7 +318,9 @@ body.notes .notes-drawer{display:block}
             <div class="sysline"><span><span class="ok">✓</span> Plan approved · rev 1 · 8:57 AM</span></div>
 
             <!-- assistant turn 2: the work turn -->
-            <div class="amsg"><p>Building player ratings and line strengths, then the composite index.</p></div>
+            <div class="cell md"><div class="gut"></div><div class="body">
+              <p>Building player ratings and line strengths, then the composite index.</p>
+            </div></div>
             <div class="act open">
               <button class="act-head"><span class="chev">▶</span><span class="sum">Worked</span><span class="meta">14 steps · 4m 32s ·</span><span class="err-note">1 error fixed</span></button>
               <div class="act-body">
@@ -415,13 +461,21 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
               </div>
             </div>
 
-            <div class="amsg"><p><b>Netherlands</b> has the best overall composition — TCI <b>81.9</b>, and it holds #1 or #2 under every weighting tested. Its starting XI (88.2) pairs with the deepest bench in the field; the nearest rival is <b>Panama</b> at 79.4, driven by balance rather than star power. The full method is in the plan, and the ranking covers all 48 teams.</p></div>
+            <div class="cell md"><div class="gut"></div><div class="body">
+              <h4>Netherlands has the best team composition — TCI 81.9</h4>
+              <ul>
+                <li>Holds <b>#1 or #2 under every weighting tested</b> (±50% on each component).</li>
+                <li>Starting XI <b>88.2</b> pairs with the deepest bench in the field (<b>86.3</b>) — and no weak line.</li>
+                <li>Nearest rival is <b>Panama (79.4)</b>, driven by balance rather than star power.</li>
+              </ul>
+              <p>Method and weights are in the plan; the full 48-team ranking is in <span class="mdc">outputs/tci_rankings.parquet</span>.</p>
+            </div></div>
 
             <!-- user turn 2 -->
             <div class="umsg">
               <div class="tools" role="toolbar">
                 <button class="fork">⑂ Fork from here</button>
-                <button>✏️ Edit</button>
+                <button><svg class="svgi"><use href="#i-pencil"/></svg> Edit</button>
               </div>
               <div class="bubble">how sensitive is the ranking to the weights?</div>
             </div>
@@ -436,20 +490,34 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
               </div>
             </div>
 
+            <!-- queued messages live in the transcript, in dispatch order -->
+            <div class="umsg queued" style="position:relative">
+              <span class="badge" style="top:-8px;left:-26px">4</span>
+              <div class="tools" role="toolbar">
+                <button><svg class="svgi"><use href="#i-pencil"/></svg> Edit</button>
+                <button class="unqueue">× Remove</button>
+              </div>
+              <div class="bubble"><span class="qtag">Queued · next</span>Also chart the age curves for the top-5 squads</div>
+            </div>
+            <div class="umsg queued">
+              <div class="tools" role="toolbar">
+                <button class="bump">⬆ Send next</button>
+                <button><svg class="svgi"><use href="#i-pencil"/></svg> Edit</button>
+                <button class="unqueue">× Remove</button>
+              </div>
+              <div class="bubble"><span class="qtag">Queued · 2nd</span>And flag any top-10 team whose rank flips under ±25% weight changes</div>
+            </div>
+
             <div style="height:8px"></div>
           </div>
         </div>
 
-        <!-- composer: enabled while running, queues -->
+        <!-- composer: enabled while running, queues into the thread -->
         <div class="composer" style="position:relative">
-          <span class="badge" style="top:-9px;left:24px">4</span>
           <div class="composer-in">
-            <div class="queue">
-              <span class="qchip"><span class="tag">Queued</span> "Also chart the age curves for the top-5 squads" <button class="x" aria-label="Remove queued message">×</button></span>
-            </div>
             <div class="crow">
               <div class="cbox">Message Dataclaw — sends when the current run finishes…</div>
-              <button class="btn stop">⏹ Stop</button>
+              <button class="btn stop"><svg class="svgi"><use href="#i-stop"/></svg> Stop</button>
               <button class="btn primary">Queue ↵</button>
             </div>
             <div class="chint">⏎ queue · ⇧⏎ newline · plan feedback goes here too when a plan is pending</div>
@@ -459,10 +527,8 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
 
       <!-- right panel: read-only home for plans / files / reports -->
       <aside class="panel" aria-label="Session panel">
-        <div class="panel-tabs">
-          <button class="on" data-tab="plans">Plans</button>
-          <button data-tab="files">Files</button>
-          <button data-tab="reports">Reports</button>
+        <div class="panel-head">
+          <span class="panel-title" id="panelTitle">Plans</span>
           <button class="close" id="panelClose" aria-label="Close panel">✕</button>
         </div>
         <div class="panel-scroll">
@@ -523,14 +589,14 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
           </div>
           <div class="ptab" id="tab-files">
             <div class="ftree">
-              <div>📓 notebook.ipynb <span class="sz">11 cells</span></div>
-              <div>📄 plan.md <span class="sz">4.2K</span></div>
-              <div class="dir">📁 data/</div>
+              <div><svg class="svgi"><use href="#i-book"/></svg>notebook.ipynb <span class="sz">11 cells</span></div>
+              <div><svg class="svgi"><use href="#i-file"/></svg>plan.md <span class="sz">4.2K</span></div>
+              <div class="dir"><svg class="svgi"><use href="#i-folder"/></svg>data/</div>
               <div class="d1">fifa_world_cup_2026_player_performance.csv <span class="sz">18.4M</span></div>
-              <div class="dir">📁 outputs/</div>
+              <div class="dir"><svg class="svgi"><use href="#i-folder"/></svg>outputs/</div>
               <div class="d1">tci_rankings.parquet <span class="sz">21K</span></div>
               <div class="d1">wc26_composition_ranking.png <span class="sz">184K</span></div>
-              <div class="dir">📁 reports/</div>
+              <div class="dir"><svg class="svgi"><use href="#i-folder"/></svg>reports/</div>
               <div class="d1">wc26_composition.html <span class="sz">96K</span></div>
             </div>
             <div class="panel-hint">Workspace for this session. Click any file to preview; heavy outputs live here instead of inside the transcript.</div>
@@ -545,6 +611,14 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
           </div>
         </div>
       </aside>
+
+      <!-- edge rail: panel tabs, always visible -->
+      <nav class="edge" aria-label="Session panel tabs" style="position:relative">
+        <span class="badge" style="top:-4px;left:-4px">8</span>
+        <button class="etab on" data-tab="plans" title="Plans"><span class="edot"></span><svg class="svgi"><use href="#i-doc"/></svg><span class="elb">Plans</span></button>
+        <button class="etab" data-tab="files" title="Files"><svg class="svgi"><use href="#i-folder"/></svg><span class="elb">Files</span></button>
+        <button class="etab" data-tab="reports" title="Reports"><span class="ecount">1</span><svg class="svgi"><use href="#i-chart"/></svg><span class="elb">Reports</span></button>
+      </nav>
     </div>
   </div>
 </div>
@@ -554,13 +628,13 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
   <h4>What changed & why</h4>
   <ol>
     <li><span class="n">1</span><span><b>Turn-grouped activity log</b> (Codex) with one-line steps that expand in place (Claude). Success is monochrome — only the fixed error wears color. Collapsed, a 14-step turn costs one line.</span></li>
-    <li><span class="n">2</span><span><b>Notebook feeling, kept — inside chat.</b> Evidence renders as light cells with an <b>Out [n]</b> gutter linking to the notebook. No embedded notebook documents, no dark-on-light code islands, heights capped — full outputs open from Files.</span></li>
+    <li><span class="n">2</span><span><b>Notebook feeling, kept — inside chat.</b> Narrative renders as <b>md</b> cells and evidence as <b>Out [n]</b> cells on one shared gutter rail, with real markdown formatting (headings, lists, inline code). No embedded notebook documents, heights capped — full outputs open from Files.</span></li>
     <li><span class="n">3</span><span><b>One plan entry point.</b> The status pill replaces the banner, popover, and auto-focus choreography. Click → read-only doc on the right; approvals and feedback stay in the composer (act left, read right).</span></li>
-    <li><span class="n">4</span><span><b>Queue composer.</b> Typing is never disabled; messages sent mid-run stack as queued chips. Stop sits beside Queue.</span></li>
+    <li><span class="n">4</span><span><b>Queue in the thread.</b> Typing is never disabled; messages sent mid-run join the transcript as ordered ghost bubbles — edit, remove, or bump them until they dispatch in order as runs finish.</span></li>
     <li><span class="n">5</span><span><b>Fork from any message</b> (hover) → branches the session; the header chip shows the current branch.</span></li>
     <li><span class="n">6</span><span><b>Scope chips folded</b> into one control; it shows counts only when something is restricted.</span></li>
     <li><span class="n">7</span><span><b>Console maximized:</b> 1000px column, one row of chrome, standalone-alert removed.</span></li>
-    <li><span class="n">8</span><span><b>One nav.</b> The project tab bar is merged into the left rail (Files/Experiments included); the right panel opens at zero width until it has something to show.</span></li>
+    <li><span class="n">8</span><span><b>One nav, persistent panel tabs.</b> The project tab bar merges into the left rail; Plans / Files / Reports stay visible as a slim edge rail on the right at all times — panel content opens on demand.</span></li>
   </ol>
 </div>
 <div class="hint-chip" id="hintChip"><span>Clickable mock — try the activity headers, step lines, plan pill, hover a user message, and “Design notes” ↘</span><button class="x" aria-label="Dismiss">×</button></div>
@@ -578,19 +652,27 @@ $$('.step.exp').forEach(s=>{
 });
 // code show-all
 $$('.morebtn').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const c=b.closest('.code');c.classList.toggle('full');b.textContent=c.classList.contains('full')?'Collapse':'Show all 38 lines'}));
-// plan pill ↔ panel
-$('#planPill').addEventListener('click',()=>document.body.classList.toggle('panel-open'));
-$('#panelClose').addEventListener('click',()=>document.body.classList.remove('panel-open'));
-// panel tabs
-$$('.panel-tabs button[data-tab]').forEach(b=>b.addEventListener('click',()=>{
-  $$('.panel-tabs button[data-tab]').forEach(x=>x.classList.toggle('on',x===b));
-  $$('.ptab').forEach(t=>t.classList.toggle('on',t.id==='tab-'+b.dataset.tab));
+// edge rail ↔ panel (tabs always visible; content on demand)
+const setTab=t=>{
+  $('#panelTitle').textContent=t[0].toUpperCase()+t.slice(1);
+  $$('.etab').forEach(x=>x.classList.toggle('on',x.dataset.tab===t));
+  $$('.ptab').forEach(p=>p.classList.toggle('on',p.id==='tab-'+t));
+};
+$$('.etab').forEach(b=>b.addEventListener('click',()=>{
+  if(document.body.classList.contains('panel-open')&&b.classList.contains('on')){document.body.classList.remove('panel-open');return}
+  setTab(b.dataset.tab);document.body.classList.add('panel-open');
 }));
+$('#planPill').addEventListener('click',()=>{
+  if(document.body.classList.contains('panel-open')&&$('.etab.on')?.dataset.tab==='plans'){document.body.classList.remove('panel-open');return}
+  setTab('plans');document.body.classList.add('panel-open');
+});
+$('#panelClose').addEventListener('click',()=>document.body.classList.remove('panel-open'));
 // fork toast
 const toast=m=>{const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),2600)};
 $$('.fork').forEach(b=>b.addEventListener('click',()=>toast('⑂ Forked — new session branched from this message (mock)')));
-// queued chip remove
-$$('.qchip .x').forEach(b=>b.addEventListener('click',()=>b.closest('.qchip').remove()));
+// queued messages (live in the transcript, dispatch in order)
+$$('.umsg.queued .unqueue').forEach(b=>b.addEventListener('click',()=>{b.closest('.umsg').remove();toast('Removed from queue (mock)')}));
+$$('.umsg.queued .bump').forEach(b=>b.addEventListener('click',()=>toast('Moved to front of queue (mock)')));
 // notes + hint
 $('#notesFab').addEventListener('click',()=>document.body.classList.toggle('notes'));
 $('#hintChip .x').addEventListener('click',()=>$('#hintChip').remove());

@@ -70,10 +70,10 @@ downstream of that.
 | # | Decision |
 |---|----------|
 | 1 | **Transcript idiom: Codex × Claude hybrid.** One collapsed activity group per agent turn ("Worked · 14 steps · 4m 32s · 1 error fixed"); inside it, Claude-style one-line steps that expand in place. Success is monochrome; only errors get color. |
-| 2 | **Notebook lives in the chat area.** Evidence (metric tiles, charts, tables) renders inline as light notebook-flavored cells with an `Out [n]` gutter linking to the real cell. No embedded notebook documents, no dark code islands, heights capped; full outputs open from Files. |
-| 3 | **Right panel = Plans / Files / Reports only.** Read-only (act left, read right). Zero width until opened. The App tab's future is the artifacts layer (parallel development — not part of this initiative). |
+| 2 | **Notebook lives in the chat area.** Narrative text renders as markdown (`md`) cells and evidence (metric tiles, charts, tables) as `Out [n]` cells on one shared gutter rail, with full markdown formatting (headings, lists, inline code). No embedded notebook documents, no dark code islands, heights capped; full outputs open from Files. |
+| 3 | **Right panel = Plans / Files / Reports only.** Read-only (act left, read right). The three tabs stay **visible at all times** as a slim edge rail on the right; panel content opens on demand. The App tab's future is the artifacts layer (parallel development — not part of this initiative). |
 | 4 | **One plan entry point:** a status pill in the top bar (`● Plan WC2026 5/5 completed`) opens the panel. Banner, popover, and auto-focus choreography are removed. Approvals/feedback stay in the composer. |
-| 5 | **Queue composer.** Never disabled; messages sent mid-run stack as queued chips and dispatch on run end. Stop sits beside Queue. |
+| 5 | **Queue in the thread.** Composer is never disabled; messages sent mid-run join the **transcript** as ordered ghost bubbles (`Queued · next`, `Queued · 2nd`, …) that can be edited, removed, or bumped until they dispatch in order on run end. Stop sits beside Queue. |
 | 6 | **Fork a chat** from any message (hover action) → branches the session; header shows a branch chip (`⑂ main`). |
 | 7 | **Chrome subtraction:** project tab bar merges into the left nav; scope chips fold into one `Scope · All` control (counts shown only when restricted); standalone-chat alert removed; column widens to ~1000px. |
 | 8 | **Plan boilerplate sections stay** (Validation/Deliverables/Risks) — content-model slimming deferred. |
@@ -91,8 +91,10 @@ downstream of that.
   inline; everything else becomes a step line.
 - Replace `react-ipynb-renderer` in-chat with a lightweight capped code/output block
   (light syntax theme); keep the full renderer for a dedicated notebook/file preview.
-- Queue: buffer sends while `isRunning`, flush on `onRunFinished` (plumbing exists —
-  auto-mode already re-sends there).
+- Queue: buffer sends while `isRunning`, render the buffer in the transcript as ghost
+  user bubbles, flush in order on `onRunFinished` (plumbing exists — auto-mode already
+  re-sends there).
+- Icons stay AntD outline style everywhere (nav, panel rail, file tree) — no emoji.
 - Fork: new session created from a message index; copy history up to that point;
   parent/branch metadata on the session record for the header chip.
 - Unmount collapsed tool detail instead of `display:none` (or virtualize) to stop
