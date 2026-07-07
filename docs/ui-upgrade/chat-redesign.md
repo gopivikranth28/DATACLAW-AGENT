@@ -79,6 +79,7 @@ downstream of that.
 | 8 | **Plan boilerplate sections stay** (Validation/Deliverables/Risks) — content-model slimming deferred. |
 | 9 | Verbs, not tool names, in step lines ("Added code cell [4] · 38 lines", not `insert_cell`). Raw args/JSON stay one expand deeper. |
 | 10 | **Multi-plan review: list-first.** The Plans tab opens as a master list — one card per plan (name, status tag, progress bar, rev, updated), active/pending sorted to top — and clicking a card opens that plan's doc with an "← All plans (n)" back link. The top-bar pill always shows the plan needing attention (pending > running > latest) with a `+n` count of the others and deep-links to it; the rail tab badge shows the plan count. Revisions are not separate list entries — they live inside each plan's doc as `rev` chips. Replaces the old anonymous "Plan 1 / Plan 2" buttons. |
+| 11 | **Scope lives in the panel too.** The five toolbar chips + five modals collapse into a fourth rail tab — collapsible groups for datasets, tools, skills, subagents, and guardrails, editable in place. This is session *settings*, not content review: read-right/act-left governs approvals of agent work, so in-place editing here is allowed, while plan/report approvals stay in the composer. The top-bar `Scope · All` chip is the status shortcut — deep-links to the tab, turns amber with counts when anything is restricted. |
 
 ## 3. Implementation notes (for when we build)
 

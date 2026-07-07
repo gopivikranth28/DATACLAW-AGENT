@@ -208,6 +208,23 @@ body.panel-open .etab.on{color:var(--accent);background:var(--accent-soft)}
 .pbar i.run{background:var(--accent)}
 .pback{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--accent);cursor:pointer;margin-bottom:10px;background:none;border:none;padding:2px 0}
 .pback:hover{text-decoration:underline}
+/* scope tab: collapsible groups of session settings */
+.sgroup{border:1px solid var(--line);border-radius:10px;margin-bottom:8px;overflow:hidden}
+.sgroup-h{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:10px 12px;font-size:12.5px;font-weight:600;color:var(--ink)}
+.sgroup-h:hover{background:var(--bg-soft)}
+.sgroup-h .chev{font-size:9px;color:var(--faint);transition:transform .15s;width:10px}
+.sgroup.open .sgroup-h .chev{transform:rotate(90deg)}
+.sgroup-h .cnt{font-weight:400;color:var(--faint);font-size:11px}
+.sgroup-h .state{margin-left:auto;font-size:10.5px;color:var(--good);font-weight:600}
+.sgroup-b{display:none;border-top:1px solid var(--line-soft);padding:4px 12px 8px}
+.sgroup.open .sgroup-b{display:block}
+.srow{display:flex;align-items:center;gap:9px;padding:6.5px 0;font-size:12px;color:var(--ink)}
+.srow .sub2{color:var(--faint);font-size:10.5px}
+.srow .mono2{font-family:var(--mono);font-size:11.5px}
+.srow .end{margin-left:auto;display:flex;align-items:center;gap:6px}
+.sw.on{background:var(--accent)}
+.sw.on::after{left:auto;right:2px}
+.smore{font-size:11px;color:var(--accent);padding:4px 0;background:none;border:none;cursor:pointer}
 .plan-doc{font-size:12.5px;line-height:1.6;color:#344054}
 .plan-doc h1{font-size:17px;line-height:1.3;margin:6px 0 8px;color:var(--ink);letter-spacing:-.01em}
 .plan-doc h2{font-size:13px;margin:16px 0 6px;color:var(--ink)}
@@ -263,6 +280,7 @@ body.notes .notes-drawer{display:block}
 <symbol id="i-chart" viewBox="0 0 24 24"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></symbol>
 <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></symbol>
 <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5"/></symbol>
+<symbol id="i-filter" viewBox="0 0 24 24"><path d="M22 3H2l8 9.46V19l4 2v-8.54z"/></symbol>
 </defs></svg>
 
 <div class="app">
@@ -296,7 +314,7 @@ body.notes .notes-drawer{display:block}
         <button class="chip plan" id="planPill" title="Active plan — click to open; browse all plans from the Plans rail tab"><span class="dot run"></span> Plan <b>Sensitivity</b> <span class="frac">1/3</span> running <span class="pcount">+1</span></button>
       </span>
       <span style="position:relative"><span class="badge" style="top:-7px;left:-10px">6</span>
-        <button class="chip" title="Datasets, tools, skills, subagents & guardrails for this session">Scope · All</button>
+        <button class="chip" id="scopeChip" title="Session scope — datasets, tools, skills, subagents & guardrails. Opens the Scope tab.">Scope · All</button>
       </span>
       <span class="auto"><span class="sw" role="switch" aria-checked="false" aria-label="Auto mode"></span> Auto</span>
       <button class="kebab" aria-label="Session settings">⋯</button>
@@ -699,6 +717,48 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
             </div>
             <div class="panel-hint">Reports the agent builds with <code>report_add_section</code> collect here — read-only, publishable. (Artifacts layer lands later; this tab is its future home.)</div>
           </div>
+          <div class="ptab" id="tab-scope">
+            <div class="plist-cap">Everything available to this session · restricting anything turns the top-bar chip amber</div>
+            <div class="sgroup open">
+              <button class="sgroup-h"><span class="chev">▶</span>Datasets <span class="cnt">1</span><span class="state">all on</span></button>
+              <div class="sgroup-b">
+                <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span>Football FIFA</span><span class="sub2">local_file · 54,600 × 75</span></div>
+              </div>
+            </div>
+            <div class="sgroup">
+              <button class="sgroup-h"><span class="chev">▶</span>Tools <span class="cnt">12</span><span class="state">all on</span></button>
+              <div class="sgroup-b">
+                <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span class="mono2">execute_cell</span><span class="sub2">notebooks</span></div>
+                <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span class="mono2">insert_cell</span><span class="sub2">notebooks</span></div>
+                <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span class="mono2">data_query</span><span class="sub2">data</span></div>
+                <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span class="mono2">report_add_section</span><span class="sub2">reports</span></div>
+                <button class="smore">Show 8 more…</button>
+              </div>
+            </div>
+            <div class="sgroup">
+              <button class="sgroup-h"><span class="chev">▶</span>Skills <span class="cnt">8</span><span class="state">all on</span></button>
+              <div class="sgroup-b">
+                <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span>dashboarding</span></div>
+                <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span>visualization</span></div>
+                <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span>structured_eda</span></div>
+                <button class="smore">Show 5 more…</button>
+              </div>
+            </div>
+            <div class="sgroup">
+              <button class="sgroup-h"><span class="chev">▶</span>Subagents <span class="cnt">0</span><span class="state" style="color:var(--faint)">none defined</span></button>
+              <div class="sgroup-b"><div class="srow"><span class="sub2">No subagents in this workspace — define them on the Subagents page.</span></div></div>
+            </div>
+            <div class="sgroup open">
+              <button class="sgroup-h"><span class="chev">▶</span>Guardrails <span class="cnt">4</span><span class="state">4 active</span></button>
+              <div class="sgroup-b">
+                <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span>pii scan</span><span class="end"><span class="ptag">pre-run</span><span class="ptag">auto</span></span></div>
+                <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span>cost limit</span><span class="end"><span class="ptag">pre-run</span><span class="ptag">auto</span></span></div>
+                <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span>destructive ops</span><span class="end"><span class="ptag">pre-tool</span><span class="ptag run">approval</span></span></div>
+                <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span>export review</span><span class="end"><span class="ptag">post-run</span><span class="ptag run">approval</span></span></div>
+              </div>
+            </div>
+            <div class="panel-hint">Scope is session settings, not content review — editing here is fine; plan and report approvals still happen only in the composer. Persisted per session.</div>
+          </div>
         </div>
       </aside>
 
@@ -708,6 +768,7 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
         <button class="etab on" data-tab="plans" title="Plans — 2 in this session"><span class="ecount">2</span><svg class="svgi"><use href="#i-doc"/></svg><span class="elb">Plans</span></button>
         <button class="etab" data-tab="files" title="Files"><svg class="svgi"><use href="#i-folder"/></svg><span class="elb">Files</span></button>
         <button class="etab" data-tab="reports" title="Reports"><span class="ecount">1</span><svg class="svgi"><use href="#i-chart"/></svg><span class="elb">Reports</span></button>
+        <button class="etab" data-tab="scope" title="Scope — everything available to this session"><svg class="svgi"><use href="#i-filter"/></svg><span class="elb">Scope</span></button>
       </nav>
     </div>
   </div>
@@ -722,7 +783,7 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
     <li><span class="n">3</span><span><b>One plan entry point.</b> The status pill replaces the banner, popover, and auto-focus choreography. Click → read-only doc on the right; approvals and feedback stay in the composer (act left, read right).</span></li>
     <li><span class="n">4</span><span><b>Queue in the thread.</b> Typing is never disabled; messages sent mid-run join the transcript as ordered ghost bubbles — edit, remove, or bump them until they dispatch in order as runs finish.</span></li>
     <li><span class="n">5</span><span><b>Fork from any message</b> (hover) → branches the session; the header chip shows the current branch.</span></li>
-    <li><span class="n">6</span><span><b>Scope chips folded</b> into one control; it shows counts only when something is restricted.</span></li>
+    <li><span class="n">6</span><span><b>Scope moved into the panel.</b> The five toolbar chips and five modals become one <b>Scope</b> rail tab — collapsible groups for datasets, tools, skills, subagents, and guardrails, editable in place (settings, not content review). The top-bar chip is its status shortcut and turns amber with counts when anything is restricted.</span></li>
     <li><span class="n">7</span><span><b>Console maximized:</b> 1000px column, one row of chrome, standalone-alert removed.</span></li>
     <li><span class="n">8</span><span><b>One nav, persistent panel tabs.</b> The project tab bar merges into the left rail; Plans / Files / Reports stay visible as a slim edge rail on the right at all times — panel content opens on demand.</span></li>
     <li><span class="n">9</span><span><b>Many plans, one list.</b> The Plans tab opens list-first: every plan as a card with status, progress bar, and updated time — active sorts to top. The pill always deep-links to the plan needing attention (<b>+n</b> counts the rest); revisions live inside each plan as <b>rev</b> chips, so the list never fills with near-duplicates.</span></li>
@@ -766,6 +827,13 @@ $('#planPill').addEventListener('click',()=>{
   document.body.classList.add('panel-open');
 });
 $('#panelClose').addEventListener('click',()=>document.body.classList.remove('panel-open'));
+$('#scopeChip').addEventListener('click',()=>{
+  if(document.body.classList.contains('panel-open')&&$('.etab.on')?.dataset.tab==='scope'){document.body.classList.remove('panel-open');return}
+  setTab('scope');document.body.classList.add('panel-open');
+});
+// scope groups + mock toggles
+$$('.sgroup-h').forEach(h=>h.addEventListener('click',()=>h.parentElement.classList.toggle('open')));
+$$('#tab-scope .sw').forEach(s=>s.addEventListener('click',()=>{s.classList.toggle('on');s.setAttribute('aria-checked',s.classList.contains('on'))}));
 // fork toast
 const toast=m=>{const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),2600)};
 $$('.fork').forEach(b=>b.addEventListener('click',()=>toast('⑂ Forked — new session branched from this message (mock)')));
