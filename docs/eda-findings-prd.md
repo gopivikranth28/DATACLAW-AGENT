@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft, build-ready |
+| **Status** | Draft, build-ready — EDA slice superseded by [structured-eda-prd.md](structured-eda-prd.md) (hypothesis-driven revision; this document remains the original component spec for reference) |
 | **Owner** | Nandini Mathan |
 | **Last updated** | 2026-07-07 |
 | **Ships as** | `plugins/dataclaw-eda/` |
