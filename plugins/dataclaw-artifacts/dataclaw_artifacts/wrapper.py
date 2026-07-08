@@ -40,43 +40,58 @@ TOKEN_STYLE = """
 <style>
 :root {
   color-scheme: light dark;
-  --dc-bg: #f7f8fb;
-  --dc-surface: #ffffff;
-  --dc-surface-raised: #ffffff;
-  --dc-surface-muted: #fbfcfe;
-  --dc-ink: #111827;
-  --dc-muted: #667085;
-  --dc-line: #e5e7eb;
-  --dc-accent: #2563eb;
-  --dc-accent-soft: #e8f0ff;
-  --dc-good: #15803d;
-  --dc-warn: #b45309;
-  --dc-danger: #b91c1c;
-  --dc-shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --dc-bg: #f7f8fb !important;
+  --dc-surface: #ffffff !important;
+  --dc-surface-raised: #ffffff !important;
+  --dc-surface-muted: #fbfcfe !important;
+  --dc-ink: #111827 !important;
+  --dc-muted: #667085 !important;
+  --dc-line: #e5e7eb !important;
+  --dc-accent: #2563eb !important;
+  --dc-accent-soft: #e8f0ff !important;
+  --dc-good: #15803d !important;
+  --dc-warn: #b45309 !important;
+  --dc-danger: #b91c1c !important;
+  --dc-radius: 8px !important;
+  --dc-shadow: 0 1px 2px rgba(16, 24, 40, 0.06) !important;
+  --dc-font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
 }
 :root[data-theme="dark"] {
-  --dc-bg: #0f141b;
-  --dc-surface: #171d26;
-  --dc-surface-raised: #1f2733;
-  --dc-surface-muted: #141a22;
-  --dc-ink: #f2f5f8;
-  --dc-muted: #a5afbd;
-  --dc-line: #303846;
-  --dc-accent: #7aa7ff;
-  --dc-accent-soft: #1b2b46;
-  --dc-good: #6dd58c;
-  --dc-warn: #f3bd63;
-  --dc-danger: #ff8b8b;
-  --dc-shadow: none;
+  --dc-bg: #0f141b !important;
+  --dc-surface: #171d26 !important;
+  --dc-surface-raised: #1f2733 !important;
+  --dc-surface-muted: #141a22 !important;
+  --dc-ink: #f2f5f8 !important;
+  --dc-muted: #a5afbd !important;
+  --dc-line: #303846 !important;
+  --dc-accent: #7aa7ff !important;
+  --dc-accent-soft: #1b2b46 !important;
+  --dc-good: #6dd58c !important;
+  --dc-warn: #f3bd63 !important;
+  --dc-danger: #ff8b8b !important;
+  --dc-shadow: none !important;
 }
 html, body {
   margin: 0;
   min-height: 100%;
-  background: var(--dc-bg);
-  color: var(--dc-ink);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--dc-bg) !important;
+  color: var(--dc-ink) !important;
+  font-family: var(--dc-font) !important;
 }
 * { box-sizing: border-box; }
+a { color: var(--dc-accent); }
+table { border-color: var(--dc-line); }
+.dc-page, .dataclaw-page, .r-page {
+  max-width: 1080px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.dc-card, .dataclaw-card, .r-section, .r-hero, .r-metric, .r-finding {
+  border-color: var(--dc-line);
+  border-radius: var(--dc-radius);
+  background: var(--dc-surface);
+  color: var(--dc-ink);
+}
 </style>
 """
 
@@ -279,12 +294,15 @@ def _csp_meta(nonce: str) -> str:
 def _inject_head(html: str, title: str, *, nonce: str, inline_runtime: bool = False) -> str:
     meta = (
         _csp_meta(nonce)
-        + TOKEN_STYLE
         + _plotly_runtime_tag(nonce=nonce, inline=inline_runtime)
         + theme_runtime(nonce)
+        + TOKEN_STYLE
     )
     if "<head" in html.lower():
-        injected = re.sub(r"(<head\b[^>]*>)", r"\1" + meta, html, count=1, flags=re.I)
+        if "</head>" in html.lower():
+            injected = re.sub(r"(</head>)", meta + r"\1", html, count=1, flags=re.I)
+        else:
+            injected = re.sub(r"(<head\b[^>]*>)", r"\1" + meta, html, count=1, flags=re.I)
         return _stamp_script_nonces(injected, nonce)
     injected = (
         "<!doctype html><html><head><meta charset=\"utf-8\">"

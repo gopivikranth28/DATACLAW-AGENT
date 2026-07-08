@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 from dataclaw.config.paths import workspaces_dir
 
@@ -50,6 +51,28 @@ def new_artifact_id() -> str:
 
 def living_report_id(session_id: str) -> str:
     return f"art-{sha256((session_id or 'default').encode('utf-8')).hexdigest()[:8]}"
+
+
+def artifact_url(artifact_id: str, version: int, session_id: str) -> str:
+    query = urlencode({"version": version, "session_id": session_id or "default"})
+    return f"/api/artifacts/{artifact_id}?{query}"
+
+
+def artifact_export_url(artifact_id: str, version: int, session_id: str) -> str:
+    query = urlencode({"version": version, "session_id": session_id or "default"})
+    return f"/api/artifacts/{artifact_id}/export?{query}"
+
+
+def living_report_url(artifact_id: str, session_id: str) -> str:
+    query = urlencode({"session_id": session_id or "default"})
+    return f"/api/artifacts/{artifact_id}/living?{query}"
+
+
+def ensure_artifact_session(meta: dict[str, Any], session_id: str) -> None:
+    expected = str(meta.get("session_id") or "")
+    actual = str(session_id or "")
+    if not actual or expected != actual:
+        raise KeyError("Artifact not found in session")
 
 
 def _artifact_lock(artifact_id: str) -> threading.Lock:
@@ -269,6 +292,14 @@ def write_artifact_version(
 
         digest = sha256(encoded).hexdigest()
         meta = _read_json(meta_path, {}) if meta_path.exists() else {}
+        if meta and str(meta.get("session_id") or "") != str(session_id or ""):
+            return {
+                "success": False,
+                "error": {
+                    "code": "artifact_session_mismatch",
+                    "message": f"Artifact {artifact_id} does not belong to session {session_id}",
+                },
+            }
         existing_versions = meta.get("versions", []) if isinstance(meta, dict) else []
         for record in existing_versions:
             if record.get("sha256") == digest:
@@ -278,7 +309,9 @@ def write_artifact_version(
                     "success": True,
                     "artifact_id": artifact_id,
                     "version": version,
-                    "url": f"/api/artifacts/{artifact_id}?version={version}",
+                    "url": artifact_url(artifact_id, version, session_id),
+                    "session_id": session_id,
+                    "project_id": project_id,
                     "source_path": str(source),
                     "deduped": True,
                 }
@@ -321,7 +354,9 @@ def write_artifact_version(
         "success": True,
         "artifact_id": artifact_id,
         "version": version,
-        "url": f"/api/artifacts/{artifact_id}?version={version}",
+        "url": artifact_url(artifact_id, version, session_id),
+        "session_id": session_id,
+        "project_id": project_id,
         "source_path": str(source),
         "deduped": False,
     }
@@ -354,7 +389,12 @@ def delete_artifact_record(artifact_id: str) -> bool:
     return True
 
 
-def ensure_living_report(session_id: str, project_id: str | None = None) -> dict[str, Any]:
+def ensure_living_report(
+    session_id: str,
+    project_id: str | None = None,
+    *,
+    touch: bool = True,
+) -> dict[str, Any]:
     artifact_id = living_report_id(session_id)
     path = artifact_dir(artifact_id)
     path.mkdir(parents=True, exist_ok=True)
@@ -363,6 +403,7 @@ def ensure_living_report(session_id: str, project_id: str | None = None) -> dict
     meta = _read_json(meta_path, {}) if meta_path.exists() else {}
     if not isinstance(meta, dict):
         meta = {}
+    created = not meta
     if not meta:
         meta = {
             "id": artifact_id,
@@ -375,14 +416,17 @@ def ensure_living_report(session_id: str, project_id: str | None = None) -> dict
             "versions": [],
             "latest_version": 0,
         }
-    meta.update({
+    next_project_id = project_id if project_id is not None else meta.get("project_id")
+    updates = {
         "id": artifact_id,
         "kind": "living_report",
         "session_id": session_id,
-        "project_id": project_id,
-        "updated_at": now,
-        "url": f"/api/artifacts/{artifact_id}/living",
-    })
+        "project_id": next_project_id,
+        "url": living_report_url(artifact_id, session_id),
+    }
+    if created or touch:
+        updates["updated_at"] = now
+    meta.update(updates)
     _atomic_write_text(meta_path, json.dumps(meta, indent=2, default=str))
     return meta
 

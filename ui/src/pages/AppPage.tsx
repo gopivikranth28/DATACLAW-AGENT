@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useParams } from 'react-router-dom'
+import { Tag } from 'antd'
 import { API } from '../api'
 import AppView, {
   collectAppItems,
@@ -18,8 +19,8 @@ interface PublishedSession {
   messages?: Array<{ role?: string; toolName?: string; result?: string }>
 }
 
-// Read-only publish surface: /app/<session-id> renders the session's App view
-// with no chat chrome. Whoever can reach this Dataclaw instance can open it.
+// Read-only compatibility surface: /app/<session-id> renders loose visual
+// outputs for older sessions. Published artifacts are the durable surface.
 export default function AppPage() {
   const { sessionId } = useParams()
   const [session, setSession] = useState<PublishedSession | null>(null)
@@ -60,7 +61,10 @@ export default function AppPage() {
     <div style={{ minHeight: '100vh', background: '#f5f6f8', padding: '32px 16px' }}>
       <div style={{ maxWidth: 900, margin: '0 auto' }}>
         <div style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 22, fontWeight: 700, color: '#1a1a1a' }}>{session?.title || 'Analysis'}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 22, fontWeight: 700, color: '#1a1a1a' }}>{session?.title || 'Analysis'}</div>
+            <Tag style={{ margin: 0, fontSize: 10 }}>Scratch view</Tag>
+          </div>
           {date && <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>{date}</div>}
         </div>
         <AppView items={items} layout={session?.appLayout} />

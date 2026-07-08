@@ -15,6 +15,7 @@ interface ArtifactRecord {
   kind?: string
   title: string
   description?: string
+  session_id?: string
   latest_version: number
   versions: ArtifactVersion[]
   source_path?: string
@@ -22,9 +23,18 @@ interface ArtifactRecord {
   url?: string
 }
 
-export default function ArtifactPanel({ sessionId, refreshKey = 0 }: {
+export default function ArtifactPanel({
+  sessionId,
+  refreshKey = 0,
+  focusArtifactId = null,
+  focusVersion = null,
+  focusKey = 0,
+}: {
   sessionId: string | null
   refreshKey?: number
+  focusArtifactId?: string | null
+  focusVersion?: number | null
+  focusKey?: number
 }) {
   const [artifacts, setArtifacts] = useState<ArtifactRecord[]>([])
   const [loading, setLoading] = useState(false)
@@ -32,6 +42,10 @@ export default function ArtifactPanel({ sessionId, refreshKey = 0 }: {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null)
   const frameRef = useRef<HTMLIFrameElement | null>(null)
+  const selectedIdRef = useRef<string | null>(null)
+  const lastAppliedFocusKeyRef = useRef<number | null>(null)
+
+  useEffect(() => { selectedIdRef.current = selectedId }, [selectedId])
 
   const load = useCallback(() => {
     if (!sessionId) {
@@ -50,14 +64,23 @@ export default function ArtifactPanel({ sessionId, refreshKey = 0 }: {
       })
       .then(data => {
         const next = sortArtifacts(Array.isArray(data.artifacts) ? data.artifacts : [])
-        const nextSelectedId = selectedId && next.some((a: ArtifactRecord) => a.artifact_id === selectedId)
-          ? selectedId
-          : next[0]?.artifact_id || null
+        const shouldApplyFocus = Boolean(focusArtifactId && lastAppliedFocusKeyRef.current !== focusKey)
+        const focusedId = shouldApplyFocus && next.some((a: ArtifactRecord) => a.artifact_id === focusArtifactId)
+          ? focusArtifactId
+          : null
+        const currentId = selectedIdRef.current && next.some((a: ArtifactRecord) => a.artifact_id === selectedIdRef.current)
+          ? selectedIdRef.current
+          : null
+        const nextSelectedId = focusedId || currentId || next[0]?.artifact_id || null
         const nextSelected = next.find((a: ArtifactRecord) => a.artifact_id === nextSelectedId) || null
+        if (focusedId) lastAppliedFocusKeyRef.current = focusKey
         setArtifacts(next)
         setSelectedId(nextSelectedId)
         setSelectedVersion(current => {
           if (nextSelected?.kind === 'living_report') return null
+          if (focusedId && focusVersion && nextSelected?.versions?.some((v: ArtifactVersion) => v.version === focusVersion)) {
+            return focusVersion
+          }
           return current && nextSelected?.versions?.some((v: ArtifactVersion) => v.version === current)
             ? current
             : nextSelected?.latest_version || null
@@ -70,7 +93,7 @@ export default function ArtifactPanel({ sessionId, refreshKey = 0 }: {
         setError(err instanceof Error ? err.message : 'Could not load artifact library')
       })
       .finally(() => setLoading(false))
-  }, [sessionId, selectedId])
+  }, [sessionId, focusArtifactId, focusVersion, focusKey])
 
   useEffect(() => { load() }, [load, refreshKey])
 
@@ -80,6 +103,7 @@ export default function ArtifactPanel({ sessionId, refreshKey = 0 }: {
   )
   const version = selectedVersion || selected?.latest_version || null
   const isLivingReport = selected?.kind === 'living_report'
+  const selectedSessionId = selected?.session_id || sessionId || 'default'
   const versionExists = Boolean(
     isLivingReport ||
     !selected ||
@@ -87,10 +111,14 @@ export default function ArtifactPanel({ sessionId, refreshKey = 0 }: {
   )
   const artifactUrl = selected
     ? isLivingReport
-      ? (selected.url || `${API}/artifacts/${selected.artifact_id}/living`)
-      : version && versionExists ? `${API}/artifacts/${selected.artifact_id}?version=${version}` : ''
+      ? toApiUrl(selected.url || livingReportUrl(selected.artifact_id, selectedSessionId))
+      : version && versionExists ? toApiUrl(
+        selected.url && version === selected.latest_version
+          ? selected.url
+          : artifactVersionUrl(selected.artifact_id, version, selectedSessionId),
+      ) : ''
     : ''
-  const exportUrl = selected && !isLivingReport && version ? `${API}/artifacts/${selected.artifact_id}/export?version=${version}` : ''
+  const exportUrl = selected && !isLivingReport && version ? artifactExportUrl(selected.artifact_id, version, selectedSessionId) : ''
   const postTheme = useCallback(() => {
     const theme = window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
     frameRef.current?.contentWindow?.postMessage({ theme }, '*')
@@ -110,6 +138,7 @@ export default function ArtifactPanel({ sessionId, refreshKey = 0 }: {
 
   const onSelectArtifact = (artifactId: string) => {
     const artifact = artifacts.find(a => a.artifact_id === artifactId)
+    selectedIdRef.current = artifactId
     setSelectedId(artifactId)
     setSelectedVersion(artifact?.kind === 'living_report' ? null : artifact?.latest_version || null)
   }
@@ -209,6 +238,29 @@ export default function ArtifactPanel({ sessionId, refreshKey = 0 }: {
       )}
     </div>
   )
+}
+
+function artifactVersionUrl(artifactId: string, version: number, sessionId: string): string {
+  const params = new URLSearchParams({ version: String(version), session_id: sessionId || 'default' })
+  return `${API}/artifacts/${artifactId}?${params.toString()}`
+}
+
+function artifactExportUrl(artifactId: string, version: number, sessionId: string): string {
+  const params = new URLSearchParams({ version: String(version), session_id: sessionId || 'default' })
+  return `${API}/artifacts/${artifactId}/export?${params.toString()}`
+}
+
+function livingReportUrl(artifactId: string, sessionId: string): string {
+  const params = new URLSearchParams({ session_id: sessionId || 'default' })
+  return `${API}/artifacts/${artifactId}/living?${params.toString()}`
+}
+
+function toApiUrl(url: string): string {
+  if (!url) return ''
+  if (/^https?:\/\//i.test(url)) return url
+  if (url.startsWith('/api/')) return url
+  if (url.startsWith('/')) return `${API}${url}`
+  return `${API}/${url}`
 }
 
 function sortArtifacts(items: ArtifactRecord[]): ArtifactRecord[] {

@@ -13,7 +13,8 @@ published surface.
 
 Do not leave the final answer as loose charts, App-panel state, or a long chat
 message. The final visual deliverable should be a published artifact or a living
-report entry.
+report entry. `/app/:sessionId` is only a compatibility scratch view for loose
+visual outputs; do not use it as the final dashboard/report surface.
 
 Publish a standalone report/dashboard/chart page with `publish_artifact`. Use
 living-report notes for interpretation, decisions, rationale, and direction
@@ -25,6 +26,8 @@ changes that accumulate during the investigation.
   misleading-viz audit.
 - `dataclaw-artifacts` publishes/revises the artifact, serves it safely, keeps
   history, syncs theme, and exports it.
+Use one shared DataClaw token system within a session/project; do not invent a
+new palette, radius system, or decorative language for each dashboard.
 
 ## Tool names
 Examples use canonical DataClaw tool names: `display_metric`,

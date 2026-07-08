@@ -6,7 +6,7 @@ import html as html_lib
 import json
 from typing import Any
 
-from dataclaw_artifacts.store import read_manifest_events, read_meta
+from dataclaw_artifacts.store import artifact_export_url, artifact_url, read_manifest_events, read_meta
 
 PAGES = ["overview", "analyses", "models", "decisions", "log"]
 
@@ -43,6 +43,8 @@ def compile_living_report(artifact_id: str) -> str:
     .lr-meta {{ display: flex; gap: 8px; flex-wrap: wrap; font-size: 11px; color: var(--dc-muted, #667085); margin-bottom: 8px; }}
     .lr-pill {{ border: 1px solid var(--dc-line, #e5e7eb); border-radius: 999px; padding: 1px 7px; background: var(--dc-surface-raised, #fff); }}
     .lr-md p {{ margin: 0 0 8px; line-height: 1.55; }}
+    .lr-actions {{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }}
+    .lr-action {{ color: var(--dc-accent, #2563eb); text-decoration: none; border: 1px solid var(--dc-line, #e5e7eb); border-radius: 6px; padding: 5px 9px; background: var(--dc-surface-raised, #fff); font-size: 12px; font-weight: 600; }}
     pre {{ white-space: pre-wrap; word-break: break-word; background: var(--dc-surface-raised, #fff); border: 1px solid var(--dc-line, #e5e7eb); border-radius: 6px; padding: 8px; font-size: 11px; }}
     .lr-empty {{ color: var(--dc-muted, #667085); font-size: 13px; }}
   </style>
@@ -104,8 +106,9 @@ def _page(page: str, events: list[dict[str, Any]], headline: dict[str, Any] | No
 
 
 def _entry(event: dict[str, Any], headline: bool = False) -> str:
+    raw_kind = str(event.get("kind") or "event")
     event_id = _esc(str(event.get("id") or ""))
-    kind = _esc(str(event.get("kind") or "event"))
+    kind = _esc(raw_kind)
     status = str(event.get("status") or "active")
     page = _esc(str(event.get("page") or ""))
     step = _esc(str(event.get("plan_step_id") or ""))
@@ -117,6 +120,7 @@ def _entry(event: dict[str, Any], headline: bool = False) -> str:
     title = _esc(str(payload.get("title") or payload.get("label") or kind.replace("_", " ").title()))
     md = str(payload.get("md") or payload.get("summary") or "")
     details = "" if md else f"<pre>{_esc(json.dumps(payload or event, indent=2, default=str))}</pre>"
+    actions = _artifact_actions(payload) if raw_kind == "artifact_published" else ""
     return f"""<article id="{event_id}" class="{classes}">
       <div class="lr-meta">
         <span class="lr-pill">#{event_id}</span>
@@ -124,15 +128,43 @@ def _entry(event: dict[str, Any], headline: bool = False) -> str:
         {f'<span class="lr-pill">{page}</span>' if page else ''}
         {f'<span class="lr-pill">step {step}</span>' if step else ''}
         {f'<span class="lr-pill">headline</span>' if headline else ''}
+        {_artifact_version_pill(payload) if raw_kind == "artifact_published" else ''}
       </div>
       <h3>{title}</h3>
       {f'<div class="lr-md">{_markdownish(md)}</div>' if md else details}
+      {actions}
     </article>"""
 
 
 def _markdownish(markdown: str) -> str:
     blocks = [b.strip() for b in markdown.split("\n\n") if b.strip()]
     return "".join(f"<p>{_esc(block)}</p>" for block in blocks)
+
+
+def _artifact_version_pill(payload: dict[str, Any]) -> str:
+    version = payload.get("version")
+    if not version:
+        return ""
+    return f'<span class="lr-pill">v{_esc(str(version))}</span>'
+
+
+def _artifact_actions(payload: dict[str, Any]) -> str:
+    artifact_id = str(payload.get("artifact_id") or "")
+    session_id = str(payload.get("session_id") or "")
+    try:
+        version = int(payload.get("version") or 0)
+    except (TypeError, ValueError):
+        version = 0
+    if not artifact_id or not version or not session_id:
+        return ""
+    open_url = str(payload.get("url") or artifact_url(artifact_id, version, session_id))
+    export_url = artifact_export_url(artifact_id, version, session_id)
+    return (
+        '<div class="lr-actions">'
+        f'<a class="lr-action" href="{_esc(open_url)}">Open artifact</a>'
+        f'<a class="lr-action" href="{_esc(export_url)}">Export HTML</a>'
+        "</div>"
+    )
 
 
 def _esc(value: str) -> str:

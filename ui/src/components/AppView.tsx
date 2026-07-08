@@ -35,8 +35,8 @@ const CELL_OUTPUT_TOOLS = new Set(['execute_cell', 'display_cell_output', 'execu
 const REPORT_TOOLS = new Set(['build_report', 'report_add_section'])
 
 // Item ids are sequence-based (metric-0, chart-1, ...). Session history is
-// append-only, so ids stay stable as the session grows — which is what lets
-// the saved layout survive reloads and apply on the published route.
+// append-only, so ids stay stable as the session grows — which lets saved
+// compatibility-view layout survive reloads.
 export function collectAppItems(calls: AppCall[]): AppItem[] {
   const items: AppItem[] = []
   const chartByFigure = new Map<string, ChartItem>()
@@ -198,7 +198,7 @@ export default function AppView({ items, layout, editable = false, onLayoutChang
     emit(hidden, next)
   }
 
-  // Published (non-editable) view drops hidden items; editable view dims them
+  // Read-only compatibility view drops hidden items; editable view dims them
   // so the author can unhide.
   const visibleReports = editable ? reports : reports.filter(r => !hidden.has(r.id))
   const visibleMetrics = editable ? metrics : metrics.filter(m => !hidden.has(m.id))

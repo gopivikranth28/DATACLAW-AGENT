@@ -106,7 +106,7 @@ export default function App() {
 
   const selected = nav.map(n => n.key).filter(k => pathname.startsWith(k)).at(-1) ?? ''
 
-  // Published app view — standalone surface, no navigation chrome.
+  // Legacy compatibility app view — standalone surface, no navigation chrome.
   if (pathname.startsWith('/app/')) {
     return (
       <ConfigProvider theme={THEME}>

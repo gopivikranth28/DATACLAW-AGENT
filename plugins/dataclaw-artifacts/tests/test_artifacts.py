@@ -15,8 +15,15 @@ from dataclaw_artifacts.sections import (
     section_attrs,
     section_meta_script,
 )
-from dataclaw_artifacts.store import MAX_EXPORTED_ARTIFACT_BYTES, MAX_PUBLISHED_ARTIFACT_BYTES, read_manifest_events, read_source
-from dataclaw_artifacts.tools import list_artifacts, publish_artifact, read_artifact, report_note
+from dataclaw_artifacts.store import (
+    MAX_EXPORTED_ARTIFACT_BYTES,
+    MAX_PUBLISHED_ARTIFACT_BYTES,
+    ensure_living_report,
+    read_manifest_events,
+    read_meta,
+    read_source,
+)
+from dataclaw_artifacts.tools import export_artifact, list_artifacts, publish_artifact, read_artifact, report_note
 from dataclaw_artifacts.wrapper import (
     ARTIFACT_CSP,
     _inject_head,
@@ -57,7 +64,8 @@ async def test_publish_revise_read_and_conflict_by_source_path():
     assert created["success"] is True
     assert created["version"] == 1
     assert created["artifact_id"].startswith("art-")
-    assert created["url"].endswith("?version=1")
+    assert "version=1" in created["url"]
+    assert "session_id=s1" in created["url"]
 
     report.write_text("<!doctype html><html><body><h1>Second</h1></body></html>", encoding="utf-8")
     revised = await publish_artifact(
@@ -82,13 +90,39 @@ async def test_publish_revise_read_and_conflict_by_source_path():
     assert stale["success"] is False
     assert stale["error"]["code"] == "version_conflict"
 
-    read = await read_artifact(artifact_id=created["artifact_id"], version=2)
+    cross_session_revision = await publish_artifact(
+        title="Quarterly Report",
+        html="<!doctype html><html><body><h1>Cross session</h1></body></html>",
+        artifact_id=created["artifact_id"],
+        session_id="other-session",
+    )
+    assert cross_session_revision["success"] is False
+    assert cross_session_revision["error"]["code"] == "artifact_session_mismatch"
+
+    read = await read_artifact(artifact_id=created["artifact_id"], version=2, session_id=session_id)
     assert read["version"] == 2
     assert "Second" in read["html"]
 
+    exported = await export_artifact(
+        artifact_id=created["artifact_id"],
+        version=2,
+        session_id=session_id,
+    )
+    assert exported["success"] is True
+    assert exported["download_url"].endswith("version=2&session_id=s1")
+    assert exported["filename"] == f"{created['artifact_id']}-v2.html"
+    assert exported["bytes"] > 100_000
+
+    with pytest.raises(KeyError):
+        await read_artifact(artifact_id=created["artifact_id"], version=2, session_id="other-session")
+    with pytest.raises(KeyError):
+        await export_artifact(artifact_id=created["artifact_id"], version=2, session_id="other-session")
+
     listed = await list_artifacts(session_id=session_id)
-    assert listed["total"] == 1
-    assert listed["artifacts"][0]["latest_version"] == 2
+    assert listed["total"] == 2
+    assert listed["artifacts"][0]["kind"] == "living_report"
+    published = next(artifact for artifact in listed["artifacts"] if artifact["artifact_id"] == created["artifact_id"])
+    assert published["latest_version"] == 2
 
 
 @pytest.mark.asyncio
@@ -305,6 +339,9 @@ def test_host_shell_uses_sandboxed_child_and_no_egress_csp():
     assert "script-src 'unsafe-inline'" in ARTIFACT_CSP
     assert "script-src 'nonce-testnonce'" in artifact_csp("testnonce")
     assert "script-src 'unsafe-inline'" not in artifact_csp("testnonce")
+    assert "--dc-font" in shell
+    assert "--dc-bg: #f7f8fb !important" in shell
+    assert ".dc-page, .dataclaw-page, .r-page" in shell
 
 
 def test_nonce_injection_does_not_rewrite_script_text():
@@ -317,6 +354,17 @@ def test_nonce_injection_does_not_rewrite_script_text():
     assert '<script nonce="testnonce">var fig=' in child
     assert '<script>label' in child
     assert '<script nonce="testnonce">label' not in child
+
+
+def test_theme_style_is_injected_after_author_head_styles():
+    child = _inject_head(
+        '<html><head><style>:root{--dc-bg:red}</style></head><body>Report</body></html>',
+        "Themed",
+        nonce="testnonce",
+    )
+
+    assert child.find("--dc-bg: #f7f8fb !important") > child.find("--dc-bg:red")
+    assert child.find("--dc-bg: #f7f8fb !important") < child.find("</head>")
 
 
 def test_plotly_runtime_uses_installed_bundle():
@@ -386,7 +434,7 @@ async def test_report_note_creates_live_report_and_compiles_pages():
     )
 
     assert result["success"] is True
-    assert result["url"].endswith("/living")
+    assert result["url"].endswith("/living?session_id=session-living")
 
     events = read_manifest_events(result["artifact_id"])
     assert len(events) == 1
@@ -401,7 +449,29 @@ async def test_report_note_creates_live_report_and_compiles_pages():
 
     listed = await list_artifacts(session_id="session-living")
     assert listed["artifacts"][0]["kind"] == "living_report"
-    assert listed["artifacts"][0]["url"].endswith("/living")
+    assert listed["artifacts"][0]["url"].endswith("/living?session_id=session-living")
+
+
+@pytest.mark.asyncio
+async def test_list_artifacts_creates_empty_living_report():
+    listed = await list_artifacts(session_id="session-empty")
+
+    assert listed["total"] == 1
+    assert listed["artifacts"][0]["kind"] == "living_report"
+    assert listed["artifacts"][0]["url"].endswith("/living?session_id=session-empty")
+    assert read_manifest_events(listed["artifacts"][0]["artifact_id"]) == []
+
+
+@pytest.mark.asyncio
+async def test_list_artifacts_preserves_living_report_project_metadata():
+    created = ensure_living_report("session-project", "project-1")
+
+    listed = await list_artifacts(session_id="session-project")
+    meta = read_meta(created["id"])
+
+    assert listed["artifacts"][0]["kind"] == "living_report"
+    assert meta["project_id"] == "project-1"
+    assert meta["updated_at"] == created["updated_at"]
 
 
 @pytest.mark.asyncio
@@ -411,8 +481,13 @@ async def test_artifact_capture_hook_appends_publish_event_to_living_report():
         "project_id": "",
         "tool_results": [{
             "tool_name": "publish_artifact",
-            "tool_input": {"title": "EDA Dashboard", "description": "Main dashboard"},
-            "result": '{"success": true, "artifact_id": "art-1234abcd", "version": 2, "url": "/api/artifacts/art-1234abcd?version=2"}',
+            "tool_input": {
+                "title": "EDA Dashboard",
+                "description": "Main dashboard",
+                "session_id": "session-hook",
+                "plan_step_id": "step-eda",
+            },
+            "result": '{"success": true, "artifact_id": "art-1234abcd", "version": 2, "session_id": "session-hook", "url": "/api/artifacts/art-1234abcd?version=2&session_id=session-hook"}',
             "is_error": False,
         }],
     }
@@ -425,4 +500,10 @@ async def test_artifact_capture_hook_appends_publish_event_to_living_report():
     assert living["kind"] == "living_report"
     events = read_manifest_events(living["artifact_id"])
     assert events[0]["kind"] == "artifact_published"
+    assert events[0]["plan_step_id"] == "step-eda"
+    assert events[0]["session_id"] == "session-hook"
     assert events[0]["payload"]["artifact_id"] == "art-1234abcd"
+    html = compile_living_report(living["artifact_id"])
+    assert "Open artifact" in html
+    assert "Export HTML" in html
+    assert "session_id=session-hook" in html

@@ -22,11 +22,17 @@ def test_artifacts_skill_is_bundled_and_parseable():
     assert "Publish, revise, inspect, export" in meta["description"]
     assert "publish_artifact" in body
     assert "read_artifact" in body
+    assert "export_artifact" in body
     assert "same `artifact_id`" in body
     assert "dataclaw_publish_artifact" in body
     assert "artifact publication is unavailable" in body
     assert "Use `publish_artifact` for a standalone report" in body
     assert "Use `report_note` for interpretation" in body
+    assert "inline published-artifact card plus the right" in body
+    assert "Treat `/app/:sessionId` as a legacy" in body
+    assert "reports and dashboards should feel like one" in body
+    assert ".r-section" in body
+    assert "open/source/export/delete operations are session-scoped" in body
     assert "25 MiB cap applies to the published/exported single-file artifact" in body
     assert "Living-report attribution should travel by id, not by name." in body
     assert "Security contract" in body
@@ -46,6 +52,10 @@ def test_visual_output_skills_route_publish_to_artifacts_skill():
     assert "artifact publication is unavailable" in visualization
     assert "Attribute sections and notes by stable plan step id" in dashboarding
     assert "publication is unavailable" in dashboarding
+    assert "`/app/:sessionId` is only a compatibility scratch view" in dashboarding
+    assert "`/app/:sessionId` route is compatibility only" in visualization
+    assert "one shared DataClaw token system" in dashboarding
+    assert "shared DataClaw artifact token system" in visualization
     assert "when browser\n  tooling is available" in dashboarding
 
 

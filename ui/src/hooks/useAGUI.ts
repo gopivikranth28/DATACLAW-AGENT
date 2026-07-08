@@ -391,6 +391,7 @@ export function useAGUI(options?: { onRunFinished?: () => void }) {
             artifact_id: value?.artifact_id,
             version: value?.version,
             url: value?.url,
+            session_id: value?.session_id,
             title: value?.title,
             description: value?.description,
           })

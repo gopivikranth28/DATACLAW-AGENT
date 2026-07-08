@@ -54,10 +54,10 @@ def _extract_visual_artifacts(
     tool_input: dict[str, Any],
     result: Any,
 ) -> list[dict[str, Any]]:
-    """Normalize visual tool results into session App artifacts.
+    """Normalize loose visual tool results into compatibility App items.
 
-    Notebook cells remain the compute/reproducibility layer. These artifacts
-    are the presentation contract consumed by the App panel and publish route.
+    Notebook cells remain the compute/reproducibility layer. The durable output
+    surface is dataclaw-artifacts; these items only keep older App views useful.
     """
     now = datetime.now(timezone.utc).isoformat()
     artifacts: list[dict[str, Any]] = []
@@ -1112,8 +1112,8 @@ class UpdateSessionRequest(BaseModel):
     autoMessage: str | None = None
     maxAutoTurns: int | None = None
     autoTurnsUsed: int | None = None
-    # App view curation (hidden element ids + chart order) — read by the
-    # published /app/<session-id> route, so it must live on the session,
+    # Compatibility App view curation (hidden element ids + chart order) —
+    # read by the legacy /app/<session-id> route, so it must live on the session,
     # not in the author's browser.
     appLayout: dict[str, Any] | None = None
 

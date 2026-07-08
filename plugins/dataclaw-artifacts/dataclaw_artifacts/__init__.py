@@ -9,6 +9,7 @@ from dataclaw_artifacts.hooks import artifact_capture_hook, artifact_context_hoo
 from dataclaw_artifacts.router import router as artifacts_router
 from dataclaw_artifacts.tools import (
     delete_artifact,
+    export_artifact,
     list_artifacts,
     publish_artifact,
     read_artifact,
@@ -69,6 +70,19 @@ class ArtifactsPlugin:
                     "properties": {
                         "limit": {"type": "integer", "description": "Maximum artifacts to return", "default": 100},
                     },
+                },
+            ),
+            (
+                "export_artifact",
+                "Create a downloadable, self-contained export URL for an artifact version.",
+                export_artifact,
+                {
+                    "type": "object",
+                    "properties": {
+                        "artifact_id": {"type": "string"},
+                        "version": {"type": "integer", "description": "Defaults to latest"},
+                    },
+                    "required": ["artifact_id"],
                 },
             ),
             (

@@ -5,15 +5,23 @@ from __future__ import annotations
 from typing import Any
 
 from dataclaw_artifacts.store import (
+    MAX_EXPORTED_ARTIFACT_BYTES,
     append_living_report_event,
     delete_artifact_record,
+    ensure_artifact_session,
+    ensure_living_report,
+    artifact_export_url,
+    artifact_url,
+    living_report_url,
     list_artifact_records,
+    latest_version,
     read_meta,
     read_source,
     resolve_workspace_path,
     write_artifact_version,
 )
 from dataclaw_artifacts.validator import ArtifactValidationError, validate_and_prepare_html
+from dataclaw_artifacts.wrapper import export_shell, new_nonce
 
 
 def _emit_artifact_published(result: dict[str, Any], title: str, description: str) -> None:
@@ -27,6 +35,7 @@ def _emit_artifact_published(result: dict[str, Any], title: str, description: st
             "artifact_id": result["artifact_id"],
             "version": result["version"],
             "url": result["url"],
+            "session_id": result.get("session_id"),
             "title": title,
             "description": description,
         })
@@ -93,9 +102,11 @@ async def read_artifact(
     *,
     artifact_id: str,
     version: int | None = None,
+    session_id: str = "default",
     **_: Any,
 ) -> dict[str, Any]:
     meta = read_meta(artifact_id)
+    ensure_artifact_session(meta, session_id)
     version = version or int(meta.get("latest_version") or 0)
     return {
         "artifact_id": artifact_id,
@@ -110,9 +121,12 @@ async def read_artifact(
 async def list_artifacts(
     *,
     session_id: str = "",
+    project_id: str | None = None,
     limit: int = 100,
     **_: Any,
 ) -> dict[str, Any]:
+    if session_id:
+        ensure_living_report(session_id, project_id, touch=False)
     artifacts = []
     for meta in list_artifact_records(session_id=session_id, limit=limit):
         latest = int(meta.get("latest_version") or 0)
@@ -128,16 +142,64 @@ async def list_artifacts(
             "versions": meta.get("versions", []),
             "source_path": meta.get("source_path", ""),
             "updated_at": meta.get("updated_at", ""),
-            "url": f"/api/artifacts/{meta.get('id')}/living" if is_living else f"/api/artifacts/{meta.get('id')}?version={latest}" if latest else "",
+            "url": living_report_url(str(meta.get("id")), session_id or str(meta.get("session_id") or "default")) if is_living else artifact_url(str(meta.get("id")), latest, session_id or str(meta.get("session_id") or "default")) if latest else "",
         })
     return {"artifacts": artifacts, "total": len(artifacts)}
+
+
+async def export_artifact(
+    *,
+    artifact_id: str,
+    version: int | None = None,
+    session_id: str = "default",
+    **_: Any,
+) -> dict[str, Any]:
+    meta = read_meta(artifact_id)
+    ensure_artifact_session(meta, session_id)
+    resolved_version = version or latest_version(artifact_id)
+    source = read_source(artifact_id, resolved_version)
+    html = export_shell(
+        artifact_id=artifact_id,
+        version=resolved_version,
+        title=str(meta.get("title") or artifact_id),
+        source=source,
+        nonce=new_nonce(),
+    )
+    export_bytes = len(html.encode("utf-8"))
+    if export_bytes > MAX_EXPORTED_ARTIFACT_BYTES:
+        return {
+            "success": False,
+            "artifact_id": artifact_id,
+            "version": resolved_version,
+            "error": {
+                "code": "export_size_limit",
+                "message": f"Export is too large ({export_bytes} bytes, max {MAX_EXPORTED_ARTIFACT_BYTES})",
+                "bytes": export_bytes,
+                "max_bytes": MAX_EXPORTED_ARTIFACT_BYTES,
+            },
+        }
+    filename = f"{artifact_id}-v{resolved_version}.html"
+    download_url = artifact_export_url(artifact_id, resolved_version, session_id)
+    return {
+        "success": True,
+        "artifact_id": artifact_id,
+        "version": resolved_version,
+        "session_id": session_id,
+        "filename": filename,
+        "bytes": export_bytes,
+        "download_url": download_url,
+        "url": download_url,
+    }
 
 
 async def delete_artifact(
     *,
     artifact_id: str,
+    session_id: str = "default",
     **_: Any,
 ) -> dict[str, Any]:
+    meta = read_meta(artifact_id)
+    ensure_artifact_session(meta, session_id)
     deleted = delete_artifact_record(artifact_id)
     return {"artifact_id": artifact_id, "deleted": deleted, "success": deleted}
 
@@ -161,4 +223,4 @@ async def report_note(
         "project_id": project_id,
         "payload": {"md": markdown},
     })
-    return {"success": True, "artifact_id": artifact_id, "url": f"/api/artifacts/{artifact_id}/living", "event": event}
+    return {"success": True, "artifact_id": artifact_id, "session_id": session_id, "url": living_report_url(artifact_id, session_id), "event": event}

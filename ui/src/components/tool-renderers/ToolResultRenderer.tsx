@@ -32,9 +32,10 @@ function parseJSON(value: string | null | undefined): any | undefined {
   try { return JSON.parse(value) } catch { return undefined }
 }
 
-export default function ToolResultRenderer({ toolName, result, args, status, onFileClick }: {
+export default function ToolResultRenderer({ toolName, result, args, status, onFileClick, sessionId }: {
   toolName: string; result: string | null; args?: string; status?: string
   onFileClick?: (path: string) => void
+  sessionId?: string | null
 }) {
   // Best-effort parse of the call's args — used as a fallback source for cell
   // renderers when older persisted results pre-date the source-echo backend
@@ -77,7 +78,7 @@ export default function ToolResultRenderer({ toolName, result, args, status, onF
     case 'report_add_section':
       return <ReportDisplay data={parsed} onFileClick={onFileClick} />
     case 'publish_artifact':
-      return <PublishArtifactCard data={parsed} />
+      return <PublishArtifactCard data={parsed} sessionId={sessionId} />
     default:
       return <GenericResult result={result} />
   }

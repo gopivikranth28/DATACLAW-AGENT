@@ -13,6 +13,7 @@ ARTIFACT_TOOLS = {
     "publish_artifact",
     "read_artifact",
     "list_artifacts",
+    "export_artifact",
     "delete_artifact",
     "report_note",
 }
@@ -38,7 +39,7 @@ async def artifact_context_hook(state: AgentState) -> AgentState:
                 injected["session_id"] = session_id
             if project_id and not injected.get("project_id"):
                 injected["project_id"] = project_id
-            if tool_name == "report_note" and active_plan_step_id and not injected.get("plan_step_id"):
+            if tool_name in {"publish_artifact", "report_note"} and active_plan_step_id and not injected.get("plan_step_id"):
                 injected["plan_step_id"] = active_plan_step_id
             tc = {**tc, "tool_input": injected}
         updated.append(tc)
@@ -77,9 +78,12 @@ def _parse_result(raw: Any) -> dict[str, Any]:
 
 def _event_for_tool_result(tool_name: str, tool_input: dict[str, Any], result: dict[str, Any]) -> dict[str, Any] | None:
     if tool_name == "publish_artifact" and result.get("success"):
+        session_id = str(tool_input.get("session_id") or result.get("session_id") or "")
         return {
             "kind": "artifact_published",
             "page": "analyses",
+            "plan_step_id": str(tool_input.get("plan_step_id") or result.get("plan_step_id") or ""),
+            "session_id": session_id,
             "status": "active",
             "payload": {
                 "title": tool_input.get("title") or result.get("artifact_id"),
@@ -87,6 +91,7 @@ def _event_for_tool_result(tool_name: str, tool_input: dict[str, Any], result: d
                 "artifact_id": result.get("artifact_id"),
                 "version": result.get("version"),
                 "url": result.get("url"),
+                "session_id": session_id,
             },
         }
 

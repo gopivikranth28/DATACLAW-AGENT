@@ -29,6 +29,7 @@ Thumbs.db
 # Runtime data
 *.db
 *.sqlite
+mlruns/
 workspaces/
 docker-data/
 dataclaw-data/   # legacy bundled-compose mount path (now docker-data/dataclaw)
@@ -51,3 +52,4 @@ ui/build/
 .local-planning/
 docs/*-prd.md
 docs/prd-portfolio.md
+docs/release3-branch-progress-report.md

@@ -40,8 +40,11 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
   const [searchParams] = useSearchParams()
   const urlSession = isStandalone ? searchParams.get('session') : null
   const [activeSessionId, _setActiveSessionId] = useState<string | null>(initialSessionId ?? urlSession ?? null)
+  const [sessionProjectId, setSessionProjectId] = useState<string | null>(projectId ?? null)
+  const effectiveProjectId = projectId || sessionProjectId
   const setActiveSessionId = (id: string | null) => {
     _setActiveSessionId(id)
+    if (!id) setSessionProjectId(projectId ?? null)
     onSessionChange?.(id)
     if (isStandalone) {
       const next = new URLSearchParams(window.location.search)
@@ -190,11 +193,10 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
   }
 
   // File explorer
-  const [hasWorkspacePlugin, setHasWorkspacePlugin] = useState(false)
   const [sidebarTab, setSidebarTab] = useState<'plans' | 'files' | 'artifacts' | 'app'>('plans')
 
-  // App view curation — persisted on the session so the published
-  // /app/<session-id> route reflects it.
+  // Compatibility scratch view curation — persisted so the legacy
+  // /app/<session-id> route can still render loose visual outputs.
   const [appLayout, setAppLayout] = useState<AppLayout | null>(null)
   const [visualArtifacts, setVisualArtifacts] = useState<VisualArtifact[]>([])
   const [projectFiles, setProjectFiles] = useState<any[]>([])
@@ -276,6 +278,23 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
   const artifactToolResultCount = useMemo(
     () => toolCalls.filter(tc => tc.name === 'publish_artifact' && tc.status === 'complete').length,
     [toolCalls])
+  const latestPublishedArtifact = useMemo(() => {
+    for (const tc of [...toolCalls].reverse()) {
+      if (tc.name !== 'publish_artifact' || tc.status !== 'complete' || !tc.result) continue
+      try {
+        const parsed = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
+        if (parsed?.success && parsed?.artifact_id && parsed?.version) {
+          return {
+            artifact_id: String(parsed.artifact_id),
+            version: Number(parsed.version),
+          }
+        }
+      } catch {
+        continue
+      }
+    }
+    return null
+  }, [toolCalls])
   const { plans, refresh: refreshPlans, submitDecision } = usePlans(
     activeSessionId,
     hasPlansPlugin || planToolResultCount > 0,
@@ -344,8 +363,8 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
     () => ({ plans, submitDecision, focusPlan }),
     [plans, submitDecision, focusPlan])
 
-  // App view: collect chart/metric items from the session's tool calls;
-  // load saved curation from the session and persist edits back to it.
+  // Compatibility App view: collect loose chart/metric items from the session's
+  // tool calls. Published artifacts are the durable output surface.
   const appItems = useMemo(() => {
     const persisted = itemsFromVisualArtifacts(visualArtifacts)
     const live = collectAppItems(toolCalls.map(tc => ({ name: tc.name, result: tc.result })))
@@ -358,8 +377,8 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
     fetch(`${API}/chat/sessions/${activeSessionId}`)
       .then(r => r.ok ? r.json() : null)
       .then(s => {
-        if (s?.appLayout) setAppLayout(s.appLayout)
-        if (Array.isArray(s?.visualArtifacts)) setVisualArtifacts(s.visualArtifacts)
+      if (s?.appLayout) setAppLayout(s.appLayout)
+      if (Array.isArray(s?.visualArtifacts)) setVisualArtifacts(s.visualArtifacts)
       })
       .catch(() => {})
   }, [activeSessionId])
@@ -379,7 +398,6 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
       setHasPlansPlugin(plugins.some((p: any) => p.id === 'plans'))
       setHasArtifactsPlugin(plugins.some((p: any) => p.id === 'artifacts'))
       setHasDataPlugin(plugins.some((p: any) => p.id === 'data'))
-      setHasWorkspacePlugin(plugins.some((p: any) => p.id === 'workspace'))
     }).catch(() => {})
   }, [])
 
@@ -415,6 +433,7 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
         if (session?.datasetIds !== undefined) {
           setSelectedDatasetIds(session.datasetIds)
         }
+        setSessionProjectId(session?.projectId || projectId || null)
         if (session?.toolIds !== undefined) setSelectedToolIds(session.toolIds)
         if (session?.skillIds !== undefined) setSelectedSkillIds(session.skillIds)
         if (session?.subagentIds !== undefined) setSelectedSubagentIds(session.subagentIds)
@@ -450,12 +469,12 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
 
   // Load project files for explorer
   const loadProjectFiles = useCallback(() => {
-    if (!hasWorkspacePlugin || !projectId) { setProjectFiles([]); return }
-    fetch(`${API}/projects/${projectId}/files`)
+    if (!effectiveProjectId) { setProjectFiles([]); return }
+    fetch(`${API}/projects/${effectiveProjectId}/files`)
       .then(r => r.ok ? r.json() : { project: [] })
       .then(d => setProjectFiles(d.project || []))
       .catch(() => setProjectFiles([]))
-  }, [hasWorkspacePlugin, projectId])
+  }, [effectiveProjectId])
   useEffect(() => { loadProjectFiles() }, [loadProjectFiles])
 
   // Filtered timeline (pre-filter tool calls when hidden)
@@ -500,7 +519,13 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: 'New Chat', project_id: projectId || null }),
       })
-      if (res.ok) { const s = await res.json(); setSessions(prev => [s, ...prev]); setActiveSessionId(s.id); reset() }
+      if (res.ok) {
+        const s = await res.json()
+        setSessions(prev => [s, ...prev])
+        setSessionProjectId(s.projectId || projectId || null)
+        setActiveSessionId(s.id)
+        reset()
+      }
     } catch {}
   }
 
@@ -530,6 +555,7 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
         const s = await res.json()
         sessionId = s.id
         setSessions(prev => [s, ...prev])
+        setSessionProjectId(s.projectId || projectId || null)
         skipNextLoadRef.current = true
         setActiveSessionId(sessionId)
       } catch { return }
@@ -594,14 +620,23 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
   }
 
   const showPlansSidebar = hasPlansPlugin || plans.length > 0 || planToolResultCount > 0
-  const showFilesSidebar = hasWorkspacePlugin && !!projectId
+  const showFilesSidebar = !!effectiveProjectId
   const showArtifactsSidebar = hasArtifactsPlugin || artifactToolResultCount > 0
+  const showCompatibilityApp = appItems.length > 0
   // Insights is core (viz layer) — the sidebar is always available.
   const showSidebar = true
   const planSidebarOverlay = planReaderExpanded && sidebarTab === 'plans' && !sidebarCollapsed
   const sidebarPanelWidth = planSidebarOverlay
     ? 'min(1120px, calc(100vw - 32px))'
     : sidebarCollapsed ? 36 : sidebarWidth
+
+  useEffect(() => {
+    if (sidebarTab !== 'app' || showCompatibilityApp) return
+    if (showArtifactsSidebar) setSidebarTab('artifacts')
+    else if (showPlansSidebar) setSidebarTab('plans')
+    else if (showFilesSidebar) setSidebarTab('files')
+    else setSidebarTab('plans')
+  }, [sidebarTab, showCompatibilityApp, showArtifactsSidebar, showPlansSidebar, showFilesSidebar])
 
   return (
     <PlansContext.Provider value={plansCtx}>
@@ -752,7 +787,7 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
                       : <MessageBubble message={entry.item as AGUIMessage} onFileClick={previewFile} />
                     : entry.type === 'guardrail'
                     ? <GuardrailCard guardrail={entry.item as any} threadId={activeSessionId || ''} />
-                    : <ToolCallCard toolCall={entry.item as any} onFileClick={previewFile} />
+                    : <ToolCallCard toolCall={entry.item as any} onFileClick={previewFile} sessionId={activeSessionId} />
                   }
                 </div>
               ))}
@@ -885,11 +920,13 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
                 borderBottom: sidebarTab === 'artifacts' ? '2px solid #1677ff' : '2px solid transparent',
               }}>Artifacts</div>
             )}
-            <div onClick={() => { setPlanReaderExpanded(false); setSidebarTab('app') }} style={{
-              flex: 1, padding: '8px 12px', textAlign: 'center', cursor: 'pointer', fontSize: 12, fontWeight: 600,
-              color: sidebarTab === 'app' ? '#1677ff' : '#999',
-              borderBottom: sidebarTab === 'app' ? '2px solid #1677ff' : '2px solid transparent',
-            }}>App</div>
+            {showCompatibilityApp && (
+              <div onClick={() => { setPlanReaderExpanded(false); setSidebarTab('app') }} style={{
+                flex: 1, padding: '8px 12px', textAlign: 'center', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                color: sidebarTab === 'app' ? '#1677ff' : '#999',
+                borderBottom: sidebarTab === 'app' ? '2px solid #1677ff' : '2px solid transparent',
+              }}>Scratch</div>
+            )}
           </div>
 
           <div style={{ padding: 12 }}>
@@ -913,17 +950,23 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
 
             {/* Artifacts tab — durable published reports/dashboards with version history */}
             {sidebarTab === 'artifacts' && showArtifactsSidebar && (
-              <ArtifactPanel sessionId={activeSessionId} refreshKey={artifactRefreshKey} />
+              <ArtifactPanel
+                sessionId={activeSessionId}
+                refreshKey={artifactRefreshKey}
+                focusArtifactId={latestPublishedArtifact?.artifact_id ?? null}
+                focusVersion={latestPublishedArtifact?.version ?? null}
+                focusKey={artifactRefreshKey}
+              />
             )}
 
-            {/* App tab — auto-composed session app (metrics + charts), curatable + publishable */}
-            {sidebarTab === 'app' && (
+            {/* Scratch tab — compatibility view for loose metrics/charts. */}
+            {sidebarTab === 'app' && showCompatibilityApp && (
               <div>
                 {activeSessionId && appItems.length > 0 && (
                   <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
                     <Button size="small" icon={<ExportOutlined />}
                       href={`/app/${activeSessionId}`} target="_blank">
-                      Publish
+                      Open
                     </Button>
                   </div>
                 )}

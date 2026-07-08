@@ -8,6 +8,7 @@ interface PublishArtifactResult {
   artifact_id?: string
   version?: number
   url?: string
+  session_id?: string
   source_path?: string
   deduped?: boolean
   error?: {
@@ -17,15 +18,22 @@ interface PublishArtifactResult {
   }
 }
 
-export default function PublishArtifactCard({ data }: { data: PublishArtifactResult }) {
+export default function PublishArtifactCard({ data, sessionId }: {
+  data: PublishArtifactResult
+  sessionId?: string | null
+}) {
   const [shouldMount, setShouldMount] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const mountRef = useRef<HTMLDivElement | null>(null)
   const frameRef = useRef<HTMLIFrameElement | null>(null)
   const modalFrameRef = useRef<HTMLIFrameElement | null>(null)
-  const artifactUrl = useMemo(() => toApiUrl(data.url || ''), [data.url])
+  const artifactSessionId = data.session_id || sessionIdFromUrl(data.url || '') || sessionId || ''
+  const artifactUrl = useMemo(
+    () => artifactOpenUrl(data, artifactSessionId),
+    [data.artifact_id, data.url, data.version, artifactSessionId],
+  )
   const exportUrl = data.artifact_id && data.version
-    ? `${API}/artifacts/${data.artifact_id}/export?version=${data.version}`
+    ? artifactExportUrl(data.artifact_id, data.version, artifactSessionId)
     : ''
   const postTheme = useCallback(() => {
     const theme = window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
@@ -152,4 +160,41 @@ function toApiUrl(url: string): string {
   if (url.startsWith('/api/')) return url
   if (url.startsWith('/')) return `${API}${url}`
   return `${API}/${url}`
+}
+
+function artifactOpenUrl(data: PublishArtifactResult, sessionId: string): string {
+  if (!data.artifact_id || !data.version) return ''
+  const raw = data.url || `/api/artifacts/${data.artifact_id}?version=${data.version}`
+  return withSessionId(toApiUrl(raw), sessionId)
+}
+
+function withSessionId(url: string, sessionId: string): string {
+  if (!url || !sessionId) return url
+  try {
+    const parsed = new URL(url, window.location.origin)
+    if (!parsed.searchParams.get('session_id')) {
+      parsed.searchParams.set('session_id', sessionId)
+    }
+    if (parsed.origin === window.location.origin) {
+      return `${parsed.pathname}${parsed.search}${parsed.hash}`
+    }
+    return parsed.toString()
+  } catch {
+    return url
+  }
+}
+
+function artifactExportUrl(artifactId: string, version: number, sessionId: string): string {
+  const params = new URLSearchParams({ version: String(version), session_id: sessionId || 'default' })
+  return `${API}/artifacts/${artifactId}/export?${params.toString()}`
+}
+
+function sessionIdFromUrl(url: string): string {
+  if (!url) return ''
+  try {
+    const parsed = new URL(url, window.location.origin)
+    return parsed.searchParams.get('session_id') || ''
+  } catch {
+    return ''
+  }
 }

@@ -7,9 +7,10 @@ import SubagentProgressPanel from './SubagentProgressPanel'
 interface Props {
   toolCall: ToolCallState
   onFileClick?: (path: string) => void
+  sessionId?: string | null
 }
 
-export default function ToolCallCard({ toolCall, onFileClick }: Props) {
+export default function ToolCallCard({ toolCall, onFileClick, sessionId }: Props) {
   const isDelegate = toolCall.name === 'delegate_to_subagent'
   const hasSubagent = isDelegate && !!toolCall.subagent
   const canRenderWhileCalling = shouldRenderWhileCalling(toolCall.name)
@@ -112,7 +113,7 @@ export default function ToolCallCard({ toolCall, onFileClick }: Props) {
                     </div>
                   )}
                   <ToolResultRenderer toolName={toolCall.name} result={toolCall.result} args={toolCall.args}
-                    status={toolCall.status} onFileClick={onFileClick} />
+                    status={toolCall.status} onFileClick={onFileClick} sessionId={sessionId} />
                 </div>
               )}
             </>

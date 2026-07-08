@@ -59,12 +59,11 @@ def test_empty_result_for_llm_falls_back_to_result():
     assert "{\"x\": 1}" in serialized or '"x": 1' in serialized
 
 
-# ── App view layout persistence (publish route reads it from the session) ──
+# ── App compatibility layout persistence ───────────────────────────────────
 
 
 def test_update_session_request_accepts_app_layout():
-    """appLayout must survive the PATCH model — it's how the published
-    /app/<session-id> route sees the author's hide/reorder curation."""
+    """appLayout must survive the PATCH model for the legacy /app route."""
     from dataclaw.api.routers.chat import UpdateSessionRequest
 
     layout = {"hidden": ["chart-1", "metric-0"], "order": ["chart-2", "chart-0"]}
@@ -85,7 +84,7 @@ async def test_app_layout_roundtrips_through_session_storage():
     assert loaded["appLayout"] == layout
 
 
-# ── Visual artifact normalization (App view source of truth) ───────────────
+# ── Loose visual normalization for compatibility App view ──────────────────
 
 
 def test_extract_visual_artifacts_for_metric_and_plotly_chart():

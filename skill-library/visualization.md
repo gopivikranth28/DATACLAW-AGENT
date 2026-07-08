@@ -11,6 +11,8 @@ should follow this contract instead of inventing its own chart/report format.
 
 The final visual deliverable is an **artifact** or a **living report**. Chat
 messages are for short narration; the durable surface is the published artifact.
+The `/app/:sessionId` route is compatibility only and should not be used as the
+final report/dashboard handoff.
 
 ## Skill triad
 - `dashboarding` decides the story: user question, audience, decision, KPI
@@ -19,6 +21,9 @@ messages are for short narration; the durable surface is the published artifact.
   aggregate data islands, and integrity checks.
 - `dataclaw-artifacts` publishes, versions, serves, embeds, secures, themes, and
   exports the result.
+Use the shared DataClaw artifact token system for report/dashboard output so
+charts, KPI tiles, tables, and living-report entries look related inside the
+same session or project.
 
 If a task needs a full dashboard/report, fetch and follow `dashboarding` too.
 

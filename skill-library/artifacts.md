@@ -19,6 +19,16 @@ The notebook computes, skills decide, and artifacts publish. Do not leave the
 final deliverable as a loose workspace HTML file, App-panel state, long chat
 answer, or raw chart collection.
 
+The durable UI surface is the inline published-artifact card plus the right
+panel Artifact Library/living report. Treat `/app/:sessionId` as a legacy
+compatibility scratch view for loose visual outputs, not as a final handoff.
+
+Within one session or project, reports and dashboards should feel like one
+family. Reuse the DataClaw artifact tokens (`--dc-*`), standard report classes
+such as `.r-page`, `.r-section`, `.r-metric`, `.r-chart-target`, and stable
+spacing/radius choices. Do not choose a new palette or decorative system for
+each artifact unless the user explicitly asks for a themed one-off.
+
 Use `publish_artifact` for a standalone report, dashboard, chart page, profile,
 or model card. Use `report_note` for interpretation, decisions, rationale, and
 course changes in the living report. Pass `plan_step_id` when available; names
@@ -27,9 +37,9 @@ summarized in the living report.
 
 ## Tool names and fallback
 Use the canonical tool names in this skill: `publish_artifact`,
-`read_artifact`, `list_artifacts`, `delete_artifact`, and `report_note`. If the
-runtime exposes only plugin-prefixed aliases such as `dataclaw_publish_artifact`,
-use the visible alias with the same arguments.
+`read_artifact`, `list_artifacts`, `export_artifact`, `delete_artifact`, and
+`report_note`. If the runtime exposes only plugin-prefixed aliases such as
+`dataclaw_publish_artifact`, use the visible alias with the same arguments.
 
 If artifact tools are unavailable, still build the canonical workspace HTML
 source and report that artifact publication is unavailable. Do not claim an
@@ -46,8 +56,9 @@ source and report that artifact publication is unavailable. Do not claim an
 3. **Publish.** Call:
    `publish_artifact(title, description?, source_path?, html?, artifact_id?, label?, base_version?)`
    with exactly one of `source_path` or `html`.
-4. **Confirm the result.** Expect `{artifact_id, version, url}`. Mention the
-   artifact title and version briefly; the UI renders the artifact inline.
+4. **Confirm the result.** Expect `{artifact_id, version, session_id, url}`.
+   Mention the artifact title and version briefly; the UI renders the same
+   version inline and in the Artifact Library.
 5. **Self-check.** When `dataclaw-browser` is available and the task is a report
    or dashboard, screenshot the artifact in light and dark mode before closing
    the plan step.
@@ -65,6 +76,13 @@ When the user asks for a change to an existing artifact:
    change intentionally. Never last-writer-wins by guessing.
 
 Do not create a new artifact for normal revisions of the same report/dashboard.
+
+## Export workflow
+When the user asks for an export, call
+`export_artifact(artifact_id, version?)`. Expect a result with
+`download_url`, `filename`, and `bytes`; do not fabricate export links. Artifact
+open/source/export/delete operations are session-scoped, so use the current
+session context and do not copy an artifact id into another session's handoff.
 
 ## Security contract
 Artifacts are hostile-content-safe by default. Follow these rules:

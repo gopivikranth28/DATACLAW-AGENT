@@ -10,9 +10,13 @@ from fastapi.responses import HTMLResponse, Response
 from dataclaw_artifacts.compiler import compile_living_report
 from dataclaw_artifacts.store import (
     MAX_EXPORTED_ARTIFACT_BYTES,
+    artifact_url,
     delete_artifact_record,
+    ensure_artifact_session,
+    ensure_living_report,
     latest_version,
     list_artifact_records,
+    living_report_url,
     read_meta,
     read_source,
 )
@@ -34,6 +38,8 @@ def _headers(disposition: str | None = None, *, nonce: str | None = None) -> dic
 
 @router.get("")
 async def list_artifacts(session_id: str = "", limit: int = 100) -> dict[str, Any]:
+    if session_id:
+        ensure_living_report(session_id, touch=False)
     artifacts = []
     for meta in list_artifact_records(session_id=session_id, limit=limit):
         latest = int(meta.get("latest_version") or 0)
@@ -50,7 +56,7 @@ async def list_artifacts(session_id: str = "", limit: int = 100) -> dict[str, An
             "versions": meta.get("versions", []),
             "source_path": meta.get("source_path", ""),
             "updated_at": meta.get("updated_at", ""),
-            "url": f"/api/artifacts/{artifact_id}/living" if is_living and artifact_id else f"/api/artifacts/{artifact_id}?version={latest}" if artifact_id and latest else "",
+            "url": living_report_url(str(artifact_id), str(meta.get("session_id") or "default")) if is_living and artifact_id else artifact_url(str(artifact_id), latest, str(meta.get("session_id") or "default")) if artifact_id and latest else "",
         })
     return {"artifacts": artifacts, "total": len(artifacts)}
 
@@ -68,9 +74,13 @@ async def plotly_runtime() -> Response:
 
 
 @router.get("/{artifact_id}/living")
-async def serve_living_report(artifact_id: str) -> HTMLResponse:
+async def serve_living_report(
+    artifact_id: str,
+    session_id: str = Query(..., min_length=1),
+) -> HTMLResponse:
     try:
         meta = read_meta(artifact_id)
+        ensure_artifact_session(meta, session_id)
         if meta.get("kind") != "living_report":
             raise KeyError(artifact_id)
         source = compile_living_report(artifact_id)
@@ -91,9 +101,11 @@ async def serve_living_report(artifact_id: str) -> HTMLResponse:
 async def serve_artifact(
     artifact_id: str,
     version: int | None = Query(default=None),
+    session_id: str = Query(..., min_length=1),
 ) -> HTMLResponse:
     try:
         meta = read_meta(artifact_id)
+        ensure_artifact_session(meta, session_id)
         resolved_version = version or latest_version(artifact_id)
         source = read_source(artifact_id, resolved_version)
     except KeyError:
@@ -113,9 +125,11 @@ async def serve_artifact(
 async def get_artifact_source(
     artifact_id: str,
     version: int | None = Query(default=None),
+    session_id: str = Query(..., min_length=1),
 ) -> dict[str, Any]:
     try:
         meta = read_meta(artifact_id)
+        ensure_artifact_session(meta, session_id)
         resolved_version = version or latest_version(artifact_id)
         source = read_source(artifact_id, resolved_version)
     except KeyError:
@@ -134,9 +148,11 @@ async def get_artifact_source(
 async def export_artifact(
     artifact_id: str,
     version: int | None = Query(default=None),
+    session_id: str = Query(..., min_length=1),
 ) -> Response:
     try:
         meta = read_meta(artifact_id)
+        ensure_artifact_session(meta, session_id)
         resolved_version = version or latest_version(artifact_id)
         source = read_source(artifact_id, resolved_version)
     except KeyError:
@@ -172,7 +188,15 @@ async def export_artifact(
 
 
 @router.delete("/{artifact_id}")
-async def delete_artifact(artifact_id: str) -> dict[str, Any]:
+async def delete_artifact(
+    artifact_id: str,
+    session_id: str = Query(..., min_length=1),
+) -> dict[str, Any]:
+    try:
+        meta = read_meta(artifact_id)
+        ensure_artifact_session(meta, session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Artifact not found")
     deleted = delete_artifact_record(artifact_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Artifact not found")
