@@ -166,16 +166,16 @@ async def update_plan(
         existing = proposal.get("steps", [])
         for update in patches:
             step_name = str(update.get("name", "")).strip()
-            if not step_name:
-                raise ValueError("Each step update requires name")
             step_id = str(update.get("id") or "").strip()
+            if not step_id and not step_name:
+                raise ValueError("Each step update requires id or name")
             match = next((s for s in existing if step_id and s.get("id") == step_id), None)
-            if match is None:
+            if match is None and not step_id:
                 match = next((s for s in existing if s.get("name") == step_name), None)
             if match is None:
                 match = {"id": step_id or _new_step_id(), "name": step_name, "description": "", "status": "not_started"}
                 existing.append(match)
-            for key in ("id", "description", "status", "summary", "outputs", "note"):
+            for key in ("id", "name", "description", "status", "summary", "outputs", "note"):
                 if key in update:
                     match[key] = update[key]
             match["updated_at"] = datetime.now(timezone.utc).isoformat()

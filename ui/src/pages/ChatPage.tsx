@@ -16,6 +16,7 @@ import ToolCallCard from '../components/ToolCallCard'
 import GuardrailCard from '../components/GuardrailCard'
 import PlanPanel from '../components/PlanPanel'
 import PendingPlanBanner from '../components/PendingPlanBanner'
+import ArtifactPanel from '../components/ArtifactPanel'
 import { usePlans, PlansContext } from '../hooks/usePlans'
 import type { Plan } from '../hooks/usePlans'
 import { FileViewerModal } from '../components/FilePreview'
@@ -85,6 +86,8 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
   // Plans — shared state lives in usePlans (wired after useAGUI below);
   // reviewed on the right (PlanPanel), referenced from the chat/bottom banner.
   const [hasPlansPlugin, setHasPlansPlugin] = useState(false)
+  const [hasArtifactsPlugin, setHasArtifactsPlugin] = useState(false)
+  const [artifactRefreshKey, setArtifactRefreshKey] = useState(0)
   // Fresh object per focusPlan() call so repeat clicks re-trigger the panel's
   // expand-and-scroll effect even for the same plan id.
   const [focusedPlan, setFocusedPlan] = useState<{ id: string } | null>(null)
@@ -188,7 +191,7 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
 
   // File explorer
   const [hasWorkspacePlugin, setHasWorkspacePlugin] = useState(false)
-  const [sidebarTab, setSidebarTab] = useState<'plans' | 'files' | 'app'>('plans')
+  const [sidebarTab, setSidebarTab] = useState<'plans' | 'files' | 'artifacts' | 'app'>('plans')
 
   // App view curation — persisted on the session so the published
   // /app/<session-id> route reflects it.
@@ -270,12 +273,21 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
   const planToolResultCount = useMemo(
     () => toolCalls.filter(tc => (tc.name === 'propose_plan' || tc.name === 'update_plan') && tc.status === 'complete').length,
     [toolCalls])
+  const artifactToolResultCount = useMemo(
+    () => toolCalls.filter(tc => tc.name === 'publish_artifact' && tc.status === 'complete').length,
+    [toolCalls])
   const { plans, refresh: refreshPlans, submitDecision } = usePlans(
     activeSessionId,
     hasPlansPlugin || planToolResultCount > 0,
     onPlanDecided,
   )
   useEffect(() => { if (planToolResultCount > 0) refreshPlans() }, [planToolResultCount, refreshPlans])
+  useEffect(() => {
+    if (artifactToolResultCount <= 0) return
+    setArtifactRefreshKey(k => k + 1)
+    setSidebarTab('artifacts')
+    setSidebarCollapsed(false)
+  }, [artifactToolResultCount])
 
   const activePlanDraft = useMemo<Partial<Plan> | null>(() => {
     const draftCall = [...toolCalls].reverse().find(tc => tc.name === 'propose_plan' && tc.status === 'calling')
@@ -365,6 +377,7 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
   useEffect(() => {
     fetch(`${API}/plugins`).then(r => r.ok ? r.json() : []).then(plugins => {
       setHasPlansPlugin(plugins.some((p: any) => p.id === 'plans'))
+      setHasArtifactsPlugin(plugins.some((p: any) => p.id === 'artifacts'))
       setHasDataPlugin(plugins.some((p: any) => p.id === 'data'))
       setHasWorkspacePlugin(plugins.some((p: any) => p.id === 'workspace'))
     }).catch(() => {})
@@ -582,6 +595,7 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
 
   const showPlansSidebar = hasPlansPlugin || plans.length > 0 || planToolResultCount > 0
   const showFilesSidebar = hasWorkspacePlugin && !!projectId
+  const showArtifactsSidebar = hasArtifactsPlugin || artifactToolResultCount > 0
   // Insights is core (viz layer) — the sidebar is always available.
   const showSidebar = true
   const planSidebarOverlay = planReaderExpanded && sidebarTab === 'plans' && !sidebarCollapsed
@@ -864,6 +878,13 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
                 borderBottom: sidebarTab === 'files' ? '2px solid #1677ff' : '2px solid transparent',
               }}>Files</div>
             )}
+            {showArtifactsSidebar && (
+              <div onClick={() => { setPlanReaderExpanded(false); setSidebarTab('artifacts') }} style={{
+                flex: 1, padding: '8px 12px', textAlign: 'center', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                color: sidebarTab === 'artifacts' ? '#1677ff' : '#999',
+                borderBottom: sidebarTab === 'artifacts' ? '2px solid #1677ff' : '2px solid transparent',
+              }}>Artifacts</div>
+            )}
             <div onClick={() => { setPlanReaderExpanded(false); setSidebarTab('app') }} style={{
               flex: 1, padding: '8px 12px', textAlign: 'center', cursor: 'pointer', fontSize: 12, fontWeight: 600,
               color: sidebarTab === 'app' ? '#1677ff' : '#999',
@@ -888,6 +909,11 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
                 </div>
                 <ChatFileTree items={projectFiles} depth={0} onPreview={(path, name) => setFilePreviewTarget({ name, path })} />
               </div>
+            )}
+
+            {/* Artifacts tab — durable published reports/dashboards with version history */}
+            {sidebarTab === 'artifacts' && showArtifactsSidebar && (
+              <ArtifactPanel sessionId={activeSessionId} refreshKey={artifactRefreshKey} />
             )}
 
             {/* App tab — auto-composed session app (metrics + charts), curatable + publishable */}

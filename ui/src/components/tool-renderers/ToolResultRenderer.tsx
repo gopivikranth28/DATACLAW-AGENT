@@ -6,6 +6,7 @@ import NotebookLink from './NotebookLink'
 import { FileWriteDisplay, FileReadDisplay } from './FileDisplay'
 import ReportDisplay from './ReportDisplay'
 import MetricDisplay from './MetricDisplay'
+import PublishArtifactCard from './PublishArtifactCard'
 
 const AUTO_EXPAND_TOOLS = new Set([
   'execute_cell', 'display_cell_output', 'execute_code',
@@ -14,6 +15,7 @@ const AUTO_EXPAND_TOOLS = new Set([
   'ws_write_file', 'ws_read_file',
   'build_report',
   'report_add_section',
+  'publish_artifact',
   'insert_cell', 'edit_cell', 'edit_cell_source',
 ])
 
@@ -74,6 +76,8 @@ export default function ToolResultRenderer({ toolName, result, args, status, onF
     case 'build_report':
     case 'report_add_section':
       return <ReportDisplay data={parsed} onFileClick={onFileClick} />
+    case 'publish_artifact':
+      return <PublishArtifactCard data={parsed} />
     default:
       return <GenericResult result={result} />
   }

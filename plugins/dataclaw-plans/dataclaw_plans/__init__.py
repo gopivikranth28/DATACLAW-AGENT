@@ -72,7 +72,7 @@ class PlansPlugin:
                         "items": {
                             "type": "object",
                             "properties": {
-                                "id": {"type": "string", "description": "Stable step id; optional, name is used as fallback"},
+                                "id": {"type": "string", "description": "Stable step id; when provided, matching is by id only"},
                                 "name": {"type": "string", "description": "Step name to update"},
                                 "status": {"type": "string", "description": "New step status", "enum": ["not_started", "in_progress", "completed", "error", "blocked"]},
                                 "summary": {"type": "string", "description": "Step summary"},
@@ -80,7 +80,10 @@ class PlansPlugin:
                                 "outputs": {"type": "array", "items": {"type": "string"}, "description": "Output file paths"},
                                 "note": {"type": "string", "description": "Additional note"},
                             },
-                            "required": ["name"],
+                            "anyOf": [
+                                {"required": ["id"]},
+                                {"required": ["name"]},
+                            ],
                         },
                         "description": "Step updates with name and new status/summary",
                     },

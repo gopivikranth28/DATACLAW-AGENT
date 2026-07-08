@@ -3,6 +3,8 @@
 import pytest
 from pathlib import Path
 
+import builtins
+
 from dataclaw_workspace.config import WorkspaceConfig
 from dataclaw_workspace.tools import (
     ws_list_files,
@@ -12,6 +14,7 @@ from dataclaw_workspace.tools import (
     ws_exec,
     display_image,
     report_add_section,
+    _plotly_script_tag,
     _base_dir,
 )
 
@@ -181,3 +184,18 @@ async def test_report_add_section_builds_live_html_report(cfg):
     assert "Rows" in html
     assert "54,600" in html
     assert "DATACLAW_REPORT_SECTIONS_START" in html
+
+
+def test_plotly_script_tag_never_falls_back_to_cdn(monkeypatch):
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name.startswith("plotly"):
+            raise ImportError("plotly unavailable")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    tag = _plotly_script_tag()
+    assert "cdn.plot.ly" not in tag
+    assert "https://" not in tag
+    assert "window.Plotly" in tag

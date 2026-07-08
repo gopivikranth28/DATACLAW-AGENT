@@ -172,9 +172,15 @@ function parseCsvLine(line: string): string[] {
 }
 
 function SvgRenderer({ content }: { content: string }) {
+  const srcDoc = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#fafafa;}body{display:flex;justify-content:center;padding:16px;}svg{max-width:100%;height:auto;}</style></head><body>${content}</body></html>`
   return (
     <div style={{ textAlign: 'center', padding: 16, background: '#fafafa', borderRadius: 8 }}>
-      <div dangerouslySetInnerHTML={{ __html: content }} style={{ maxWidth: 700, margin: '0 auto' }} />
+      <iframe
+        title="SVG preview"
+        sandbox=""
+        srcDoc={srcDoc}
+        style={{ width: '100%', minHeight: 420, maxWidth: 760, border: 0, background: '#fafafa' }}
+      />
     </div>
   )
 }
@@ -230,6 +236,7 @@ function HtmlRenderer({ content, dirPath }: { content: string; dirPath?: string 
         blobUrl ? (
           <iframe
             src={blobUrl}
+            sandbox="allow-scripts"
             style={{ width: '100%', minHeight: 500, border: '1px solid #f0f0f0', borderRadius: 8, background: '#fff' }}
           />
         ) : null

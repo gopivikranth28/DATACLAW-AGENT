@@ -37,10 +37,14 @@ async def serve_file(path: str = Query(..., description="Absolute or workspace-r
     """Serve a file from the workspace. Validates the path is within workspace bounds."""
     file_path = Path(path).expanduser().resolve()
 
-    if not any(str(file_path).startswith(str(root)) for root in _allowed_roots()):
+    if not any(file_path.is_relative_to(root) for root in _allowed_roots()):
         raise HTTPException(403, "File path is outside allowed directories")
 
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(404, f"File not found: {path}")
 
-    return FileResponse(file_path)
+    headers = {"X-Content-Type-Options": "nosniff"}
+    if file_path.suffix.lower() in {".html", ".htm", ".svg"}:
+        headers["Content-Disposition"] = f'attachment; filename="{file_path.name}"'
+
+    return FileResponse(file_path, headers=headers)

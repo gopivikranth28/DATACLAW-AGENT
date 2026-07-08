@@ -446,7 +446,16 @@ def _plotly_script_tag() -> str:
         plotly_js = pio.get_plotlyjs().replace("</", "<\\/")
         return f"<script>{plotly_js}</script>"
     except Exception:
-        return '<script src="https://cdn.plot.ly/plotly-2.35.0.min.js"></script>'
+        return """<script>
+window.Plotly = window.Plotly || {
+  newPlot: function(target) {
+    var el = typeof target === "string" ? document.getElementById(target) : target;
+    if (el) {
+      el.innerHTML = '<div style="padding:18px;border:1px solid var(--line);border-radius:8px;color:var(--muted)">Plotly is unavailable in this runtime; chart data is embedded in the report source.</div>';
+    }
+  }
+};
+</script>"""
 
 
 def _render_report_section(section_type: str, data: dict[str, Any]) -> str:

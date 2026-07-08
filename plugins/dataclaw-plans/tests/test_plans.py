@@ -170,6 +170,53 @@ async def test_update_plan_new_step():
 
 
 @pytest.mark.asyncio
+async def test_update_plan_matches_by_id_when_name_changes():
+    r = await propose_plan(
+        name="Plan",
+        description="d",
+        steps=[{"name": "Original name", "description": "d"}],
+        session_id="sess-1",
+    )
+    pid = r["proposal_id"]
+    plan = await get_plan(proposal_id=pid)
+    step_id = plan["steps"][0]["id"]
+
+    result = await update_plan(
+        proposal_id=pid,
+        step_patches=[{"id": step_id, "name": "Renamed step", "status": "completed"}],
+        session_id="sess-1",
+    )
+
+    assert result["success"] is True
+    updated = await get_plan(proposal_id=pid)
+    assert len(updated["steps"]) == 1
+    assert updated["steps"][0]["id"] == step_id
+    assert updated["steps"][0]["name"] == "Renamed step"
+
+
+@pytest.mark.asyncio
+async def test_update_plan_does_not_name_match_when_stale_id_is_supplied():
+    r = await propose_plan(
+        name="Plan",
+        description="d",
+        steps=[{"name": "Step 1", "description": "d"}],
+        session_id="sess-1",
+    )
+    pid = r["proposal_id"]
+
+    await update_plan(
+        proposal_id=pid,
+        step_patches=[{"id": "step-deadbeef", "name": "Step 1", "status": "completed"}],
+        session_id="sess-1",
+    )
+
+    updated = await get_plan(proposal_id=pid)
+    assert len(updated["steps"]) == 2
+    assert updated["steps"][0]["status"] == "not_started"
+    assert updated["steps"][1]["id"] == "step-deadbeef"
+
+
+@pytest.mark.asyncio
 async def test_update_plan_not_found_returns_soft_failure():
     """Missing proposal returns success:false, doesn't raise."""
     result = await update_plan(proposal_id="nonexistent", session_id="sess-1")
