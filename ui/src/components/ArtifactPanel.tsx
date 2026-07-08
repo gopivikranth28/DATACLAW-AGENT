@@ -57,10 +57,25 @@ export default function ArtifactPanel({
     }
     setLoading(true)
     setError(null)
-    fetch(`${API}/artifacts?session_id=${encodeURIComponent(sessionId)}`)
-      .then(r => {
-        if (!r.ok) throw new Error(`Artifact library failed with ${r.status}`)
-        return r.json()
+    const requestUrl = apiUrl('/artifacts', { session_id: sessionId })
+    fetch(requestUrl, { headers: { Accept: 'application/json' } })
+      .then(async r => {
+        const text = await r.text()
+        let payload: any = null
+        try {
+          payload = text ? JSON.parse(text) : {}
+        } catch {
+          throw new Error(
+            r.ok
+              ? 'Artifacts API returned non-JSON. Restart Dataclaw so plugin routes register, then refresh.'
+              : `Artifact library failed with ${r.status}`,
+          )
+        }
+        if (!r.ok) {
+          const detail = typeof payload?.detail === 'string' ? payload.detail : ''
+          throw new Error(detail ? `Artifact library failed with ${r.status}: ${detail}` : `Artifact library failed with ${r.status}`)
+        }
+        return payload
       })
       .then(data => {
         const next = sortArtifacts(Array.isArray(data.artifacts) ? data.artifacts : [])
@@ -90,7 +105,7 @@ export default function ArtifactPanel({
         setArtifacts([])
         setSelectedId(null)
         setSelectedVersion(null)
-        setError(err instanceof Error ? err.message : 'Could not load artifact library')
+        setError(formatArtifactLoadError(err))
       })
       .finally(() => setLoading(false))
   }, [sessionId, focusArtifactId, focusVersion, focusKey])
@@ -241,26 +256,47 @@ export default function ArtifactPanel({
 }
 
 function artifactVersionUrl(artifactId: string, version: number, sessionId: string): string {
-  const params = new URLSearchParams({ version: String(version), session_id: sessionId || 'default' })
-  return `${API}/artifacts/${artifactId}?${params.toString()}`
+  return apiUrl(`/artifacts/${artifactId}`, { version, session_id: sessionId || 'default' })
 }
 
 function artifactExportUrl(artifactId: string, version: number, sessionId: string): string {
-  const params = new URLSearchParams({ version: String(version), session_id: sessionId || 'default' })
-  return `${API}/artifacts/${artifactId}/export?${params.toString()}`
+  return apiUrl(`/artifacts/${artifactId}/export`, { version, session_id: sessionId || 'default' })
 }
 
 function livingReportUrl(artifactId: string, sessionId: string): string {
-  const params = new URLSearchParams({ session_id: sessionId || 'default' })
-  return `${API}/artifacts/${artifactId}/living?${params.toString()}`
+  return apiUrl(`/artifacts/${artifactId}/living`, { session_id: sessionId || 'default' })
 }
 
 function toApiUrl(url: string): string {
   if (!url) return ''
   if (/^https?:\/\//i.test(url)) return url
-  if (url.startsWith('/api/')) return url
-  if (url.startsWith('/')) return `${API}${url}`
-  return `${API}/${url}`
+  if (url.startsWith('/api/')) return apiUrl(url.slice('/api'.length))
+  if (url.startsWith('/')) return apiUrl(url)
+  return apiUrl(`/${url}`)
+}
+
+function apiUrl(path: string, params: Record<string, string | number | boolean | null | undefined> = {}): string {
+  const base = (API || '/api').replace(/\/+$/, '')
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+  const query = new URLSearchParams()
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === null || value === undefined || value === '') return
+    query.set(key, String(value))
+  })
+  const raw = `${base}${normalizedPath}${query.toString() ? `?${query.toString()}` : ''}`
+  try {
+    return new URL(raw, window.location.href).toString()
+  } catch {
+    return raw
+  }
+}
+
+function formatArtifactLoadError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err || '')
+  if (message === 'The string did not match the expected pattern.') {
+    return 'Artifacts API request could not be built by the browser. Refresh the Dataclaw UI; if this persists, restart Dataclaw so the current frontend and backend are served together.'
+  }
+  return message || 'Could not load artifact library'
 }
 
 function sortArtifacts(items: ArtifactRecord[]): ArtifactRecord[] {
