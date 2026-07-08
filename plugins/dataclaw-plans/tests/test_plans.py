@@ -43,6 +43,8 @@ async def test_propose_plan():
     # Live plan still has the steps.
     plan = await get_plan(proposal_id=result["proposal_id"])
     assert len(plan["steps"]) == 2
+    assert plan["steps"][0]["plan_step_id"].startswith("step-")
+    assert "id" not in plan["steps"][0]
 
 
 @pytest.mark.asyncio
@@ -110,7 +112,7 @@ async def test_reproposal_returns_prior_snapshot_and_stable_step_ids():
         session_id="sess-1",
     )
     first = await get_plan(proposal_id=r1["proposal_id"])
-    kept_id = first["steps"][0]["id"]
+    kept_id = first["steps"][0]["plan_step_id"]
 
     r2 = await propose_plan(
         name="Plan v2", description="d",
@@ -125,8 +127,8 @@ async def test_reproposal_returns_prior_snapshot_and_stable_step_ids():
     prior = find_snapshot(r2["previous_snapshot_id"])
     assert prior["plan"]["name"] == "Plan v1"
     revised = await get_plan(proposal_id=r2["proposal_id"])
-    assert revised["steps"][0]["id"] == kept_id
-    assert revised["steps"][1]["id"].startswith("step-")
+    assert revised["steps"][0]["plan_step_id"] == kept_id
+    assert revised["steps"][1]["plan_step_id"].startswith("step-")
 
 
 # ── Update ──────────────────────────────────────────────────────────────────
@@ -179,18 +181,18 @@ async def test_update_plan_matches_by_id_when_name_changes():
     )
     pid = r["proposal_id"]
     plan = await get_plan(proposal_id=pid)
-    step_id = plan["steps"][0]["id"]
+    step_id = plan["steps"][0]["plan_step_id"]
 
     result = await update_plan(
         proposal_id=pid,
-        step_patches=[{"id": step_id, "name": "Renamed step", "status": "completed"}],
+        step_patches=[{"plan_step_id": step_id, "name": "Renamed step", "status": "completed"}],
         session_id="sess-1",
     )
 
     assert result["success"] is True
     updated = await get_plan(proposal_id=pid)
     assert len(updated["steps"]) == 1
-    assert updated["steps"][0]["id"] == step_id
+    assert updated["steps"][0]["plan_step_id"] == step_id
     assert updated["steps"][0]["name"] == "Renamed step"
 
 
@@ -206,14 +208,59 @@ async def test_update_plan_does_not_name_match_when_stale_id_is_supplied():
 
     await update_plan(
         proposal_id=pid,
-        step_patches=[{"id": "step-deadbeef", "name": "Step 1", "status": "completed"}],
+        step_patches=[{"plan_step_id": "step-deadbeef", "name": "Step 1", "status": "completed"}],
         session_id="sess-1",
     )
 
     updated = await get_plan(proposal_id=pid)
     assert len(updated["steps"]) == 2
     assert updated["steps"][0]["status"] == "not_started"
-    assert updated["steps"][1]["id"] == "step-deadbeef"
+    assert updated["steps"][1]["plan_step_id"] == "step-deadbeef"
+
+
+@pytest.mark.asyncio
+async def test_update_plan_accepts_legacy_id_alias_without_persisting_it():
+    r = await propose_plan(
+        name="Plan",
+        description="d",
+        steps=[{"name": "Original name", "description": "d"}],
+        session_id="sess-1",
+    )
+    pid = r["proposal_id"]
+    plan = await get_plan(proposal_id=pid)
+    step_id = plan["steps"][0]["plan_step_id"]
+
+    result = await update_plan(
+        proposal_id=pid,
+        step_patches=[{"id": step_id, "name": "Renamed from legacy id", "status": "completed"}],
+        session_id="sess-1",
+    )
+
+    assert result["success"] is True
+    updated = await get_plan(proposal_id=pid)
+    assert updated["steps"][0]["plan_step_id"] == step_id
+    assert "id" not in updated["steps"][0]
+    assert updated["steps"][0]["name"] == "Renamed from legacy id"
+
+
+@pytest.mark.asyncio
+async def test_update_plan_rejects_ambiguous_name_fallback():
+    r = await propose_plan(
+        name="Plan",
+        description="d",
+        steps=[
+            {"name": "Duplicate", "description": "d1"},
+            {"name": "Duplicate", "description": "d2"},
+        ],
+        session_id="sess-1",
+    )
+
+    with pytest.raises(ValueError, match="ambiguous"):
+        await update_plan(
+            proposal_id=r["proposal_id"],
+            step_patches=[{"name": "Duplicate", "status": "completed"}],
+            session_id="sess-1",
+        )
 
 
 @pytest.mark.asyncio
@@ -351,6 +398,31 @@ async def test_active_plan_context_hook():
     updated = await active_plan_context_hook(state)
     # Should have injected proposal_id
     assert updated["pending_tool_calls"][0]["tool_input"]["proposal_id"] == pid
+
+
+@pytest.mark.asyncio
+async def test_active_plan_context_hook_exposes_in_progress_plan_step_id():
+    r = await propose_plan(name="Plan", description="d", steps=[{"name": "s", "description": "d"}], session_id="sess-1")
+    pid = r["proposal_id"]
+    plan = await get_plan(proposal_id=pid)
+    step_id = plan["steps"][0]["plan_step_id"]
+    await update_plan(
+        proposal_id=pid,
+        step_patches=[{"plan_step_id": step_id, "name": "s", "status": "in_progress"}],
+        session_id="sess-1",
+    )
+
+    state = {
+        "session_id": "sess-1",
+        "messages": [],
+        "pending_tool_calls": [
+            {"tool_name": "update_plan", "tool_input": {"step_patches": []}},
+        ],
+    }
+    updated = await active_plan_context_hook(state)
+
+    assert updated["pending_tool_calls"][0]["tool_input"]["proposal_id"] == pid
+    assert updated["active_plan_step_id"] == step_id
 
 
 @pytest.mark.asyncio

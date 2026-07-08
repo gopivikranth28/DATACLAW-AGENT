@@ -5,6 +5,7 @@ description = "Dataclaw plugin — workspace file I/O and shell execution"
 requires-python = ">=3.12"
 dependencies = [
     "dataclaw",
+    "dataclaw-artifacts",
     "html-for-docx>=1.0",
 ]
 

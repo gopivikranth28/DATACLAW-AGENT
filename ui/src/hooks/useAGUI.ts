@@ -385,6 +385,54 @@ export function useAGUI(options?: { onRunFinished?: () => void }) {
           break
         }
 
+        if (name === 'artifact_published') {
+          const result = JSON.stringify({
+            success: true,
+            artifact_id: value?.artifact_id,
+            version: value?.version,
+            url: value?.url,
+            title: value?.title,
+            description: value?.description,
+          })
+          setState(prev => {
+            const alreadyRendered = prev.toolCalls.some(tc => {
+              if (tc.name !== 'publish_artifact' || !tc.result) return false
+              try {
+                const parsed = JSON.parse(tc.result)
+                return parsed?.artifact_id === value?.artifact_id && parsed?.version === value?.version
+              } catch {
+                return false
+              }
+            })
+            if (alreadyRendered) return prev
+
+            const activeIdx = prev.toolCalls
+              .map((tc, idx) => ({ tc, idx }))
+              .reverse()
+              .find(({ tc }) => tc.name === 'publish_artifact' && tc.status === 'calling')?.idx
+
+            if (activeIdx !== undefined) {
+              const updated = [...prev.toolCalls]
+              updated[activeIdx] = { ...updated[activeIdx], result, status: 'complete' }
+              return { ...prev, toolCalls: updated }
+            }
+
+            orderRef.current++
+            return {
+              ...prev,
+              toolCalls: [...prev.toolCalls, {
+                id: `artifact-event-${value?.artifact_id || Date.now()}-${value?.version || 'latest'}`,
+                name: 'publish_artifact',
+                args: '{}',
+                result,
+                status: 'complete',
+                order: orderRef.current,
+              }],
+            }
+          })
+          break
+        }
+
         if (!name.startsWith('subagent:')) break
 
         setState(prev => {

@@ -15,6 +15,7 @@ from dataclaw_workspace.tools import (
     display_image,
     report_add_section,
     _plotly_script_tag,
+    _typed_report_section,
     _base_dir,
 )
 
@@ -170,6 +171,8 @@ async def test_report_add_section_builds_live_html_report(cfg):
     )
     assert header["type"] == "report"
     assert header["updated"] is True
+    assert header["section"]["kind"] == "header"
+    assert "--dc-bg" in header["section"]["tokens"]
 
     await report_add_section(
         cfg=cfg,
@@ -184,6 +187,11 @@ async def test_report_add_section_builds_live_html_report(cfg):
     assert "Rows" in html
     assert "54,600" in html
     assert "DATACLAW_REPORT_SECTIONS_START" in html
+    assert "data-dc-section=\"header\"" in html
+    assert "data-dc-section=\"metric_row\"" in html
+    assert "data-dc-section-meta" in html
+    assert "--dc-bg" in html
+    assert "data-dc-runtime=\"plotly\"" in html
 
 
 def test_plotly_script_tag_never_falls_back_to_cdn(monkeypatch):
@@ -198,4 +206,15 @@ def test_plotly_script_tag_never_falls_back_to_cdn(monkeypatch):
     tag = _plotly_script_tag()
     assert "cdn.plot.ly" not in tag
     assert "https://" not in tag
+    assert "data-dc-runtime=\"plotly\"" in tag
     assert "window.Plotly" in tag
+
+
+def test_report_sections_use_artifact_contract():
+    first = _typed_report_section("kpi", {"title": "Summary", "metrics": [{"label": "Rows", "value": 10}]})
+    second = _typed_report_section("kpi", {"title": "Summary", "metrics": [{"label": "Rows", "value": 10}]})
+
+    assert first["kind"] == "metric_row"
+    assert first["section_id"] == second["section_id"]
+    assert first["payload"]["metric_count"] == 1
+    assert "--dc-danger" in first["tokens"]

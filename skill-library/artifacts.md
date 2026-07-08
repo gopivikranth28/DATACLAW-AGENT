@@ -84,7 +84,7 @@ Artifacts are hostile-content-safe by default. Follow these rules:
 - Ordinary external `<a href>` links may exist, but artifact runtime must escape
   them through the parent/open-in-tab affordance; do not attach custom link
   handlers.
-- The 5 MB cap applies to the published/exported single-file artifact, not the
+- The 25 MiB cap applies to the published/exported single-file artifact, not the
   living-report manifest store.
 
 If validation fails, fix once and retry. If it fails again, surface the

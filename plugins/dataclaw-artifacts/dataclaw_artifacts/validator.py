@@ -12,7 +12,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from dataclaw_artifacts.store import (
-    MAX_ARTIFACT_BYTES,
+    MAX_PUBLISHED_ARTIFACT_BYTES,
     allowed_roots,
     ensure_allowed_path,
     resolve_workspace_path,
@@ -26,10 +26,12 @@ FORBIDDEN_JS_PATTERNS = [
     (re.compile(r"\bWebSocket\s*\(", re.I), "web_socket"),
     (re.compile(r"\bEventSource\s*\(", re.I), "event_source"),
     (re.compile(r"\bnavigator\.sendBeacon\s*\(", re.I), "send_beacon"),
+    (re.compile(r"\bpostMessage\s*\(", re.I), "post_message"),
     (re.compile(r"\b(?:window\.)?open\s*\(", re.I), "window_open"),
     (re.compile(r"\b(?:window\.)?location(?:\.[A-Za-z_$][\w$]*)?\s*=", re.I), "location_assignment"),
     (re.compile(r"\b(?:window\.)?location\.(?:assign|replace)\s*\(", re.I), "location_navigation"),
 ]
+CSS_URL_RE = re.compile(r"url\(\s*(['\"]?)([^'\"\)]+)\1\s*\)", re.I)
 
 
 class ArtifactValidationError(ValueError):
@@ -53,6 +55,8 @@ class _Scanner(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=False)
         self.references: list[_Reference] = []
+        self.styles: list[str] = []
+        self._in_style = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self._scan_tag(tag, attrs)
@@ -60,9 +64,19 @@ class _Scanner(HTMLParser):
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self._scan_tag(tag, attrs)
 
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() == "style":
+            self._in_style = False
+
+    def handle_data(self, data: str) -> None:
+        if self._in_style:
+            self.styles.append(data)
+
     def _scan_tag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = tag.lower()
         attrs_by_name = {name.lower(): value or "" for name, value in attrs}
+        if tag == "style":
+            self._in_style = True
         if tag in FORBIDDEN_TAGS:
             raise ArtifactValidationError(
                 "forbidden_tag",
@@ -76,6 +90,8 @@ class _Scanner(HTMLParser):
                     f"Inline event handlers are not allowed: {attr_name}",
                     {"tag": tag, "attribute": attr_name},
                 )
+        if attrs_by_name.get("style"):
+            self.styles.append(attrs_by_name["style"])
         if tag == "script" and attrs_by_name.get("src"):
             self.references.append(_Reference(tag=tag, attr="src", value=attrs_by_name["src"]))
         elif tag == "link" and attrs_by_name.get("href"):
@@ -145,10 +161,10 @@ def _asset_path(ref_value: str, base_dir: Path | None, session_id: str, project_
     if not path.exists() or not path.is_file():
         raise ArtifactValidationError("asset_not_found", f"Asset not found: {ref_value}", {"src": ref_value})
     size = path.stat().st_size
-    if size > MAX_ARTIFACT_BYTES:
+    if size > MAX_PUBLISHED_ARTIFACT_BYTES:
         raise ArtifactValidationError(
             "asset_too_large",
-            f"Asset is too large ({size} bytes, max {MAX_ARTIFACT_BYTES})",
+            f"Asset is too large ({size} bytes, max {MAX_PUBLISHED_ARTIFACT_BYTES})",
             {"src": ref_value},
         )
     return path
@@ -158,6 +174,17 @@ def _asset_data_uri(path: Path) -> str:
     mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
     return f"data:{mime};base64,{encoded}"
+
+
+def _inline_css_asset_urls(css: str, base_dir: Path | None, session_id: str, project_id: str | None) -> str:
+    def repl(match: re.Match[str]) -> str:
+        value = match.group(2).strip()
+        if not value or value.startswith("#") or _is_inline(value):
+            return match.group(0)
+        path = _asset_path(value, base_dir, session_id, project_id)
+        return f'url("{_asset_data_uri(path)}")'
+
+    return CSS_URL_RE.sub(repl, css)
 
 
 def _inline_script_sources(html: str, base_dir: Path | None, session_id: str, project_id: str | None) -> str:
@@ -185,7 +212,28 @@ def _inline_stylesheets(html: str, base_dir: Path | None, session_id: str, proje
         href = match.group(3)
         path = _asset_path(href, base_dir, session_id, project_id)
         css = path.read_text(encoding="utf-8", errors="replace")
+        css = _inline_css_asset_urls(css, path.parent, session_id, project_id)
         return f"<style>{css}</style>"
+
+    return pattern.sub(repl, html)
+
+
+def _inline_style_blocks(html: str, base_dir: Path | None, session_id: str, project_id: str | None) -> str:
+    pattern = re.compile(r"(<style\b[^>]*>)(.*?)(</style>)", re.I | re.S)
+
+    def repl(match: re.Match[str]) -> str:
+        css = _inline_css_asset_urls(match.group(2), base_dir, session_id, project_id)
+        return f"{match.group(1)}{css}{match.group(3)}"
+
+    return pattern.sub(repl, html)
+
+
+def _inline_style_attributes(html: str, base_dir: Path | None, session_id: str, project_id: str | None) -> str:
+    pattern = re.compile(r"\bstyle=(['\"])(.*?)\1", re.I | re.S)
+
+    def repl(match: re.Match[str]) -> str:
+        css = _inline_css_asset_urls(match.group(2), base_dir, session_id, project_id)
+        return f"style={match.group(1)}{css}{match.group(1)}"
 
     return pattern.sub(repl, html)
 
@@ -211,10 +259,10 @@ def validate_and_prepare_html(
     project_id: str | None = None,
 ) -> str:
     encoded = html.encode("utf-8")
-    if len(encoded) > MAX_ARTIFACT_BYTES:
+    if len(encoded) > MAX_PUBLISHED_ARTIFACT_BYTES:
         raise ArtifactValidationError(
             "size_limit",
-            f"Artifact is too large ({len(encoded)} bytes, max {MAX_ARTIFACT_BYTES})",
+            f"Artifact is too large ({len(encoded)} bytes, max {MAX_PUBLISHED_ARTIFACT_BYTES})",
         )
 
     scanner = _Scanner()
@@ -230,6 +278,13 @@ def validate_and_prepare_html(
             raise ArtifactValidationError("external_asset", "Remote assets are not allowed", {"tag": ref.tag, ref.attr: ref.value})
         if _is_root_relative(ref.value):
             raise ArtifactValidationError("root_relative_asset", "Root-relative assets are not allowed", {"tag": ref.tag, ref.attr: ref.value})
+    for css in scanner.styles:
+        for match in CSS_URL_RE.finditer(css):
+            value = match.group(2).strip()
+            if _is_remote(value):
+                raise ArtifactValidationError("external_asset", "Remote CSS assets are not allowed", {"src": value})
+            if _is_root_relative(value):
+                raise ArtifactValidationError("root_relative_asset", "Root-relative CSS assets are not allowed", {"src": value})
 
     for rx, code in FORBIDDEN_JS_PATTERNS:
         if rx.search(html):
@@ -237,9 +292,14 @@ def validate_and_prepare_html(
 
     prepared = _inline_script_sources(html, base_dir, session_id, project_id)
     prepared = _inline_stylesheets(prepared, base_dir, session_id, project_id)
+    prepared = _inline_style_blocks(prepared, base_dir, session_id, project_id)
+    prepared = _inline_style_attributes(prepared, base_dir, session_id, project_id)
     prepared = _inline_images(prepared, base_dir, session_id, project_id)
 
     size = len(prepared.encode("utf-8"))
-    if size > MAX_ARTIFACT_BYTES:
-        raise ArtifactValidationError("size_limit", f"Prepared artifact is too large ({size} bytes, max {MAX_ARTIFACT_BYTES})")
+    if size > MAX_PUBLISHED_ARTIFACT_BYTES:
+        raise ArtifactValidationError(
+            "size_limit",
+            f"Prepared artifact is too large ({size} bytes, max {MAX_PUBLISHED_ARTIFACT_BYTES})",
+        )
     return prepared

@@ -16,13 +16,19 @@ from pathlib import Path
 from typing import Any
 
 from dataclaw.config.paths import workspaces_dir
+from dataclaw_artifacts.sections import (
+    TABLE_PREVIEW_MAX_BYTES,
+    clean_text,
+    normalize_section,
+    section_attrs as artifact_section_attrs,
+    section_meta_script as artifact_section_meta_script,
+)
 
 from dataclaw_workspace.config import WorkspaceConfig
 
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
 _REPORT_SECTION_START = "<!-- DATACLAW_REPORT_SECTIONS_START -->"
 _REPORT_SECTION_END = "<!-- DATACLAW_REPORT_SECTIONS_END -->"
-
 # Project directory override — set per-request via hook when a project is active.
 _project_dir: Path | None = None
 
@@ -328,7 +334,8 @@ async def report_add_section(
     resolved = _resolve_path(workspace_id, report_path)
     resolved.parent.mkdir(parents=True, exist_ok=True)
 
-    section_html = _render_report_section(section_type, data)
+    typed_section = _typed_report_section(section_type, data)
+    section_html = _render_report_section(section_type, data, typed_section)
     if resolved.exists():
         doc = resolved.read_text(encoding="utf-8")
         if _REPORT_SECTION_END in doc:
@@ -343,6 +350,7 @@ async def report_add_section(
         "type": "report",
         "html_path": str(resolved),
         "section_type": section_type,
+        "section": typed_section,
         "title": title,
         "size": resolved.stat().st_size,
         "updated": True,
@@ -361,16 +369,47 @@ def _report_shell(*, title: str, first_section: str) -> str:
   {plotly_script}
   <style>
     :root {{
-      --bg: #f4f6f8;
-      --paper: #ffffff;
-      --ink: #17202a;
-      --muted: #667085;
-      --line: #e6e9ef;
-      --accent: #2563eb;
-      --accent-soft: #eaf1ff;
-      --good: #15803d;
-      --warn: #b45309;
+      color-scheme: light dark;
+      --dc-bg: #f7f8fb;
+      --dc-surface: #ffffff;
+      --dc-surface-raised: #ffffff;
+      --dc-surface-muted: #fbfcfe;
+      --dc-ink: #111827;
+      --dc-muted: #667085;
+      --dc-line: #e5e7eb;
+      --dc-accent: #2563eb;
+      --dc-accent-soft: #e8f0ff;
+      --dc-good: #15803d;
+      --dc-warn: #b45309;
+      --dc-danger: #b91c1c;
+      --dc-shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
+      --bg: var(--dc-bg);
+      --paper: var(--dc-surface);
+      --ink: var(--dc-ink);
+      --muted: var(--dc-muted);
+      --line: var(--dc-line);
+      --accent: var(--dc-accent);
+      --accent-soft: var(--dc-accent-soft);
+      --good: var(--dc-good);
+      --warn: var(--dc-warn);
       --radius: 10px;
+    }}
+    :root[data-theme="dark"] {{
+      --dc-bg: #0f141b;
+      --dc-surface: #171d26;
+      --dc-surface-raised: #1f2733;
+      --dc-surface-muted: #141a22;
+      --dc-ink: #f2f5f8;
+      --dc-muted: #a5afbd;
+      --dc-line: #303846;
+      --dc-accent: #7aa7ff;
+      --dc-accent-soft: #1b2b46;
+      --dc-good: #6dd58c;
+      --dc-warn: #f3bd63;
+      --dc-danger: #ff8b8b;
+      --dc-shadow: none;
+      --good: var(--dc-good);
+      --warn: var(--dc-warn);
     }}
     * {{ box-sizing: border-box; }}
     body {{
@@ -381,23 +420,24 @@ def _report_shell(*, title: str, first_section: str) -> str:
     }}
     .r-page {{ max-width: 1040px; margin: 0 auto; padding: 28px 22px 40px; }}
     .r-hero {{
-      background: linear-gradient(135deg, #0f172a 0%, #1d4ed8 100%);
-      color: #fff;
-      border-radius: 14px;
+      background: var(--dc-surface);
+      color: var(--dc-ink);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
       padding: 30px;
       margin-bottom: 18px;
-      box-shadow: 0 18px 50px rgba(15, 23, 42, 0.18);
+      box-shadow: var(--dc-shadow);
     }}
-    .r-kicker {{ font-size: 12px; text-transform: uppercase; letter-spacing: .08em; opacity: .78; font-weight: 700; }}
+    .r-kicker {{ font-size: 12px; text-transform: uppercase; letter-spacing: 0; color: var(--accent); font-weight: 700; }}
     .r-hero h1 {{ margin: 8px 0 8px; font-size: 34px; line-height: 1.08; letter-spacing: 0; }}
-    .r-hero p {{ max-width: 760px; margin: 0; color: rgba(255,255,255,.82); font-size: 15px; }}
+    .r-hero p {{ max-width: 760px; margin: 0; color: var(--muted); font-size: 15px; }}
     .r-section {{
       background: var(--paper);
       border: 1px solid var(--line);
       border-radius: var(--radius);
       padding: 18px;
       margin: 14px 0;
-      box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+      box-shadow: var(--dc-shadow);
     }}
     .r-section h2, .r-section h3 {{ margin: 0 0 10px; line-height: 1.18; letter-spacing: 0; }}
     .r-section h2 {{ font-size: 21px; }}
@@ -405,20 +445,20 @@ def _report_shell(*, title: str, first_section: str) -> str:
     .r-grid {{ display: grid; gap: 12px; }}
     .r-grid.cols-2 {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
     .r-metrics {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }}
-    .r-metric {{ border: 1px solid var(--line); border-radius: 9px; padding: 14px; background: #fbfcfe; }}
-    .r-metric-label {{ font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }}
+    .r-metric {{ border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--dc-surface-muted); }}
+    .r-metric-label {{ font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0; font-weight: 700; }}
     .r-metric-value {{ font-size: 30px; font-weight: 760; margin-top: 4px; line-height: 1.1; }}
     .r-metric-delta {{ font-size: 12px; margin-top: 6px; color: var(--muted); }}
     .r-metric-delta.up {{ color: var(--good); }}
-    .r-metric-delta.down {{ color: #b91c1c; }}
+    .r-metric-delta.down {{ color: var(--dc-danger); }}
     .r-callout {{ border-left: 4px solid var(--accent); background: var(--accent-soft); padding: 13px 14px; border-radius: 8px; }}
     .r-findings {{ display: grid; gap: 10px; padding: 0; margin: 0; list-style: none; }}
-    .r-finding {{ padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }}
+    .r-finding {{ padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--dc-surface-raised); }}
     .r-chart-target {{ width: 100%; min-height: 390px; }}
     .r-caption {{ color: var(--muted); font-size: 12px; margin: 8px 2px 0; }}
     table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
     th, td {{ padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }}
-    th {{ color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }}
+    th {{ color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0; }}
     @media (max-width: 720px) {{
       .r-page {{ padding: 16px 12px 28px; }}
       .r-hero {{ padding: 22px; }}
@@ -439,35 +479,54 @@ def _report_shell(*, title: str, first_section: str) -> str:
 
 
 def _plotly_script_tag() -> str:
-    """Inline Plotly when available so generated reports work offline."""
-    try:
-        import plotly.io as pio
+    """Declare the Plotly dependency without inlining or reaching for a CDN.
 
-        plotly_js = pio.get_plotlyjs().replace("</", "<\\/")
-        return f"<script>{plotly_js}</script>"
-    except Exception:
-        return """<script>
+    Published artifacts receive the real Plotly bundle from the artifact runtime
+    under a per-response nonce. The tiny fallback keeps raw workspace previews
+    intelligible without competing with the artifact runtime when it is present.
+    """
+    return """<script data-dc-runtime="plotly">
 window.Plotly = window.Plotly || {
   newPlot: function(target) {
     var el = typeof target === "string" ? document.getElementById(target) : target;
     if (el) {
-      el.innerHTML = '<div style="padding:18px;border:1px solid var(--line);border-radius:8px;color:var(--muted)">Plotly is unavailable in this runtime; chart data is embedded in the report source.</div>';
+      el.innerHTML = '<div class="r-caption" style="padding:18px;border:1px solid var(--line);border-radius:8px">Plotly is loaded by the DataClaw artifact runtime; chart data is embedded in the report source.</div>';
     }
-  }
+  },
+  react: function(target, data, layout, config) {
+    return this.newPlot(target, data, layout, config);
+  },
+  purge: function() {}
 };
 </script>"""
 
 
-def _render_report_section(section_type: str, data: dict[str, Any]) -> str:
-    st = section_type.strip().lower()
+def _typed_report_section(section_type: str, data: dict[str, Any]) -> dict[str, Any]:
+    return normalize_section(section_type, data)
+
+
+def _section_attrs(typed: dict[str, Any]) -> str:
+    return artifact_section_attrs(typed)
+
+
+def _section_meta_script(typed: dict[str, Any]) -> str:
+    return artifact_section_meta_script(typed)
+
+
+def _render_report_section(section_type: str, data: dict[str, Any], typed: dict[str, Any] | None = None) -> str:
+    typed = typed or _typed_report_section(section_type, data)
+    st = str(typed.get("kind") or section_type).strip().lower()
+    attrs = _section_attrs(typed)
+    meta = _section_meta_script(typed)
     if st == "header":
         title = _esc(data.get("title", "Analysis Report"))
         kicker = _esc(data.get("kicker", "Dataclaw report"))
         subtitle = _esc(data.get("subtitle", data.get("summary", "")))
-        return f"""    <section class="r-hero">
+        return f"""    <section class="r-hero" {attrs}>
       <div class="r-kicker">{kicker}</div>
       <h1>{title}</h1>
       {f'<p>{subtitle}</p>' if subtitle else ''}
+      {meta}
     </section>"""
 
     if st == "metric_row":
@@ -482,9 +541,10 @@ def _render_report_section(section_type: str, data: dict[str, Any]) -> str:
         <div class="r-metric-value">{_esc(m.get("value", ""))}{f'<span style="font-size:13px;color:var(--muted);margin-left:5px">{_esc(m.get("unit", ""))}</span>' if m.get("unit") else ''}</div>
         {f'<div class="r-metric-delta {trend}">{_esc(m.get("delta", ""))}</div>' if m.get("delta") else ''}
       </div>""")
-        return f"""    <section class="r-section">
+        return f"""    <section class="r-section" {attrs}>
       {f'<h2>{_esc(data.get("title", ""))}</h2>' if data.get("title") else ''}
       <div class="r-metrics">{''.join(cards)}</div>
+      {meta}
     </section>"""
 
     if st == "chart":
@@ -497,7 +557,7 @@ def _render_report_section(section_type: str, data: dict[str, Any]) -> str:
         figure_json = json.dumps(figure, default=str).replace("</", "<\\/")
         title = _esc(data.get("title", figure.get("layout", {}).get("title", {}).get("text", "Chart") if isinstance(figure.get("layout"), dict) else "Chart"))
         caption = _esc(data.get("caption", ""))
-        return f"""    <section class="r-section">
+        return f"""    <section class="r-section" {attrs}>
       <h2>{title}</h2>
       <div id="{chart_id}" class="r-chart-target"></div>
       {f'<p class="r-caption">{caption}</p>' if caption else ''}
@@ -507,25 +567,28 @@ def _render_report_section(section_type: str, data: dict[str, Any]) -> str:
           Plotly.newPlot("{chart_id}", fig.data || [], fig.layout || {{}}, {{responsive: true, displaylogo: false}});
         }})();
       </script>
+      {meta}
     </section>"""
 
     if st == "findings":
         items = data.get("items", data.get("findings", []))
         lis = "".join(f'<li class="r-finding">{_esc(str(item))}</li>' for item in (items if isinstance(items, list) else []))
-        return f"""    <section class="r-section">
+        return f"""    <section class="r-section" {attrs}>
       <h2>{_esc(data.get("title", "Key findings"))}</h2>
       <ul class="r-findings">{lis}</ul>
+      {meta}
     </section>"""
 
     if st in {"callout", "text"}:
         title = _esc(data.get("title", "Note"))
         body = _paragraphs(data.get("body", data.get("text", "")))
         class_name = "r-callout" if st == "callout" else ""
-        return f"""    <section class="r-section">
+        return f"""    <section class="r-section" {attrs}>
       <div class="{class_name}">
         <h2>{title}</h2>
         {body}
       </div>
+      {meta}
     </section>"""
 
     if st == "table":
@@ -535,26 +598,42 @@ def _render_report_section(section_type: str, data: dict[str, Any]) -> str:
             raise ValueError("table section requires list 'columns' and list 'rows'")
         head = "".join(f"<th>{_esc(str(c))}</th>" for c in columns)
         body_rows = []
-        for row in rows[: int(data.get("max_rows", 20) or 20)]:
+        max_rows = int(data.get("max_rows", 20) or 20)
+        max_bytes = int(data.get("max_bytes", TABLE_PREVIEW_MAX_BYTES) or TABLE_PREVIEW_MAX_BYTES)
+        used_bytes = 0
+        truncated = len(rows) > max_rows
+        for row in rows[:max_rows]:
             if isinstance(row, dict):
                 cells = [_esc(row.get(c, "")) for c in columns]
             else:
                 cells = [_esc(v) for v in (row if isinstance(row, list) else [])]
-            body_rows.append("<tr>" + "".join(f"<td>{cell}</td>" for cell in cells) + "</tr>")
-        return f"""    <section class="r-section">
+            row_html = "<tr>" + "".join(f"<td>{cell}</td>" for cell in cells) + "</tr>"
+            row_bytes = len(row_html.encode("utf-8"))
+            if used_bytes + row_bytes > max_bytes:
+                truncated = True
+                break
+            body_rows.append(row_html)
+            used_bytes += row_bytes
+        typed["payload"]["rows_rendered"] = len(body_rows)
+        typed["payload"]["truncated"] = truncated
+        meta = _section_meta_script(typed)
+        note = '<p class="r-caption">Table preview truncated; source data remains in the notebook/workspace.</p>' if truncated else ''
+        return f"""    <section class="r-section" {attrs}>
       <h2>{_esc(data.get("title", "Table"))}</h2>
       <table><thead><tr>{head}</tr></thead><tbody>{''.join(body_rows)}</tbody></table>
+      {note}
+      {meta}
     </section>"""
 
     raise ValueError(f"Unsupported report section_type: {section_type}")
 
 
 def _esc(value: Any) -> str:
-    return html_lib.escape("" if value is None else str(value))
+    return html_lib.escape(clean_text(value))
 
 
 def _paragraphs(value: Any) -> str:
-    text = "" if value is None else str(value)
+    text = clean_text(value)
     parts = [p.strip() for p in text.split("\n\n") if p.strip()]
     return "".join(f"<p>{_esc(p)}</p>" for p in parts)
 

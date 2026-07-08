@@ -22,28 +22,36 @@ def _new_step_id() -> str:
     return f"step-{uuid.uuid4().hex[:8]}"
 
 
-def _step_key(step: dict[str, Any]) -> str:
-    explicit = str(step.get("id") or "").strip()
+def _step_identity(step: dict[str, Any]) -> str:
+    explicit = str(step.get("plan_step_id") or step.get("id") or step.get("step_id") or "").strip()
     if explicit:
         return explicit
-    return str(step.get("name") or "").strip().lower()
+    return ""
 
 
 def _normalize_steps(steps: list[dict[str, Any]], previous_steps: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     previous = previous_steps or []
-    previous_by_id = {str(s.get("id")): s for s in previous if s.get("id")}
-    previous_by_name = {str(s.get("name") or "").strip().lower(): s for s in previous if s.get("name")}
+    previous_by_id = {_step_identity(s): s for s in previous if _step_identity(s)}
+    previous_by_name: dict[str, list[dict[str, Any]]] = {}
+    for step in previous:
+        name_key = str(step.get("name") or "").strip().lower()
+        if name_key:
+            previous_by_name.setdefault(name_key, []).append(step)
 
     normalized: list[dict[str, Any]] = []
     for raw in steps:
         name = str(raw.get("name", "")).strip()
         description = str(raw.get("description", "")).strip()
-        provided_id = str(raw.get("id") or "").strip()
-        prior = previous_by_id.get(provided_id) if provided_id else previous_by_name.get(name.lower())
-        prior_id = str(prior.get("id")) if prior and prior.get("id") else ""
+        provided_id = _step_identity(raw)
+        prior = previous_by_id.get(provided_id) if provided_id else None
+        if prior is None and name:
+            name_matches = previous_by_name.get(name.lower(), [])
+            if len(name_matches) == 1:
+                prior = name_matches[0]
+        prior_id = _step_identity(prior) if prior else ""
         step_id = provided_id or prior_id or _new_step_id()
         normalized.append({
-            "id": step_id,
+            "plan_step_id": step_id,
             "name": name,
             "description": description,
             "status": str(raw.get("status") or "not_started"),
@@ -166,16 +174,27 @@ async def update_plan(
         existing = proposal.get("steps", [])
         for update in patches:
             step_name = str(update.get("name", "")).strip()
-            step_id = str(update.get("id") or "").strip()
+            step_id = _step_identity(update)
             if not step_id and not step_name:
-                raise ValueError("Each step update requires id or name")
-            match = next((s for s in existing if step_id and s.get("id") == step_id), None)
+                raise ValueError("Each step update requires plan_step_id or name")
+            match = next((s for s in existing if step_id and _step_identity(s) == step_id), None)
             if match is None and not step_id:
-                match = next((s for s in existing if s.get("name") == step_name), None)
+                matches = [s for s in existing if s.get("name") == step_name]
+                if len(matches) > 1:
+                    raise ValueError(f"Step name is ambiguous; use plan_step_id: {step_name}")
+                match = matches[0] if matches else None
             if match is None:
-                match = {"id": step_id or _new_step_id(), "name": step_name, "description": "", "status": "not_started"}
+                if step_id and not step_name:
+                    raise ValueError(f"Unknown plan_step_id requires name: {step_id}")
+                match = {"plan_step_id": step_id or _new_step_id(), "name": step_name, "description": "", "status": "not_started"}
                 existing.append(match)
-            for key in ("id", "name", "description", "status", "summary", "outputs", "note"):
+            if step_id:
+                match["plan_step_id"] = step_id
+            elif not match.get("plan_step_id"):
+                match["plan_step_id"] = _step_identity(match) or _new_step_id()
+            match.pop("id", None)
+            match.pop("step_id", None)
+            for key in ("name", "description", "status", "summary", "outputs", "note", "ready_for_validation", "gates"):
                 if key in update:
                     match[key] = update[key]
             match["updated_at"] = datetime.now(timezone.utc).isoformat()

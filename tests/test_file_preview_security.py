@@ -36,3 +36,21 @@ async def test_workspace_file_route_serves_html_as_attachment(tmp_path, monkeypa
 
     assert response.headers["content-disposition"] == 'attachment; filename="report.html"'
     assert response.headers["x-content-type-options"] == "nosniff"
+
+
+@pytest.mark.asyncio
+async def test_workspace_file_route_serves_svg_as_attachment(tmp_path, monkeypatch):
+    home = tmp_path / ".dataclaw"
+    monkeypatch.setattr(paths, "DATACLAW_HOME", home)
+    workspace = home / "workspaces"
+    workspace.mkdir(parents=True)
+    svg = workspace / "hostile.svg"
+    svg.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg"><script>fetch("/api/providers")</script></svg>',
+        encoding="utf-8",
+    )
+
+    response = await serve_file(path=str(svg))
+
+    assert response.headers["content-disposition"] == 'attachment; filename="hostile.svg"'
+    assert response.headers["x-content-type-options"] == "nosniff"

@@ -3,6 +3,7 @@ import { message } from 'antd'
 import { API } from '../api'
 
 export interface PlanStep {
+  plan_step_id?: string
   id?: string
   name: string
   description?: string

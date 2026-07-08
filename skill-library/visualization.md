@@ -147,7 +147,7 @@ Skill-generated sections should be representable as typed artifact sections:
 ```
 
 Use DataClaw theme tokens (`--dc-bg`, `--dc-ink`, `--dc-muted`,
-`--dc-accent`, `--dc-good`, `--dc-warn`, `--dc-bad`) rather than hard-coded
+`--dc-accent`, `--dc-good`, `--dc-warn`, `--dc-danger`) rather than hard-coded
 visual systems. Any custom HTML/JS must obey artifact validation: no external
 assets, no fetch/XHR/WebSocket, no iframes/objects/embeds/base tags, no inline
 event handlers, no JavaScript-driven navigation, and no relative assets that
@@ -157,7 +157,7 @@ resolve outside allowed workspace/project roots.
 Aggregate in the notebook, not the browser. Embed summary series as a
 `<script type="application/json">` island or a typed section payload. Keep each
 visual payload small; target <= 200 KB per chart/section. Never embed raw
-datasets in final visual artifacts. The 5 MB cap applies to the published or
+datasets in final visual artifacts. The 25 MiB cap applies to the published or
 exported single-file artifact, not the living-report manifest store.
 
 ## Chart-type selection

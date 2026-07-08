@@ -69,7 +69,7 @@ user asks for a broad report.
    executive callout, primary chart, supporting charts/tables, caveats, next
    steps.
 5. **Aggregate data** - compute summary series in pandas/polars. Never embed raw
-   datasets in the dashboard artifact. The 5 MB cap applies to published/exported
+   datasets in the dashboard artifact. The 25 MiB cap applies to published/exported
    single-file artifacts, not the living-report manifest store.
 6. **Visual evidence** - follow `visualization`: Plotly via `fig.show()`, KPIs
    via `display_metric`, captions via `display_cell_output`, and report sections

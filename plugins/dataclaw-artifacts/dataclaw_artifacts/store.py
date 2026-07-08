@@ -16,7 +16,9 @@ from typing import Any
 
 from dataclaw.config.paths import workspaces_dir
 
-MAX_ARTIFACT_BYTES = 5 * 1024 * 1024
+MAX_PUBLISHED_ARTIFACT_BYTES = 25 * 1024 * 1024
+MAX_EXPORTED_ARTIFACT_BYTES = 25 * 1024 * 1024
+MAX_ARTIFACT_BYTES = MAX_PUBLISHED_ARTIFACT_BYTES
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 
@@ -233,8 +235,10 @@ def write_artifact_version(
     project_id: str | None = None,
 ) -> dict[str, Any]:
     encoded = html.encode("utf-8")
-    if len(encoded) > MAX_ARTIFACT_BYTES:
-        raise ValueError(f"Artifact is too large ({len(encoded)} bytes, max {MAX_ARTIFACT_BYTES})")
+    if len(encoded) > MAX_PUBLISHED_ARTIFACT_BYTES:
+        raise ValueError(
+            f"Artifact is too large ({len(encoded)} bytes, max {MAX_PUBLISHED_ARTIFACT_BYTES})"
+        )
 
     artifact_id = artifact_id or new_artifact_id()
     path = artifact_dir(artifact_id)
@@ -334,7 +338,10 @@ def list_artifact_records(session_id: str = "", limit: int = 100) -> list[dict[s
         if session_id and meta.get("session_id") != session_id:
             continue
         records.append(meta)
-    records.sort(key=lambda r: str(r.get("updated_at") or r.get("created_at") or ""), reverse=True)
+    living = [r for r in records if r.get("kind") == "living_report"]
+    others = [r for r in records if r.get("kind") != "living_report"]
+    others.sort(key=lambda r: str(r.get("updated_at") or r.get("created_at") or ""), reverse=True)
+    records = living + others
     return records[: max(limit, 0)]
 
 

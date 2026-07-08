@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -7,9 +8,23 @@ import pytest
 import dataclaw.config.paths as paths
 from dataclaw_artifacts.compiler import compile_living_report
 from dataclaw_artifacts.hooks import artifact_capture_hook
-from dataclaw_artifacts.store import read_manifest_events, read_source
+from dataclaw_artifacts.sections import (
+    CHART_SUMMARY_MAX_BYTES,
+    SectionValidationError,
+    normalize_section,
+    section_attrs,
+    section_meta_script,
+)
+from dataclaw_artifacts.store import MAX_EXPORTED_ARTIFACT_BYTES, MAX_PUBLISHED_ARTIFACT_BYTES, read_manifest_events, read_source
 from dataclaw_artifacts.tools import list_artifacts, publish_artifact, read_artifact, report_note
-from dataclaw_artifacts.wrapper import ARTIFACT_CSP, artifact_host_shell
+from dataclaw_artifacts.wrapper import (
+    ARTIFACT_CSP,
+    _inject_head,
+    artifact_csp,
+    artifact_host_shell,
+    plotly_runtime_js,
+    plotly_runtime_source,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -128,6 +143,14 @@ async def test_publish_validation_rejects_live_calls_and_hostile_tags():
     assert navigation["success"] is False
     assert navigation["error"]["code"] == "live_data_call"
 
+    parent_message = await publish_artifact(
+        title="Bad Message",
+        html="<html><body><script>window.parent.postMessage({type:'artifact_external_link',href:'https://evil.example'}, '*')</script></body></html>",
+        session_id="s3",
+    )
+    assert parent_message["success"] is False
+    assert parent_message["error"]["code"] == "live_data_call"
+
 
 @pytest.mark.asyncio
 async def test_publish_inlines_relative_image_asset_and_writes_canonical_source():
@@ -174,6 +197,32 @@ async def test_publish_rejects_relative_asset_escape_outside_workspace(tmp_home)
 
 
 @pytest.mark.asyncio
+async def test_publish_rejects_symlink_asset_escape(tmp_home):
+    if not hasattr(os, "symlink"):
+        pytest.skip("symlink unavailable")
+
+    session_id = "s4-symlink"
+    root = _workspace(session_id)
+    report_dir = root / "reports"
+    report_dir.mkdir()
+    secret = tmp_home / "secret.js"
+    secret.write_text("console.log('outside')", encoding="utf-8")
+    symlink = report_dir / "leak.js"
+    symlink.symlink_to(secret)
+    source = report_dir / "symlink-report.html"
+    source.write_text("<html><body><script src='leak.js'></script></body></html>", encoding="utf-8")
+
+    result = await publish_artifact(
+        title="Symlink Report",
+        source_path="reports/symlink-report.html",
+        session_id=session_id,
+    )
+
+    assert result["success"] is False
+    assert result["error"]["code"] == "asset_outside_allowed_roots"
+
+
+@pytest.mark.asyncio
 async def test_publish_rejects_relative_asset_escape_to_other_session():
     session_id = "s4-source"
     root = _workspace(session_id)
@@ -194,21 +243,137 @@ async def test_publish_rejects_relative_asset_escape_to_other_session():
     assert result["error"]["code"] == "asset_outside_allowed_roots"
 
 
+@pytest.mark.asyncio
+async def test_publish_inlines_css_urls_and_rejects_remote_css_assets():
+    session_id = "s4-css"
+    root = _workspace(session_id)
+    report_dir = root / "reports"
+    report_dir.mkdir()
+    (report_dir / "tiny.png").write_bytes(b"png-bytes")
+    source = report_dir / "css-report.html"
+    source.write_text(
+        """
+        <html>
+          <head><style>.hero{background-image:url("tiny.png")}</style></head>
+          <body><div style="background:url('tiny.png')">Hello</div></body>
+        </html>
+        """,
+        encoding="utf-8",
+    )
+
+    result = await publish_artifact(
+        title="CSS Report",
+        source_path="reports/css-report.html",
+        session_id=session_id,
+    )
+
+    assert result["success"] is True
+    stored = read_source(result["artifact_id"], 1)
+    assert stored.count("data:image/png;base64,") == 2
+    assert "tiny.png" not in stored
+
+    remote = await publish_artifact(
+        title="Remote CSS",
+        html="<html><head><style>.x{background:url('https://example.com/pixel.png')}</style></head></html>",
+        session_id=session_id,
+    )
+
+    assert remote["success"] is False
+    assert remote["error"]["code"] == "external_asset"
+
+
 def test_host_shell_uses_sandboxed_child_and_no_egress_csp():
     shell = artifact_host_shell(
         artifact_id="art-1234abcd",
         version=1,
         title="Test",
-        source="<html><body><h1>Hello</h1></body></html>",
+        source="<html><head><script>window.x = 1</script></head><body><h1>Hello</h1></body></html>",
+        nonce="testnonce",
     )
 
     assert 'sandbox="allow-scripts"' in shell
     assert "frame.srcdoc = artifactSrcdoc" in shell
     assert "artifact_external_link" in shell
     assert "Blocked artifact navigation" in shell
+    assert "artifact-runtime/plotly.min.js" in shell
+    assert 'nonce="testnonce"' in shell
+    assert 'nonce=\\"testnonce\\"' in shell
+    assert "if (!event.isTrusted) return;" in shell
+    assert "event.source !== frame.contentWindow" in shell
     assert "connect-src 'none'" in ARTIFACT_CSP
     assert "navigate-to 'none'" in ARTIFACT_CSP
     assert "script-src 'unsafe-inline'" in ARTIFACT_CSP
+    assert "script-src 'nonce-testnonce'" in artifact_csp("testnonce")
+    assert "script-src 'unsafe-inline'" not in artifact_csp("testnonce")
+
+
+def test_nonce_injection_does_not_rewrite_script_text():
+    child = _inject_head(
+        '<html><head></head><body><script>var fig={"x":["<script>label"]};</script></body></html>',
+        "Script Text",
+        nonce="testnonce",
+    )
+
+    assert '<script nonce="testnonce">var fig=' in child
+    assert '<script>label' in child
+    assert '<script nonce="testnonce">label' not in child
+
+
+def test_plotly_runtime_uses_installed_bundle():
+    plotly_runtime_source.cache_clear()
+    plotly_runtime_js.cache_clear()
+    js = plotly_runtime_js()
+
+    assert "Plotly is unavailable" not in js
+    assert "window.Plotly" in js or "Plotly.register" in js
+    assert len(js.encode("utf-8")) > 100_000
+
+
+def test_plotly_runtime_prefers_ui_vendored_bundle(tmp_path, monkeypatch):
+    bundle = tmp_path / "ui" / "node_modules" / "plotly.js-dist-min" / "plotly.min.js"
+    bundle.parent.mkdir(parents=True)
+    bundle.write_text("window.Plotly = {newPlot: function(){}};", encoding="utf-8")
+
+    monkeypatch.setattr("dataclaw_artifacts.wrapper._repo_root", lambda: tmp_path)
+    plotly_runtime_source.cache_clear()
+    plotly_runtime_js.cache_clear()
+
+    source = plotly_runtime_source()
+    js = plotly_runtime_js()
+
+    assert source["kind"] == "ui_vendored"
+    assert source["path"] == str(bundle)
+    assert "window.Plotly" in js
+
+
+def test_artifact_caps_are_raised_for_runtime_exports():
+    assert MAX_PUBLISHED_ARTIFACT_BYTES == 25 * 1024 * 1024
+    assert MAX_EXPORTED_ARTIFACT_BYTES == 25 * 1024 * 1024
+
+
+def test_typed_sections_are_stable_and_validated():
+    data = {
+        "title": "Primary chart",
+        "plan_step_id": "step-eda",
+        "figure": {"data": [{"x": [1], "y": [2]}], "layout": {"title": {"text": "x"}}},
+    }
+    first = normalize_section("chart", data)
+    second = normalize_section("chart", data)
+
+    assert first["section_id"] == second["section_id"]
+    assert first["kind"] == "chart"
+    assert first["payload"]["series_count"] == 1
+    assert 'data-dc-section="chart"' in section_attrs(first)
+    assert "data-dc-section-meta" in section_meta_script(first)
+
+
+def test_typed_sections_reject_oversize_chart_summary():
+    too_large = {"figure": {"data": [{"x": ["x" * CHART_SUMMARY_MAX_BYTES]}]}}
+
+    with pytest.raises(SectionValidationError) as exc:
+        normalize_section("chart", too_large)
+
+    assert exc.value.code == "chart_summary_too_large"
 
 
 @pytest.mark.asyncio

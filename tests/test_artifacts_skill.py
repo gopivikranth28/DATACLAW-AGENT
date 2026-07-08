@@ -27,7 +27,7 @@ def test_artifacts_skill_is_bundled_and_parseable():
     assert "artifact publication is unavailable" in body
     assert "Use `publish_artifact` for a standalone report" in body
     assert "Use `report_note` for interpretation" in body
-    assert "5 MB cap applies to the published/exported single-file artifact" in body
+    assert "25 MiB cap applies to the published/exported single-file artifact" in body
     assert "Living-report attribution should travel by id, not by name." in body
     assert "Security contract" in body
     assert "Completion checklist" in body

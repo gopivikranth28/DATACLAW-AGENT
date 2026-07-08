@@ -1028,12 +1028,14 @@ version = "0.1.0"
 source = { editable = "plugins/dataclaw-workspace" }
 dependencies = [
     { name = "dataclaw" },
+    { name = "dataclaw-artifacts" },
     { name = "html-for-docx" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "dataclaw" },
+    { name = "dataclaw-artifacts" },
     { name = "html-for-docx", specifier = ">=1.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },

@@ -48,7 +48,8 @@ class PlansPlugin:
                         "items": {
                             "type": "object",
                             "properties": {
-                                "id": {"type": "string", "description": "Stable step id; generated automatically when omitted"},
+                                "plan_step_id": {"type": "string", "description": "Stable plan step id; generated automatically when omitted"},
+                                "id": {"type": "string", "description": "Deprecated alias for plan_step_id; accepted for legacy calls"},
                                 "name": {"type": "string", "description": "Step name"},
                                 "description": {"type": "string", "description": "What this step will do"},
                                 "status": {"type": "string", "description": "Step status", "enum": ["not_started", "in_progress", "completed", "error", "blocked"], "default": "not_started"},
@@ -72,7 +73,8 @@ class PlansPlugin:
                         "items": {
                             "type": "object",
                             "properties": {
-                                "id": {"type": "string", "description": "Stable step id; when provided, matching is by id only"},
+                                "plan_step_id": {"type": "string", "description": "Stable plan step id; when provided, matching is by id only"},
+                                "id": {"type": "string", "description": "Deprecated alias for plan_step_id; accepted for legacy calls"},
                                 "name": {"type": "string", "description": "Step name to update"},
                                 "status": {"type": "string", "description": "New step status", "enum": ["not_started", "in_progress", "completed", "error", "blocked"]},
                                 "summary": {"type": "string", "description": "Step summary"},
@@ -81,6 +83,7 @@ class PlansPlugin:
                                 "note": {"type": "string", "description": "Additional note"},
                             },
                             "anyOf": [
+                                {"required": ["plan_step_id"]},
                                 {"required": ["id"]},
                                 {"required": ["name"]},
                             ],

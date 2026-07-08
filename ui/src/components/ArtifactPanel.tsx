@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Button, Empty, Select, Spin, Tag, Tooltip } from 'antd'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Alert, Button, Empty, Select, Spin, Tag, Tooltip } from 'antd'
 import { DownloadOutlined, ExportOutlined, FileDoneOutlined, ReloadOutlined } from '@ant-design/icons'
 import { API } from '../api'
 
@@ -28,34 +28,47 @@ export default function ArtifactPanel({ sessionId, refreshKey = 0 }: {
 }) {
   const [artifacts, setArtifacts] = useState<ArtifactRecord[]>([])
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null)
+  const frameRef = useRef<HTMLIFrameElement | null>(null)
 
   const load = useCallback(() => {
     if (!sessionId) {
       setArtifacts([])
       setSelectedId(null)
       setSelectedVersion(null)
+      setError(null)
       return
     }
     setLoading(true)
+    setError(null)
     fetch(`${API}/artifacts?session_id=${encodeURIComponent(sessionId)}`)
-      .then(r => r.ok ? r.json() : { artifacts: [] })
+      .then(r => {
+        if (!r.ok) throw new Error(`Artifact library failed with ${r.status}`)
+        return r.json()
+      })
       .then(data => {
-        const next = Array.isArray(data.artifacts) ? data.artifacts : []
+        const next = sortArtifacts(Array.isArray(data.artifacts) ? data.artifacts : [])
+        const nextSelectedId = selectedId && next.some((a: ArtifactRecord) => a.artifact_id === selectedId)
+          ? selectedId
+          : next[0]?.artifact_id || null
+        const nextSelected = next.find((a: ArtifactRecord) => a.artifact_id === nextSelectedId) || null
         setArtifacts(next)
-        setSelectedId(current => current && next.some((a: ArtifactRecord) => a.artifact_id === current)
-          ? current
-          : next[0]?.artifact_id || null)
+        setSelectedId(nextSelectedId)
         setSelectedVersion(current => {
-          const selected = next.find((a: ArtifactRecord) => a.artifact_id === selectedId) || next[0]
-          if (selected?.kind === 'living_report') return null
-          return current && selected?.versions?.some((v: ArtifactVersion) => v.version === current)
+          if (nextSelected?.kind === 'living_report') return null
+          return current && nextSelected?.versions?.some((v: ArtifactVersion) => v.version === current)
             ? current
-            : selected?.latest_version || null
+            : nextSelected?.latest_version || null
         })
       })
-      .catch(() => setArtifacts([]))
+      .catch((err) => {
+        setArtifacts([])
+        setSelectedId(null)
+        setSelectedVersion(null)
+        setError(err instanceof Error ? err.message : 'Could not load artifact library')
+      })
       .finally(() => setLoading(false))
   }, [sessionId, selectedId])
 
@@ -67,12 +80,33 @@ export default function ArtifactPanel({ sessionId, refreshKey = 0 }: {
   )
   const version = selectedVersion || selected?.latest_version || null
   const isLivingReport = selected?.kind === 'living_report'
+  const versionExists = Boolean(
+    isLivingReport ||
+    !selected ||
+    (version && (selected.versions || []).some(v => v.version === version)),
+  )
   const artifactUrl = selected
     ? isLivingReport
       ? (selected.url || `${API}/artifacts/${selected.artifact_id}/living`)
-      : version ? `${API}/artifacts/${selected.artifact_id}?version=${version}` : ''
+      : version && versionExists ? `${API}/artifacts/${selected.artifact_id}?version=${version}` : ''
     : ''
   const exportUrl = selected && !isLivingReport && version ? `${API}/artifacts/${selected.artifact_id}/export?version=${version}` : ''
+  const postTheme = useCallback(() => {
+    const theme = window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+    frameRef.current?.contentWindow?.postMessage({ theme }, '*')
+  }, [])
+
+  useEffect(() => {
+    const media = window.matchMedia?.('(prefers-color-scheme: dark)')
+    if (!media) return
+    const onChange = () => postTheme()
+    if (media.addEventListener) media.addEventListener('change', onChange)
+    else media.addListener?.(onChange)
+    return () => {
+      if (media.removeEventListener) media.removeEventListener('change', onChange)
+      else media.removeListener?.(onChange)
+    }
+  }, [postTheme])
 
   const onSelectArtifact = (artifactId: string) => {
     const artifact = artifacts.find(a => a.artifact_id === artifactId)
@@ -89,11 +123,13 @@ export default function ArtifactPanel({ sessionId, refreshKey = 0 }: {
         <span style={{ fontSize: 13, fontWeight: 700, color: '#1f2937' }}>Artifact Library</span>
         <Tag style={{ marginLeft: 2, fontSize: 10 }}>{artifacts.length}</Tag>
         <Tooltip title="Refresh">
-          <Button size="small" type="text" icon={<ReloadOutlined />} onClick={load} style={{ marginLeft: 'auto' }} />
+          <Button size="small" type="text" icon={<ReloadOutlined />} loading={loading && artifacts.length > 0} onClick={load} style={{ marginLeft: 'auto' }} />
         </Tooltip>
       </div>
 
-      {loading && artifacts.length === 0 ? (
+      {error ? (
+        <Alert type="error" showIcon message="Artifact library unavailable" description={error} />
+      ) : loading && artifacts.length === 0 ? (
         <div style={{ textAlign: 'center', padding: 32 }}><Spin /></div>
       ) : artifacts.length === 0 ? (
         <Empty description="No published artifacts yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />
@@ -141,23 +177,44 @@ export default function ArtifactPanel({ sessionId, refreshKey = 0 }: {
                 </div>
               )}
 
-              <iframe
-                title={`${selected.artifact_id} v${version}`}
-                src={artifactUrl}
-                sandbox="allow-scripts"
-                loading="lazy"
-                style={{
-                  width: '100%',
-                  height: 620,
-                  border: '1px solid #edf0f4',
-                  borderRadius: 8,
-                  background: '#fff',
-                }}
-              />
+              {!versionExists ? (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="Artifact version unavailable"
+                  description={`Version ${version || 'unknown'} is not present in this artifact's history.`}
+                />
+              ) : artifactUrl ? (
+                <iframe
+                  ref={frameRef}
+                  title={isLivingReport ? `${selected.artifact_id} live` : `${selected.artifact_id} v${version}`}
+                  src={artifactUrl}
+                  sandbox="allow-scripts"
+                  loading="lazy"
+                  onLoad={postTheme}
+                  style={{
+                    width: '100%',
+                    height: 620,
+                    border: '1px solid #edf0f4',
+                    borderRadius: 8,
+                    background: '#fff',
+                  }}
+                />
+              ) : (
+                <Alert type="warning" showIcon message="Artifact URL unavailable" />
+              )}
             </div>
           )}
         </>
       )}
     </div>
   )
+}
+
+function sortArtifacts(items: ArtifactRecord[]): ArtifactRecord[] {
+  return [...items].sort((a, b) => {
+    if (a.kind === 'living_report' && b.kind !== 'living_report') return -1
+    if (a.kind !== 'living_report' && b.kind === 'living_report') return 1
+    return String(b.updated_at || '').localeCompare(String(a.updated_at || ''))
+  })
 }

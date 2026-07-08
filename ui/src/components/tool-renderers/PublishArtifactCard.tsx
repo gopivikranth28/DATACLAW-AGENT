@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { Alert, Button, Tag } from 'antd'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Alert, Button, Modal, Spin, Tag } from 'antd'
 import { DownloadOutlined, ExpandAltOutlined, FileDoneOutlined, ExportOutlined } from '@ant-design/icons'
 import { API } from '../../api'
 
@@ -18,11 +18,49 @@ interface PublishArtifactResult {
 }
 
 export default function PublishArtifactCard({ data }: { data: PublishArtifactResult }) {
-  const [expanded, setExpanded] = useState(true)
+  const [shouldMount, setShouldMount] = useState(false)
+  const [modalOpen, setModalOpen] = useState(false)
+  const mountRef = useRef<HTMLDivElement | null>(null)
+  const frameRef = useRef<HTMLIFrameElement | null>(null)
+  const modalFrameRef = useRef<HTMLIFrameElement | null>(null)
   const artifactUrl = useMemo(() => toApiUrl(data.url || ''), [data.url])
   const exportUrl = data.artifact_id && data.version
     ? `${API}/artifacts/${data.artifact_id}/export?version=${data.version}`
     : ''
+  const postTheme = useCallback(() => {
+    const theme = window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+    frameRef.current?.contentWindow?.postMessage({ theme }, '*')
+    modalFrameRef.current?.contentWindow?.postMessage({ theme }, '*')
+  }, [])
+
+  useEffect(() => {
+    const media = window.matchMedia?.('(prefers-color-scheme: dark)')
+    if (!media) return
+    const onChange = () => postTheme()
+    if (media.addEventListener) media.addEventListener('change', onChange)
+    else media.addListener?.(onChange)
+    return () => {
+      if (media.removeEventListener) media.removeEventListener('change', onChange)
+      else media.removeListener?.(onChange)
+    }
+  }, [artifactUrl, postTheme])
+
+  useEffect(() => {
+    if (!artifactUrl || shouldMount) return
+    const node = mountRef.current
+    if (!node || typeof IntersectionObserver === 'undefined') {
+      setShouldMount(true)
+      return
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some(entry => entry.isIntersecting || entry.intersectionRatio > 0)) {
+        setShouldMount(true)
+        observer.disconnect()
+      }
+    }, { rootMargin: '320px 0px' })
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [artifactUrl, shouldMount])
 
   if (data.success === false) {
     return (
@@ -49,10 +87,10 @@ export default function PublishArtifactCard({ data }: { data: PublishArtifactRes
   }
 
   return (
-    <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
+    <div ref={mountRef} style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8, padding: '9px 10px',
-        borderBottom: expanded ? '1px solid #edf0f4' : 0, flexWrap: 'wrap',
+        borderBottom: '1px solid #edf0f4', flexWrap: 'wrap',
       }}>
         <FileDoneOutlined style={{ color: '#1677ff', fontSize: 15 }} />
         <span style={{ fontSize: 12, fontWeight: 650, color: '#1f2937' }}>Artifact published</span>
@@ -60,27 +98,50 @@ export default function PublishArtifactCard({ data }: { data: PublishArtifactRes
         <Tag style={{ margin: 0, fontSize: 10 }}>v{data.version}</Tag>
         {data.deduped && <Tag color="gold" style={{ margin: 0, fontSize: 10 }}>deduped</Tag>}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-          <Button size="small" icon={<ExpandAltOutlined />} onClick={() => setExpanded(v => !v)}>
-            {expanded ? 'Collapse' : 'Expand'}
-          </Button>
+          <Button size="small" icon={<ExpandAltOutlined />} onClick={() => setModalOpen(true)}>Expand</Button>
           <Button size="small" icon={<ExportOutlined />} href={artifactUrl} target="_blank">Open</Button>
           <Button size="small" icon={<DownloadOutlined />} href={exportUrl}>Export</Button>
         </div>
       </div>
-      {expanded && (
+      {shouldMount ? (
         <iframe
+          ref={frameRef}
           title={`${data.artifact_id} v${data.version}`}
           src={artifactUrl}
           sandbox="allow-scripts"
           loading="lazy"
+          onLoad={postTheme}
           style={{ display: 'block', width: '100%', height: 560, border: 0, background: '#fff' }}
         />
+      ) : (
+        <div style={{ height: 220, display: 'grid', placeItems: 'center', background: '#fff' }}>
+          <Spin size="small" />
+        </div>
       )}
       {data.source_path && (
         <div style={{ padding: '6px 10px', borderTop: '1px solid #edf0f4', fontSize: 11, color: '#98a2b3' }}>
           Source: <code>{data.source_path}</code>
         </div>
       )}
+      <Modal
+        open={modalOpen}
+        title={`${data.artifact_id} v${data.version}`}
+        footer={null}
+        width="min(1200px, 96vw)"
+        onCancel={() => setModalOpen(false)}
+        styles={{ body: { padding: 0 } }}
+      >
+        {modalOpen && (
+          <iframe
+            ref={modalFrameRef}
+            title={`${data.artifact_id} v${data.version} expanded`}
+            src={artifactUrl}
+            sandbox="allow-scripts"
+            onLoad={postTheme}
+            style={{ display: 'block', width: '100%', height: 'min(78vh, 860px)', border: 0, background: '#fff' }}
+          />
+        )}
+      </Modal>
     </div>
   )
 }
