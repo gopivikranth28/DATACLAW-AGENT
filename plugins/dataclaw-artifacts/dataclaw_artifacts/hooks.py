@@ -23,6 +23,7 @@ async def artifact_context_hook(state: AgentState) -> AgentState:
     pending = state.get("pending_tool_calls", [])
     session_id = state.get("session_id", "")
     project_id = state.get("project_id", "")
+    active_plan_step_id = str(state.get("active_plan_step_id") or "").strip()
 
     if not pending:
         return state
@@ -37,6 +38,8 @@ async def artifact_context_hook(state: AgentState) -> AgentState:
                 injected["session_id"] = session_id
             if project_id and not injected.get("project_id"):
                 injected["project_id"] = project_id
+            if tool_name == "report_note" and active_plan_step_id and not injected.get("plan_step_id"):
+                injected["plan_step_id"] = active_plan_step_id
             tc = {**tc, "tool_input": injected}
         updated.append(tc)
 
