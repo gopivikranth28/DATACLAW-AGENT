@@ -73,11 +73,17 @@ Artifacts are hostile-content-safe by default. Follow these rules:
   DataClaw APIs or the network.
 - Aggregate in the notebook; embed only summary JSON or typed section payloads.
 - No remote `script src`, `link href`, or remote `img src`.
+- Relative file assets are allowed only when their resolved path stays inside
+  allowed workspace/project roots; never use `../` paths to reach outside the
+  report's workspace.
 - No `<iframe>`, `<object>`, `<embed>`, or `<base>`.
 - No inline event handlers such as `onclick`; use `addEventListener`.
+- No JavaScript-driven navigation such as `window.open`, `location = ...`,
+  `location.assign(...)`, or `location.replace(...)`.
 - Use DataClaw theme tokens (`--dc-*`) instead of one-off visual systems.
-- External links may exist, but artifact runtime must escape them through the
-  parent/open-in-tab affordance.
+- Ordinary external `<a href>` links may exist, but artifact runtime must escape
+  them through the parent/open-in-tab affordance; do not attach custom link
+  handlers.
 - The 5 MB cap applies to the published/exported single-file artifact, not the
   living-report manifest store.
 

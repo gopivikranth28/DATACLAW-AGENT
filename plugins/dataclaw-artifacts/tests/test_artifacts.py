@@ -120,6 +120,14 @@ async def test_publish_validation_rejects_live_calls_and_hostile_tags():
     assert remote["success"] is False
     assert remote["error"]["code"] == "external_asset"
 
+    navigation = await publish_artifact(
+        title="Bad Navigation",
+        html="<html><body><script>window.location='https://evil.example/leak'</script></body></html>",
+        session_id="s3",
+    )
+    assert navigation["success"] is False
+    assert navigation["error"]["code"] == "live_data_call"
+
 
 @pytest.mark.asyncio
 async def test_publish_inlines_relative_image_asset_and_writes_canonical_source():
@@ -143,6 +151,49 @@ async def test_publish_inlines_relative_image_asset_and_writes_canonical_source(
     assert "data:image/png;base64," in source.read_text(encoding="utf-8")
 
 
+@pytest.mark.asyncio
+async def test_publish_rejects_relative_asset_escape_outside_workspace(tmp_home):
+    session_id = "s4-escape"
+    root = _workspace(session_id)
+    report_dir = root / "reports"
+    report_dir.mkdir()
+    secret = tmp_home / "secret.txt"
+    secret.write_text("SECRET-OUTSIDE-WORKSPACE", encoding="utf-8")
+    rel_secret = Path("../../..") / secret.name
+    source = report_dir / "escape-report.html"
+    source.write_text(f"<html><body><img src='{rel_secret}'></body></html>", encoding="utf-8")
+
+    result = await publish_artifact(
+        title="Escape Report",
+        source_path="reports/escape-report.html",
+        session_id=session_id,
+    )
+
+    assert result["success"] is False
+    assert result["error"]["code"] == "asset_outside_allowed_roots"
+
+
+@pytest.mark.asyncio
+async def test_publish_rejects_relative_asset_escape_to_other_session():
+    session_id = "s4-source"
+    root = _workspace(session_id)
+    other = _workspace("s4-other")
+    report_dir = root / "reports"
+    report_dir.mkdir()
+    (other / "other.png").write_bytes(b"not-for-this-session")
+    source = report_dir / "cross-session-report.html"
+    source.write_text("<html><body><img src='../../s4-other/other.png'></body></html>", encoding="utf-8")
+
+    result = await publish_artifact(
+        title="Cross Session Report",
+        source_path="reports/cross-session-report.html",
+        session_id=session_id,
+    )
+
+    assert result["success"] is False
+    assert result["error"]["code"] == "asset_outside_allowed_roots"
+
+
 def test_host_shell_uses_sandboxed_child_and_no_egress_csp():
     shell = artifact_host_shell(
         artifact_id="art-1234abcd",
@@ -152,8 +203,11 @@ def test_host_shell_uses_sandboxed_child_and_no_egress_csp():
     )
 
     assert 'sandbox="allow-scripts"' in shell
-    assert "srcdoc=" in shell
+    assert "frame.srcdoc = artifactSrcdoc" in shell
+    assert "artifact_external_link" in shell
+    assert "Blocked artifact navigation" in shell
     assert "connect-src 'none'" in ARTIFACT_CSP
+    assert "navigate-to 'none'" in ARTIFACT_CSP
     assert "script-src 'unsafe-inline'" in ARTIFACT_CSP
 
 

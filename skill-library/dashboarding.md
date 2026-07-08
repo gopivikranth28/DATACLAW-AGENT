@@ -125,6 +125,9 @@ artifact tooling.
 - Raw row-level data embedded in browser payloads.
 - External assets, remote images, fetch calls, inline event handlers, or custom
   script patterns that artifact validation will reject.
+- Relative asset paths that escape the workspace/project root.
+- JavaScript-driven navigation (`window.open`, `location = ...`,
+  `location.assign`, `location.replace`) instead of ordinary external links.
 
 ## Standard deliverables
 - 2-3 KPI metric tiles answering the stated question.

@@ -137,7 +137,7 @@ Skill-generated sections should be representable as typed artifact sections:
   "kind": "chart",
   "title": "Revenue by segment",
   "caption": "Enterprise drove 62% of growth; SMB declined after Q3.",
-  "step_id": "s2",
+  "plan_step_id": "s2",
   "data_policy": "aggregate_only",
   "payload": {
     "plotly_json_asset": "sha256:...",
@@ -150,7 +150,8 @@ Use DataClaw theme tokens (`--dc-bg`, `--dc-ink`, `--dc-muted`,
 `--dc-accent`, `--dc-good`, `--dc-warn`, `--dc-bad`) rather than hard-coded
 visual systems. Any custom HTML/JS must obey artifact validation: no external
 assets, no fetch/XHR/WebSocket, no iframes/objects/embeds/base tags, no inline
-event handlers.
+event handlers, no JavaScript-driven navigation, and no relative assets that
+resolve outside allowed workspace/project roots.
 
 ## Data contract
 Aggregate in the notebook, not the browser. Embed summary series as a

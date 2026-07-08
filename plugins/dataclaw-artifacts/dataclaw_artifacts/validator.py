@@ -11,7 +11,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from dataclaw_artifacts.store import MAX_ARTIFACT_BYTES, resolve_workspace_path
+from dataclaw_artifacts.store import (
+    MAX_ARTIFACT_BYTES,
+    allowed_roots,
+    ensure_allowed_path,
+    resolve_workspace_path,
+    workspace_base,
+)
 
 FORBIDDEN_TAGS = {"iframe", "object", "embed", "base"}
 FORBIDDEN_JS_PATTERNS = [
@@ -20,6 +26,9 @@ FORBIDDEN_JS_PATTERNS = [
     (re.compile(r"\bWebSocket\s*\(", re.I), "web_socket"),
     (re.compile(r"\bEventSource\s*\(", re.I), "event_source"),
     (re.compile(r"\bnavigator\.sendBeacon\s*\(", re.I), "send_beacon"),
+    (re.compile(r"\b(?:window\.)?open\s*\(", re.I), "window_open"),
+    (re.compile(r"\b(?:window\.)?location(?:\.[A-Za-z_$][\w$]*)?\s*=", re.I), "location_assignment"),
+    (re.compile(r"\b(?:window\.)?location\.(?:assign|replace)\s*\(", re.I), "location_navigation"),
 ]
 
 
@@ -97,6 +106,21 @@ def _is_root_relative(value: str) -> bool:
     return value.strip().startswith("/")
 
 
+def _asset_owner_root(base_dir: Path, session_id: str, project_id: str | None) -> Path:
+    resolved_base = ensure_allowed_path(base_dir)
+    roots = [workspace_base(session_id, project_id).resolve(), *allowed_roots()]
+    containing = []
+    for root in roots:
+        try:
+            resolved_base.relative_to(root)
+            containing.append(root)
+        except ValueError:
+            continue
+    if not containing:
+        return resolved_base
+    return max(containing, key=lambda root: len(root.parts))
+
+
 def _asset_path(ref_value: str, base_dir: Path | None, session_id: str, project_id: str | None) -> Path:
     value = ref_value.strip()
     if _is_remote(value):
@@ -105,9 +129,28 @@ def _asset_path(ref_value: str, base_dir: Path | None, session_id: str, project_
         raise ArtifactValidationError("unsupported_asset_reference", "Only relative file assets can be inlined", {"src": ref_value})
     if _is_root_relative(value):
         raise ArtifactValidationError("root_relative_asset", "Root-relative assets are not allowed", {"src": ref_value})
-    path = (base_dir / value).resolve() if base_dir is not None else resolve_workspace_path(value, session_id=session_id, project_id=project_id)
+    if base_dir is not None:
+        try:
+            path = ensure_allowed_path(base_dir / value)
+            owner_root = _asset_owner_root(base_dir, session_id, project_id)
+            path.relative_to(owner_root)
+        except ValueError as exc:
+            raise ArtifactValidationError(
+                "asset_outside_allowed_roots",
+                "Relative asset path resolves outside the artifact workspace root",
+                {"src": ref_value},
+            ) from exc
+    else:
+        path = resolve_workspace_path(value, session_id=session_id, project_id=project_id)
     if not path.exists() or not path.is_file():
         raise ArtifactValidationError("asset_not_found", f"Asset not found: {ref_value}", {"src": ref_value})
+    size = path.stat().st_size
+    if size > MAX_ARTIFACT_BYTES:
+        raise ArtifactValidationError(
+            "asset_too_large",
+            f"Asset is too large ({size} bytes, max {MAX_ARTIFACT_BYTES})",
+            {"src": ref_value},
+        )
     return path
 
 
