@@ -621,7 +621,7 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
 
   const showPlansSidebar = hasPlansPlugin || plans.length > 0 || planToolResultCount > 0
   const showFilesSidebar = !!effectiveProjectId
-  const showArtifactsSidebar = hasArtifactsPlugin || artifactToolResultCount > 0
+  const showArtifactsSidebar = Boolean(activeSessionId) || hasArtifactsPlugin || artifactToolResultCount > 0
   const showCompatibilityApp = appItems.length > 0
   // Insights is core (viz layer) — the sidebar is always available.
   const showSidebar = true
