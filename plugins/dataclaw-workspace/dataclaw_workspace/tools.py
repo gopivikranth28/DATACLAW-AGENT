@@ -11,6 +11,7 @@ import asyncio
 import difflib
 import html as html_lib
 import json
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,10 @@ from dataclaw_workspace.config import WorkspaceConfig
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
 _REPORT_SECTION_START = "<!-- DATACLAW_REPORT_SECTIONS_START -->"
 _REPORT_SECTION_END = "<!-- DATACLAW_REPORT_SECTIONS_END -->"
+_REPORT_SHELL_CSS_ATTR = 'data-dc-report-shell-css'
+_REPORT_SHELL_SCRIPT_ATTR = 'data-dc-report-shell-script'
+_BODY_OPEN_RE = re.compile(r"(<body\b[^>]*>)", re.IGNORECASE)
+_BODY_CLOSE_RE = re.compile(r"</body\s*>", re.IGNORECASE)
 # Project directory override — set per-request via hook when a project is active.
 _project_dir: Path | None = None
 
@@ -339,6 +344,7 @@ async def report_add_section(
     section_html = _render_report_section(section_type, data, typed_section)
     if resolved.exists():
         doc = resolved.read_text(encoding="utf-8")
+        doc = _ensure_report_shell_context(doc)
         if typed_section.get("kind") == "chart":
             doc = _ensure_plotly_runtime(doc)
         if _REPORT_SECTION_END in doc:
@@ -372,7 +378,7 @@ def _report_shell(*, title: str, first_section: str, include_plotly: bool = Fals
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{safe_title}</title>
   {plotly_script}
-  <style>
+  <style {_REPORT_SHELL_CSS_ATTR}>
 {shell_css}
   </style>
 </head>
@@ -384,7 +390,7 @@ def _report_shell(*, title: str, first_section: str, include_plotly: bool = Fals
 {first_section}
     {_REPORT_SECTION_END}
   </main>
-  <script>
+  <script {_REPORT_SHELL_SCRIPT_ATTR}>
 {shell_script}
   </script>
 </body>
@@ -723,6 +729,41 @@ def _ensure_plotly_runtime(doc: str) -> str:
     if "</head>" in doc:
         return doc.replace("</head>", f"  {runtime}\n</head>", 1)
     return runtime + "\n" + doc
+
+
+def _ensure_report_shell_context(doc: str) -> str:
+    """Upgrade existing report HTML with the current shell CSS/JS affordances."""
+    migrated = doc
+    if _REPORT_SHELL_CSS_ATTR not in migrated and ".r-story-nav" not in migrated:
+        style = f"  <style {_REPORT_SHELL_CSS_ATTR}>\n{_report_shell_css()}\n  </style>\n"
+        if "</head>" in migrated:
+            migrated = migrated.replace("</head>", style + "</head>", 1)
+        else:
+            migrated = style + migrated
+
+    controls = '  <div class="r-progress" aria-hidden="true"><span></span></div>\n  <nav class="r-story-nav" aria-label="Report sections"></nav>\n'
+    if 'class="r-progress"' not in migrated:
+        migrated = _insert_after_body_open(migrated, controls)
+    if 'class="r-story-nav"' not in migrated:
+        migrated = _insert_after_body_open(migrated, '  <nav class="r-story-nav" aria-label="Report sections"></nav>\n')
+
+    script_present = (
+        _REPORT_SHELL_SCRIPT_ATTR in migrated
+        or "document.querySelectorAll('.r-hero, .r-section')" in migrated
+    )
+    if not script_present:
+        script = f"  <script {_REPORT_SHELL_SCRIPT_ATTR}>\n{_report_shell_script()}\n  </script>"
+        if _BODY_CLOSE_RE.search(migrated):
+            migrated = _BODY_CLOSE_RE.sub(script + r"\g<0>", migrated, count=1)
+        else:
+            migrated += "\n" + script
+    return migrated
+
+
+def _insert_after_body_open(doc: str, html: str) -> str:
+    if _BODY_OPEN_RE.search(doc):
+        return _BODY_OPEN_RE.sub(r"\g<1>\n" + html, doc, count=1)
+    return html + doc
 
 
 def _typed_report_section(section_type: str, data: dict[str, Any]) -> dict[str, Any]:

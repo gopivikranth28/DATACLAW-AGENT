@@ -7,6 +7,7 @@ import { FileWriteDisplay, FileReadDisplay } from './FileDisplay'
 import ReportDisplay from './ReportDisplay'
 import MetricDisplay from './MetricDisplay'
 import PublishArtifactCard from './PublishArtifactCard'
+import { reportPreviewUrl } from '../reportPreview'
 
 const AUTO_EXPAND_TOOLS = new Set([
   'execute_cell', 'display_cell_output', 'execute_code',
@@ -14,7 +15,6 @@ const AUTO_EXPAND_TOOLS = new Set([
   'open_notebook',
   'ws_write_file', 'ws_read_file',
   'build_report',
-  'report_add_section',
   'publish_artifact',
   'insert_cell', 'edit_cell', 'edit_cell_source',
 ])
@@ -25,6 +25,7 @@ const CUSTOM_RENDER_TOOLS = new Set([
   'close_notebook',
   'propose_plan',
   'update_plan',
+  'report_add_section',
 ])
 
 export function shouldAutoExpand(toolName: string): boolean {
@@ -104,6 +105,11 @@ function ReportUpdateNotice({ data, onFileClick }: {
   const htmlPath = data?.html_path || data?.path
   const sectionType = data?.section_type || data?.section?.kind || 'section'
   const name = htmlPath?.split('/').pop() || 'report.html'
+  const openPreview = () => {
+    if (!htmlPath) return
+    if (onFileClick) onFileClick(htmlPath)
+    else window.open(reportPreviewUrl(htmlPath), '_blank')
+  }
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
@@ -113,18 +119,16 @@ function ReportUpdateNotice({ data, onFileClick }: {
       {htmlPath && (
         <>
           <span style={{ color: '#98a2b3' }}>{name}</span>
-          {onFileClick && (
-            <button
-              type="button"
-              onClick={() => onFileClick(htmlPath)}
-              style={{
-                border: 0, background: 'transparent', color: '#2563eb',
-                padding: 0, cursor: 'pointer', fontSize: 12,
-              }}
-            >
-              Preview
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={openPreview}
+            style={{
+              border: 0, background: 'transparent', color: '#2563eb',
+              padding: 0, cursor: 'pointer', fontSize: 12,
+            }}
+          >
+            Preview
+          </button>
         </>
       )}
     </div>

@@ -34,7 +34,7 @@ window.addEventListener('load', function() {
 def _workspace_file_href(path: Path, query: str = "", fragment: str = "") -> str:
     href = f"../files?path={quote(str(path), safe='')}"
     if query:
-        href += f"&{query}"
+        href += f"&asset_query={quote(query, safe='')}"
     if fragment:
         href += f"#{fragment}"
     return href

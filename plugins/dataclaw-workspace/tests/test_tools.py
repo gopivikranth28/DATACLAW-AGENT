@@ -15,6 +15,7 @@ from dataclaw_workspace.tools import (
     display_image,
     report_add_section,
     _ensure_plotly_runtime,
+    _ensure_report_shell_context,
     _plotly_script_tag,
     _report_shell,
     _report_shell_css,
@@ -395,6 +396,68 @@ def test_report_shell_parts_can_be_called_independently():
     with_runtime = _ensure_plotly_runtime(without_runtime)
     assert with_runtime.count("data-dc-runtime=\"plotly\"") == 1
     assert _ensure_plotly_runtime(with_runtime).count("data-dc-runtime=\"plotly\"") == 1
+
+
+def test_existing_report_shell_context_upgrade_is_idempotent():
+    legacy = """<!doctype html>
+<html><head><title>Legacy</title><style>.r-section { padding: 18px; }</style></head>
+<body><main class="r-page">
+<!-- DATACLAW_REPORT_SECTIONS_START -->
+<section class="r-section" data-dc-section="findings" data-dc-section-id="old"><h2>Old</h2></section>
+<!-- DATACLAW_REPORT_SECTIONS_END -->
+</main></body></html>"""
+
+    migrated = _ensure_report_shell_context(legacy)
+
+    assert "Old" in migrated
+    assert "data-dc-report-shell-css" in migrated
+    assert "data-dc-report-shell-script" in migrated
+    assert '<div class="r-progress" aria-hidden="true"><span></span></div>' in migrated
+    assert '<nav class="r-story-nav" aria-label="Report sections"></nav>' in migrated
+    assert ".r-method-note" in migrated
+    assert "document.querySelectorAll('.r-hero, .r-section')" in migrated
+    assert _ensure_report_shell_context(migrated).count("data-dc-report-shell-css") == 1
+    assert _ensure_report_shell_context(migrated).count("data-dc-report-shell-script") == 1
+    assert _ensure_report_shell_context(migrated).count('class="r-story-nav"') == 1
+
+
+@pytest.mark.asyncio
+async def test_report_add_section_upgrades_legacy_report_shell(cfg):
+    base = _base_dir("default")
+    report = base / "reports" / "legacy.html"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text(
+        """<!doctype html>
+<html><head><title>Legacy report</title><style>.r-section { padding: 18px; }</style></head>
+<body><main class="r-page">
+<!-- DATACLAW_REPORT_SECTIONS_START -->
+<section class="r-section" data-dc-section="findings" data-dc-section-id="legacy"><h2>Legacy finding</h2></section>
+<!-- DATACLAW_REPORT_SECTIONS_END -->
+</main></body></html>""",
+        encoding="utf-8",
+    )
+
+    await report_add_section(
+        cfg=cfg,
+        section_type="insight_grid",
+        report_path="reports/legacy.html",
+        data={
+            "title": "New insight layer",
+            "methodology": "Re-check with the current denominator.",
+            "items": [{"title": "Segment shift", "evidence": "cell-7"}],
+        },
+    )
+
+    html = report.read_text()
+    assert "Legacy finding" in html
+    assert "New insight layer" in html
+    assert "Segment shift" in html
+    assert "data-dc-report-shell-css" in html
+    assert "data-dc-report-shell-script" in html
+    assert '<nav class="r-story-nav" aria-label="Report sections"></nav>' in html
+    assert ".r-insight-grid" in html
+    assert ".r-method-note" in html
+    assert "document.querySelectorAll('.r-hero, .r-section')" in html
 
 
 def test_plotly_script_tag_never_falls_back_to_cdn(monkeypatch):

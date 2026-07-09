@@ -8,6 +8,7 @@ import remarkGfm from 'remark-gfm'
 import { IpynbRenderer as IpynbView } from 'react-ipynb-renderer'
 import 'react-ipynb-renderer/dist/styles/default.css'
 import { API } from '../api'
+import { reportDocumentUrl, reportPreviewUrl } from './reportPreview'
 
 const { Text } = Typography
 
@@ -122,7 +123,7 @@ export function FileRenderer({ name, content, path }: { name: string; content: s
     case 'ipynb': return <IpynbFileRenderer content={content} />
     case 'py':    return isMarimo(content) ? <MarimoRenderer content={content} name={name} /> : <PythonRenderer content={content} />
     case 'html':
-    case 'htm':   return <HtmlRenderer content={content} dirPath={path ? path.substring(0, path.lastIndexOf('/')) : undefined} />
+    case 'htm':   return <HtmlRenderer content={content} path={path} dirPath={path ? path.substring(0, path.lastIndexOf('/')) : undefined} />
     case 'json':  return <pre style={CODE_STYLE}>{tryPrettyJson(content)}</pre>
     default:      return <pre style={CODE_STYLE}>{content}</pre>
   }
@@ -206,18 +207,27 @@ export function rewriteRelativeUrls(html: string, dirPath: string): string {
   )
 }
 
-function HtmlRenderer({ content, dirPath }: { content: string; dirPath?: string }) {
+function HtmlRenderer({ content, path, dirPath }: { content: string; path?: string; dirPath?: string }) {
   const [mode, setMode] = useState<'preview' | 'source'>('preview')
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
+  const documentUrl = path ? reportDocumentUrl(path) : ''
+  const previewUrl = path ? reportPreviewUrl(path) : ''
 
   useEffect(() => {
+    if (path) {
+      setBlobUrl(prev => {
+        if (prev) URL.revokeObjectURL(prev)
+        return null
+      })
+      return
+    }
     if (mode !== 'preview') return
     const resolved = dirPath ? rewriteRelativeUrls(content, dirPath) : content
     const blob = new Blob([resolved], { type: 'text/html' })
     const url = URL.createObjectURL(blob)
     setBlobUrl(url)
     return () => URL.revokeObjectURL(url)
-  }, [content, dirPath, mode])
+  }, [content, dirPath, mode, path])
 
   return (
     <div>
@@ -227,13 +237,20 @@ function HtmlRenderer({ content, dirPath }: { content: string; dirPath?: string 
         <div style={{ flex: 1, fontSize: 12, color: '#1d39c4' }}>
           <strong>HTML Document</strong>
         </div>
+        {previewUrl && <Button size="small" href={previewUrl} target="_blank">New Tab</Button>}
         <Button.Group size="small">
           <Button type={mode === 'preview' ? 'primary' : 'default'} onClick={() => setMode('preview')}>Preview</Button>
           <Button type={mode === 'source' ? 'primary' : 'default'} onClick={() => setMode('source')}>Source</Button>
         </Button.Group>
       </div>
       {mode === 'preview' ? (
-        blobUrl ? (
+        documentUrl ? (
+          <iframe
+            src={documentUrl}
+            sandbox="allow-scripts allow-forms allow-popups allow-modals"
+            style={{ width: '100%', minHeight: 500, border: '1px solid #f0f0f0', borderRadius: 8, background: '#fff' }}
+          />
+        ) : blobUrl ? (
           <iframe
             src={blobUrl}
             sandbox="allow-scripts"

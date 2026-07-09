@@ -3,6 +3,7 @@ from __future__ import annotations
 import socket
 import threading
 import time
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi import HTTPException
@@ -107,8 +108,36 @@ async def test_workspace_html_preview_document_serves_interactive_html_with_csp(
     assert "<h1>preview</h1>" in body
     assert "window.inlineReady = true" in body
     assert 'src="../files?path=' in body
-    assert "&v=123#ready" in body
+    assert "&asset_query=v%3D123#ready" in body
     assert "assets/report.js" not in body
+
+
+@pytest.mark.asyncio
+async def test_workspace_html_preview_rewrite_namespaces_asset_query_path(tmp_path, monkeypatch):
+    home = tmp_path / ".dataclaw"
+    monkeypatch.setattr(paths, "DATACLAW_HOME", home)
+    workspace = home / "workspaces"
+    report_dir = workspace / "reports"
+    asset_dir = report_dir / "assets"
+    asset_dir.mkdir(parents=True)
+    asset = asset_dir / "report.js"
+    other = workspace / "other.js"
+    asset.write_text("window.reportReady = true", encoding="utf-8")
+    other.write_text("window.wrongFile = true", encoding="utf-8")
+    report = report_dir / "report.html"
+    report.write_text(
+        f'<script src="assets/report.js?path={other}&v=123"></script>',
+        encoding="utf-8",
+    )
+
+    response = await preview_html_document(path=str(report))
+
+    body = response.body.decode("utf-8")
+    src = body.split('src="', 1)[1].split('"', 1)[0]
+    params = parse_qs(urlsplit(src).query)
+    assert params["path"] == [str(asset)]
+    assert params["asset_query"] == [f"path={other}&v=123"]
+    assert body.count("path=") == 1
 
 
 @pytest.mark.asyncio
