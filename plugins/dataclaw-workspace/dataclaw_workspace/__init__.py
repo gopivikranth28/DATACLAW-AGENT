@@ -182,7 +182,7 @@ class WorkspacePlugin:
                     "report_path": {"type": "string", "description": "Output report HTML path", "default": "report.html"},
                     "storyboard_path": {"type": "string", "description": "Output storyboard JSON path", "default": "report_storyboard.json"},
                     "title": {"type": "string", "description": "Report title", "default": "Analysis Report"},
-                    "quality_gate": {"type": "string", "description": "Report-quality behavior: warn and write, fail on required quality regressions, or off", "enum": ["warn", "fail", "off"], "default": "warn"},
+                    "quality_gate": {"type": "string", "description": "Report-quality behavior: warn and write, fail on required quality regressions, or off", "enum": ["warn", "fail", "off"], "default": "fail"},
                 },
                 "required": ["report_goal", "insights"],
             },

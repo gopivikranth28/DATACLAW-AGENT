@@ -148,9 +148,13 @@ def skill_freshness_for_installed_skill(
     comparing the installed body with the current bundled library body.
     """
     source = meta.get("source")
-    library_id = str(meta.get("library_id") or skill_id)
-    if source != "library" and not meta.get("library_id"):
-        return {}
+    explicit_library_id = meta.get("library_id")
+    library_id = str(explicit_library_id or skill_id)
+    inferred_legacy_library = False
+    if source != "library" and not explicit_library_id:
+        if not (skill_library_dir() / f"{skill_id}.md").exists():
+            return {}
+        inferred_legacy_library = True
 
     library = _read_full(skill_library_dir() / f"{library_id}.md")
     if library is None:
@@ -180,6 +184,7 @@ def skill_freshness_for_installed_skill(
         "installed_library_hash": recorded_hash,
         "installed_stale": installed_stale,
         "stale_reason": stale_reason,
+        "legacy_library_inferred": inferred_legacy_library,
     }
 
 

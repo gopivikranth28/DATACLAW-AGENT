@@ -23,6 +23,10 @@ REPORT_SHELL_CSS_ATTR = 'data-dc-report-shell-css'
 REPORT_SHELL_SCRIPT_ATTR = 'data-dc-report-shell-script'
 BODY_OPEN_RE = re.compile(r"(<body\b[^>]*>)", re.IGNORECASE)
 BODY_CLOSE_RE = re.compile(r"</body\s*>", re.IGNORECASE)
+PLOTLY_RUNTIME_RE = re.compile(
+    r"<script\b(?=[^>]*\bdata-dc-runtime=(['\"])plotly\1)[^>]*>.*?</script>",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 __all__ = [
@@ -831,13 +835,14 @@ def analyze_report_quality(
             "details": details or {},
         })
 
-    size = len(doc.encode("utf-8"))
-    if size > max_bytes:
+    total_size = len(doc.encode("utf-8"))
+    payload_size = len(PLOTLY_RUNTIME_RE.sub("", doc).encode("utf-8"))
+    if payload_size > max_bytes:
         warn(
             "oversized_report",
-            f"Report HTML is {size} bytes; reduce embedded raw HTML/data before publishing.",
+            f"Report payload HTML is {payload_size} bytes; reduce embedded raw HTML/data before publishing.",
             severity="fail",
-            details={"bytes": size, "max_bytes": max_bytes},
+            details={"bytes": payload_size, "total_bytes": total_size, "max_bytes": max_bytes},
         )
 
     if stale_skills:
@@ -853,6 +858,12 @@ def analyze_report_quality(
     chart_like_count = sum(1 for kind in kinds if kind in CHART_SECTION_KINDS)
     story_count = sum(1 for kind in kinds if kind in STORY_SECTION_KINDS and kind != "chart")
     interactive_count = sum(1 for kind in kinds if kind in INTERACTIVE_SECTION_KINDS)
+    primary_insight_count = 0
+    for section in sections:
+        kind = clean_text(section.get("kind") or "")
+        payload = section.get("payload") if isinstance(section.get("payload"), dict) else {}
+        if kind in {"findings", "insight_grid"} and isinstance(payload.get("items"), list) and payload.get("items"):
+            primary_insight_count += 1
 
     run = 0
     longest_run = 0
@@ -883,10 +894,18 @@ def analyze_report_quality(
             severity="fail",
             details={"section_count": len(kinds)},
         )
+    if len(kinds) >= 4 and primary_insight_count == 0:
+        warn(
+            "missing_primary_insights",
+            "Report has multiple sections but no findings or insight grid carrying completed insight items.",
+            severity="fail",
+            details={"section_count": len(kinds)},
+        )
     if len(kinds) >= 6 and chart_like_count >= 3 and interactive_count == 0:
         warn(
             "missing_interactive_explorer",
             "Analytical report has several charts but no interactive table, selector, filterable chart, or chart-table explorer.",
+            severity="fail",
             details={"chart_like_count": chart_like_count},
         )
 
@@ -972,6 +991,10 @@ def design_report_storyboard(
     clean_audience = clean_text(audience or requirements.get("audience") or "decision-maker")
     normalized_insights = [item for item in insights if isinstance(item, dict)]
     normalized_analyses = [item for item in analyses if isinstance(item, dict)]
+    if not normalized_insights:
+        raise ValueError(
+            "report_design_report requires at least one completed insight; use report_add_section for low-level drafts."
+        )
     section_plan: list[dict[str, Any]] = []
 
     def add(section_type: str, role: str, rationale: str, data: dict[str, Any]) -> None:

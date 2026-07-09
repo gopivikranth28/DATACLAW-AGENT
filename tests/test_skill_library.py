@@ -183,6 +183,23 @@ def test_list_marks_stale_installed_library_skill(library_dir, user_skills_dir):
     assert stale[0]["installed_stale"] is True
 
 
+def test_list_marks_legacy_unmarked_library_skill_stale(library_dir, user_skills_dir):
+    _write_library_skill(library_dir, "dashboarding", "name: dashboarding", "new body")
+    (user_skills_dir / "dashboarding.md").write_text(
+        "---\nname: dashboarding\n---\n\nold body\n",
+        encoding="utf-8",
+    )
+
+    result = list_library_skills()
+    assert result[0]["installed"] is True
+    assert result[0]["installed_stale"] is True
+    assert result[0]["legacy_library_inferred"] is True
+
+    stale = stale_installed_library_skills()
+    assert stale[0]["id"] == "dashboarding"
+    assert stale[0]["legacy_library_inferred"] is True
+
+
 def test_read_marks_hash_based_library_change(library_dir, user_skills_dir):
     _write_library_skill(library_dir, "dashboarding", "name: dashboarding", "new body")
     (user_skills_dir / "dashboarding.md").write_text(

@@ -94,3 +94,6 @@ async def test_stale_library_skill_is_warned_in_prompt_and_fetch(provider, skill
     fetched = await provider.fetch_skill("visualization")
     assert fetched["installed_stale"] is True
     assert "Skill freshness warning" in fetched["content"]
+    assert "Using the bundled skill-library instructions" in fetched["content"]
+    assert "new instructions" in fetched["content"]
+    assert "old instructions" not in fetched["content"]

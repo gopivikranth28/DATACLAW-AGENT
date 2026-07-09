@@ -332,7 +332,7 @@ async def report_design_report(
     report_path: str = "report.html",
     storyboard_path: str = "report_storyboard.json",
     title: str = "Analysis Report",
-    quality_gate: str = "warn",
+    quality_gate: str = "fail",
     workspace_id: str = "default",
     **_: Any,
 ) -> dict[str, Any]:
@@ -343,6 +343,10 @@ async def report_design_report(
     """
     if not isinstance(insights, list):
         raise ValueError("insights must be a list of insight dictionaries")
+    if not any(isinstance(item, dict) for item in insights):
+        raise ValueError(
+            "insights must include at least one completed insight dictionary; use report_add_section for low-level drafts"
+        )
     if analyses is not None and not isinstance(analyses, list):
         raise ValueError("analyses must be a list of analysis asset dictionaries")
     if requirements is not None and not isinstance(requirements, dict):

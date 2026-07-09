@@ -24,7 +24,7 @@ from typing import Any
 import yaml
 
 from dataclaw.config.paths import skills_dir
-from dataclaw.storage.skill_library import skill_freshness_for_installed_skill
+from dataclaw.storage.skill_library import read_library_skill, skill_freshness_for_installed_skill
 from dataclaw.state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,20 @@ def _parse_skill_file(path: Path) -> dict[str, Any] | None:
     }
     for key, value in meta.items():
         skill.setdefault(key, value)
-    skill.update(skill_freshness_for_installed_skill(path.stem, body, meta))
+    freshness = skill_freshness_for_installed_skill(path.stem, body, meta)
+    skill.update(freshness)
+    if freshness.get("installed_stale") and freshness.get("stale_reason") != "library_skill_missing":
+        library_id = str(freshness.get("library_id") or meta.get("library_id") or path.stem)
+        library = read_library_skill(library_id) or {}
+        library_body = str(library.get("body") or "")
+        if library_body:
+            skill["installed_body"] = body
+            skill["body"] = library_body
+            skill["active_body_source"] = "bundled_library"
+            for key in ("name", "description", "tags"):
+                value = library.get(key)
+                if value not in (None, "", []):
+                    skill[key] = value
     return skill
 
 
@@ -210,8 +223,13 @@ def _skill_content(skill: dict[str, Any]) -> str:
     warning = ""
     if skill.get("installed_stale"):
         reason = skill.get("stale_reason") or "installed copy differs from bundled skill-library"
+        source_note = (
+            " Using the bundled skill-library instructions for this turn."
+            if skill.get("active_body_source") == "bundled_library"
+            else " Reinstall or force-update it before relying on these instructions."
+        )
         warning = (
             "Skill freshness warning: this installed library skill is stale versus the bundled "
-            f"skill-library ({reason}). Reinstall or force-update it before relying on these instructions.\n\n"
+            f"skill-library ({reason}).{source_note}\n\n"
         )
     return f"{warning}# {skill['name']}\n\n{skill.get('body', '')}"

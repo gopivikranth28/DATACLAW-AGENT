@@ -229,6 +229,43 @@ async def test_report_design_report_storyboards_then_renders_cohesive_html(cfg):
 
 
 @pytest.mark.asyncio
+async def test_report_design_report_requires_completed_insights(cfg):
+    with pytest.raises(ValueError, match="at least one completed insight"):
+        await report_design_report(
+            cfg=cfg,
+            report_goal="Build a report from charts only.",
+            title="Thin Report",
+            report_path="reports/thin.html",
+            insights=[],
+            analyses=[
+                {"title": "Chart", "figure": {"data": [{"type": "bar", "x": ["A"], "y": [1]}]}},
+            ],
+        )
+
+
+@pytest.mark.asyncio
+async def test_report_design_report_default_gate_rejects_noninteractive_chart_stack(cfg):
+    with pytest.raises(ValueError, match="missing_interactive_explorer"):
+        await report_design_report(
+            cfg=cfg,
+            report_goal="Explain the chart stack.",
+            title="Chart Stack",
+            report_path="reports/chart-stack.html",
+            insights=[
+                {
+                    "title": "One insight exists",
+                    "detail": "The report still needs an explorer when several charts carry the evidence.",
+                    "finding_id": "find-stack",
+                }
+            ],
+            analyses=[
+                {"title": f"Chart {i}", "figure": {"data": [{"type": "bar", "x": ["A"], "y": [i]}]}}
+                for i in range(3)
+            ],
+        )
+
+
+@pytest.mark.asyncio
 async def test_report_add_section_builds_live_html_report(cfg):
     header = await report_add_section(
         cfg=cfg,
