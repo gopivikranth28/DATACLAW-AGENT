@@ -50,20 +50,37 @@ def test_visual_output_skills_route_publish_to_artifacts_skill():
     assert "fetch and follow the `artifacts` skill" in visualization
     assert "fetch and follow the `artifacts` skill" in dashboarding
     assert "Step attribution travels by stable plan step id" in visualization
+    assert "report_design_report" in visualization
+    assert "storyboard JSON" in visualization
+    assert "do not rely on appended report cells" in visualization
     assert "dataclaw_report_add_section" in visualization
     assert "`insight_grid`" in visualization
+    assert "`narrative_band`" in visualization
+    assert "`methodology_block`" in visualization
+    assert "`chart_interpretation`" in visualization
+    assert "`evidence_rail`" in visualization
+    assert "`ledger_timeline`" in visualization
     assert "`hypothesis_ledger`" in visualization
     assert "`evidence_trace`" in visualization
     assert "`finding_id`" in visualization
     assert "`hypothesis_id`" in visualization
+    assert "`chart_table_explorer`" in visualization
+    assert "`interactive_table`" in visualization
+    assert "`selector_panel`" in visualization
+    assert "`entity_card_grid`" in visualization
     assert '"plan_step_id": "step-a1b2c3d4"' in visualization
     assert "artifact publication is unavailable" in visualization
     assert "Attribute sections and notes by stable plan step id" in dashboarding
+    assert "report_design_report" in dashboarding
+    assert "appended report cells as the final dashboard/report architecture" in dashboarding
     assert "EDA findings ledger" in dashboarding
     assert "structured EDA readiness verdict" in dashboarding
     assert "publication is unavailable" in dashboarding
     assert "`/app/:sessionId` is only a compatibility scratch view" in dashboarding
     assert "`/app/:sessionId` route is compatibility only" in visualization
+    assert "`chart_interpretation` and `evidence_rail`" in dashboarding
+    assert "`methodology_block`" in dashboarding
+    assert "`ledger_timeline`" in dashboarding
     assert "one shared DataClaw token system" in dashboarding
     assert "shared DataClaw artifact token system" in visualization
     assert "when browser\n  tooling is available" in dashboarding

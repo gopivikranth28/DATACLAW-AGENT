@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { lazy, Suspense, useState, useEffect } from 'react'
 import { Routes, Route, Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { Layout, Menu, ConfigProvider, theme } from 'antd'
 import {
@@ -7,17 +7,18 @@ import {
   ToolOutlined,
 } from '@ant-design/icons'
 import { API } from './api'
-import ChatPage from './pages/ChatPage'
-import SkillsPage from './pages/SkillsPage'
-import ConfigPage from './pages/ConfigPage'
-import DataPage from './pages/DataPage'
-import ProjectsPage from './pages/ProjectsPage'
-import ProjectPage from './pages/ProjectPage'
-import SubagentsPage from './pages/SubagentsPage'
-import ToolsPage from './pages/ToolsPage'
-import AppPage from './pages/AppPage'
 
 const { Sider, Content } = Layout
+
+const ChatPage = lazy(() => import('./pages/ChatPage'))
+const SkillsPage = lazy(() => import('./pages/SkillsPage'))
+const ConfigPage = lazy(() => import('./pages/ConfigPage'))
+const DataPage = lazy(() => import('./pages/DataPage'))
+const ProjectsPage = lazy(() => import('./pages/ProjectsPage'))
+const ProjectPage = lazy(() => import('./pages/ProjectPage'))
+const SubagentsPage = lazy(() => import('./pages/SubagentsPage'))
+const ToolsPage = lazy(() => import('./pages/ToolsPage'))
+const AppPage = lazy(() => import('./pages/AppPage'))
 
 const THEME = {
   token: { colorPrimary: '#2563eb', borderRadius: 8, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif" },
@@ -110,9 +111,11 @@ export default function App() {
   if (pathname.startsWith('/app/')) {
     return (
       <ConfigProvider theme={THEME}>
-        <Routes>
-          <Route path="/app/:sessionId" element={<AppPage />} />
-        </Routes>
+        <Suspense fallback={<RouteFallback />}>
+          <Routes>
+            <Route path="/app/:sessionId" element={<AppPage />} />
+          </Routes>
+        </Suspense>
       </ConfigProvider>
     )
   }
@@ -130,23 +133,33 @@ export default function App() {
             style={{ background: 'transparent', borderInlineEnd: 'none', marginTop: hasProjects ? 4 : 0 }} />
         </Sider>
         <Content style={{ overflow: 'auto', background: '#fff' }}>
-          <Routes>
-            <Route path="/" element={<Navigate to="/chat" replace />} />
-            <Route path="/chat" element={<ChatPage />} />
-            <Route path="/skills" element={<SkillsPage />} />
-            <Route path="/config" element={<ConfigPage plugins={plugins} />} />
-            {hasTools && <Route path="/tools" element={<ToolsPage />} />}
-            {hasData && <Route path="/data" element={<DataPage />} />}
-            {hasProjects && (
-              <>
-                <Route path="/projects" element={<ProjectsPage />} />
-                <Route path="/projects/:id" element={<ProjectPage />} />
-                <Route path="/subagents" element={<SubagentsPage />} />
-              </>
-            )}
-          </Routes>
+          <Suspense fallback={<RouteFallback />}>
+            <Routes>
+              <Route path="/" element={<Navigate to="/chat" replace />} />
+              <Route path="/chat" element={<ChatPage />} />
+              <Route path="/skills" element={<SkillsPage />} />
+              <Route path="/config" element={<ConfigPage plugins={plugins} />} />
+              {hasTools && <Route path="/tools" element={<ToolsPage />} />}
+              {hasData && <Route path="/data" element={<DataPage />} />}
+              {hasProjects && (
+                <>
+                  <Route path="/projects" element={<ProjectsPage />} />
+                  <Route path="/projects/:id" element={<ProjectPage />} />
+                  <Route path="/subagents" element={<SubagentsPage />} />
+                </>
+              )}
+            </Routes>
+          </Suspense>
         </Content>
       </Layout>
     </ConfigProvider>
+  )
+}
+
+function RouteFallback() {
+  return (
+    <div style={{ minHeight: '100%', display: 'grid', placeItems: 'center', color: '#8c8c8c', fontSize: 13 }}>
+      Loading...
+    </div>
   )
 }

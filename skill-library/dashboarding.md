@@ -70,24 +70,38 @@ user asks for a broad report.
 3. **Metric selection** - choose 2-3 KPIs that answer the question directly.
    Emit them as metric tiles first.
 4. **Storyboard** - decide the section order before charting: header, KPI row,
-   executive callout, primary chart, supporting charts/tables, caveats, next
-   steps.
+   narrative band, primary `chart_interpretation` or `chart_table_explorer`,
+   supporting interactive tables/selectors, methodology block, evidence rail,
+   ledger/timeline, caveats, next steps, and appendix. The storyboard should
+   name the executive readout, primary insight, supporting evidence, caveats,
+   methodology, and any controls the reader needs.
 5. **Aggregate data** - compute summary series in pandas/polars. Never embed raw
    datasets in the dashboard artifact. The 25 MiB cap applies to published/exported
    single-file artifacts, not the living-report manifest store.
 6. **Visual evidence** - follow `visualization`: Plotly via `fig.show()`, KPIs
-   via `display_metric`, captions via `display_cell_output`, and report sections
-   via `report_add_section`.
-7. **Artifact assembly** - assemble `header`, `metric_row`, `chart`, `table`,
-   `findings`, `callout`, and `text` sections into a report HTML source.
-8. **Publish or revise** - fetch and follow the `artifacts` skill, then call
+   via `display_metric`, captions via `display_cell_output`, and completed
+   insights/assets/evidence for the report designer.
+7. **Report design pass** - after the analysis is complete, call
+   `report_design_report` with the final insights, aggregate analysis payloads,
+   methodology, hypotheses, evidence, and interaction requirements. Do not treat
+   appended report cells as the final dashboard/report architecture.
+8. **Artifact assembly** - the designer should assemble `header`, `metric_row`, `narrative_band`,
+   `chart_interpretation`, `chart_table_explorer`, `filterable_chart`,
+   `interactive_table`, `selector_panel`, `entity_card_grid`,
+   `methodology_block`, `evidence_rail`, `ledger_timeline`, `chart`, `table`,
+   `findings`, `callout`, and `text` sections into a report HTML source. Keep
+   report assembly calls in the notebook or a source script so the dashboard can
+   be regenerated.
+9. **Publish or revise** - fetch and follow the `artifacts` skill, then call
    `publish_artifact(source_path=..., title=...)`. For edits, read/revise the
    canonical source and publish with the same `artifact_id` and `base_version`.
    If artifact tools are unavailable, keep the canonical source in the workspace
    and say publication is unavailable; do not invent an id, version, or URL.
-9. **Audit and self-check** - run the pitfalls checklist. When browser tooling is
+10. **Audit and self-check** - run the pitfalls checklist. When browser tooling is
    available, screenshot the artifact in light and dark mode before closing the
-   plan step.
+   plan step. Run the report-quality gate and address stale skills, chart dumps,
+   missing evidence ids, missing captions, and oversized embedded HTML/data
+   before publishing.
 
 ## Layout rules
 - Put the answer first: headline, 2-3 KPI tiles, and the primary chart above the
@@ -95,9 +109,19 @@ user asks for a broad report.
 - Use 2-4 charts for most dashboards. More charts require a report structure,
   not a denser grid.
 - One chart per sub-question. Prefer a filtered chart over near-duplicates.
+- When the reader needs lookup or slicing, use report-level controls:
+  `filterable_chart`, `interactive_table`, `selector_panel`, or
+  `chart_table_explorer`. Controls should sit beside the evidence they affect.
+- For domain-specific reports, build the obvious explorer: team comparison,
+  player leaderboard filters, stage/confederation filters, archetype/player
+  similarity selector, champion scenario controls, cohort/model selectors, or
+  metric/ranking toggles.
 - Use tables only when exact values or auditability matter.
 - Put caveats next to the evidence they qualify, not at the end where they will
-  be missed.
+  be missed. Use `chart_interpretation` and `evidence_rail` for this pairing.
+- Use `methodology_block` for grain, denominator, validation, and review method;
+  use `ledger_timeline` when the reader needs to understand how a conclusion
+  evolved.
 - Preserve stable section titles so revisions and living-report anchors remain
   meaningful. Attribute sections and notes by stable plan step id; step names are
   display labels, not identity.
@@ -127,6 +151,8 @@ artifact tooling.
 - Categorical axes sorted arbitrarily; sort by value unless the order is
   inherent.
 - Raw row-level data embedded in browser payloads.
+- Missing report-level controls when the analysis naturally supports slicing,
+  selection, lookup, scenarios, or leaderboard exploration.
 - External assets, remote images, fetch calls, inline event handlers, or custom
   script patterns that artifact validation will reject.
 - Relative asset paths that escape the workspace/project root.

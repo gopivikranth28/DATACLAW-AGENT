@@ -437,6 +437,69 @@ def test_typed_sections_are_stable_and_validated():
     assert 'data-dc-section="chart"' in section_attrs(first)
     assert "data-dc-section-meta" in section_meta_script(first)
 
+    chart_story = normalize_section("chart_interpretation", {
+        "title": "Chart story",
+        "figure": data["figure"],
+        "interpretation": "The chart changes the readiness verdict.",
+        "evidence": [{"kind": "notebook_cell", "cell_id": "abc123"}],
+    })
+    assert chart_story["kind"] == "chart_interpretation"
+    assert chart_story["payload"]["series_count"] == 1
+    assert chart_story["payload"]["evidence_count"] == 1
+    assert chart_story["payload"]["has_interpretation"] is True
+
+    finding = normalize_section("findings", {
+        "items": [{"title": "Evidence-only finding", "evidence": "notebook_cell:abc123"}],
+    })
+    assert finding["payload"]["items"][0]["evidence"] == "notebook_cell:abc123"
+
+    narrative = normalize_section("narrative_band", {"title": "Narrative", "summary": "First.\n\nSecond."})
+    assert narrative["payload"]["paragraph_count"] == 2
+
+    method = normalize_section("methodology_block", {"methods": [{"title": "Check grain"}], "checks": [{"title": "Evidence", "status": "pass"}]})
+    assert method["payload"]["method_count"] == 1
+    assert method["payload"]["check_count"] == 1
+
+    rail = normalize_section("evidence_rail", {"evidence": [{"kind": "finding", "finding_id": "find-1"}]})
+    assert rail["payload"]["evidence_count"] == 1
+
+    timeline = normalize_section("ledger_timeline", {"events": [{"title": "Finding recorded", "status": "confirmed"}]})
+    assert timeline["payload"]["event_count"] == 1
+    assert timeline["payload"]["statuses"] == ["confirmed"]
+
+    explorer = normalize_section("chart_table_explorer", {
+        "title": "Player explorer",
+        "records": [{"team": "A", "player": "One", "score": 9.4}],
+        "chart": {"type": "bar", "x": "player", "y": "score"},
+        "filters": [{"key": "team"}],
+    })
+    assert explorer["kind"] == "chart_table_explorer"
+    assert explorer["payload"]["record_count"] == 1
+    assert explorer["payload"]["filter_count"] == 1
+    assert explorer["payload"]["data_json_bytes"] > 0
+
+    table = normalize_section("interactive_table", {
+        "caption": "Top player aggregates by team.",
+        "columns": ["player", "score"],
+        "rows": [{"player": "One", "score": 9.4}],
+        "filters": [{"key": "player"}],
+    })
+    assert table["kind"] == "interactive_table"
+    assert table["data_policy"] == "preview"
+    assert table["payload"]["row_count"] == 1
+    assert table["payload"]["has_search"] is True
+
+    selector = normalize_section("selector_panel", {
+        "controls": [{"key": "team"}],
+        "items": [{"name": "One", "team": "A"}],
+    })
+    assert selector["payload"]["control_count"] == 1
+    assert selector["payload"]["item_count"] == 1
+
+    cards = normalize_section("archetype_cards", {"items": [{"name": "Creator", "metrics": {"score": 8.2}}]})
+    assert cards["kind"] == "entity_card_grid"
+    assert cards["payload"]["item_count"] == 1
+
 
 def test_typed_sections_reject_oversize_chart_summary():
     too_large = {"figure": {"data": [{"x": ["x" * CHART_SUMMARY_MAX_BYTES]}]}}

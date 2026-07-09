@@ -41,8 +41,18 @@ SECTION_KINDS = {
     "explanation",
     "comparison",
     "checklist",
+    "narrative_band",
+    "methodology_block",
+    "evidence_rail",
+    "ledger_timeline",
+    "chart_interpretation",
     "hypothesis_ledger",
     "evidence_trace",
+    "filterable_chart",
+    "interactive_table",
+    "selector_panel",
+    "chart_table_explorer",
+    "entity_card_grid",
 }
 SECTION_ALIASES = {
     "kpi": "metric_row",
@@ -52,13 +62,31 @@ SECTION_ALIASES = {
     "insight_cards": "insight_grid",
     "validation": "checklist",
     "readiness": "checklist",
-    "hypotheses": "hypothesis_ledger",
+    "narrative": "narrative_band",
+    "story_band": "narrative_band",
+    "methodology": "methodology_block",
+    "method": "methodology_block",
     "evidence": "evidence_trace",
+    "evidence_panel": "evidence_rail",
+    "timeline": "ledger_timeline",
+    "ledger": "ledger_timeline",
+    "chart_story": "chart_interpretation",
+    "chart_plus_interpretation": "chart_interpretation",
+    "hypotheses": "hypothesis_ledger",
+    "data_table": "interactive_table",
+    "filter_panel": "selector_panel",
+    "explorer": "chart_table_explorer",
+    "chart_explorer": "chart_table_explorer",
+    "card_grid": "entity_card_grid",
+    "entity_cards": "entity_card_grid",
+    "archetype_cards": "entity_card_grid",
 }
 DATA_POLICIES = {"narrative", "aggregate_only", "preview"}
 CHART_SUMMARY_MAX_BYTES = 200 * 1024
 TABLE_PREVIEW_MAX_ROWS = 20
 TABLE_PREVIEW_MAX_BYTES = 50 * 1024
+INTERACTIVE_DATA_MAX_ROWS = 500
+INTERACTIVE_DATA_MAX_BYTES = 160 * 1024
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
@@ -85,7 +113,7 @@ def normalize_section(section_type: str, data: dict[str, Any]) -> dict[str, Any]
         )
 
     payload: dict[str, Any] = {}
-    if kind == "chart":
+    if kind in {"chart", "chart_interpretation"}:
         figure = _figure_from_data(data)
         encoded = json.dumps(figure, default=str).encode("utf-8")
         if len(encoded) > CHART_SUMMARY_MAX_BYTES:
@@ -96,6 +124,12 @@ def normalize_section(section_type: str, data: dict[str, Any]) -> dict[str, Any]
             )
         payload["summary_json_bytes"] = len(encoded)
         payload["series_count"] = len(figure.get("data") or []) if isinstance(figure.get("data"), list) else 0
+        if kind == "chart_interpretation":
+            evidence = data.get("evidence", data.get("evidence_refs", []))
+            if evidence is not None and not isinstance(evidence, list):
+                raise SectionValidationError("invalid_chart_evidence", "chart_interpretation evidence/evidence_refs must be a list")
+            payload["evidence_count"] = len(evidence or [])
+            payload["has_interpretation"] = bool(clean_text(data.get("interpretation") or data.get("insight") or data.get("summary") or ""))
     elif kind == "metric_row":
         metrics = data.get("metrics", [])
         if not isinstance(metrics, list):
@@ -109,6 +143,56 @@ def normalize_section(section_type: str, data: dict[str, Any]) -> dict[str, Any]
         payload["row_count"] = len(rows)
         payload["preview_max_rows"] = _positive_int(data.get("max_rows"), TABLE_PREVIEW_MAX_ROWS)
         payload["preview_max_bytes"] = _positive_int(data.get("max_bytes"), TABLE_PREVIEW_MAX_BYTES)
+    elif kind == "interactive_table":
+        columns = data.get("columns", [])
+        rows = data.get("rows", [])
+        filters = data.get("filters", data.get("controls", []))
+        if columns is not None and not isinstance(columns, list):
+            raise SectionValidationError("invalid_interactive_table_columns", "interactive_table columns must be a list")
+        if not isinstance(rows, list):
+            raise SectionValidationError("invalid_interactive_table", "interactive_table requires list 'rows'")
+        if filters is not None and not isinstance(filters, list):
+            raise SectionValidationError("invalid_interactive_table_filters", "interactive_table filters/controls must be a list")
+        payload.update(_interactive_payload_summary(rows, kind))
+        payload["row_count"] = len(rows)
+        payload["column_count"] = len(columns or _columns_from_rows(rows))
+        payload["filter_count"] = len(filters or [])
+        payload["has_search"] = bool(data.get("search", data.get("enable_search", True)))
+        payload["caption_required"] = True
+    elif kind in {"filterable_chart", "chart_table_explorer"}:
+        records = data.get("records", data.get("rows", []))
+        chart = data.get("chart", {})
+        filters = data.get("filters", data.get("controls", []))
+        columns = data.get("columns", [])
+        if not isinstance(records, list):
+            raise SectionValidationError("invalid_interactive_records", f"{kind} requires list 'records' or 'rows'")
+        if not isinstance(chart, dict):
+            raise SectionValidationError("invalid_interactive_chart", f"{kind} requires dict 'chart'")
+        if filters is not None and not isinstance(filters, list):
+            raise SectionValidationError("invalid_interactive_filters", f"{kind} filters/controls must be a list")
+        if columns is not None and not isinstance(columns, list):
+            raise SectionValidationError("invalid_interactive_columns", f"{kind} columns must be a list")
+        payload.update(_interactive_payload_summary(records, kind))
+        payload["filter_count"] = len(filters or [])
+        payload["column_count"] = len(columns or _columns_from_rows(records))
+        payload["chart_type"] = clean_text(chart.get("type") or "bar")
+        payload["has_interpretation"] = bool(clean_text(data.get("interpretation") or data.get("insight") or data.get("summary") or ""))
+    elif kind == "selector_panel":
+        controls = data.get("controls", data.get("filters", []))
+        items = data.get("items", data.get("options", []))
+        if not isinstance(controls, list):
+            raise SectionValidationError("invalid_selector_controls", "selector_panel requires list 'controls' or 'filters'")
+        if items is not None and not isinstance(items, list):
+            raise SectionValidationError("invalid_selector_items", "selector_panel items/options must be a list")
+        payload.update(_interactive_payload_summary(items or [], kind))
+        payload["control_count"] = len(controls)
+        payload["item_count"] = len(items or [])
+    elif kind == "entity_card_grid":
+        items = data.get("items", data.get("entities", []))
+        if not isinstance(items, list):
+            raise SectionValidationError("invalid_entity_cards", "entity_card_grid requires list 'items' or 'entities'")
+        payload.update(_interactive_payload_summary(items, kind))
+        payload["item_count"] = len(items)
     elif kind == "findings":
         items = data.get("items", data.get("findings", []))
         if not isinstance(items, list):
@@ -120,6 +204,8 @@ def normalize_section(section_type: str, data: dict[str, Any]) -> dict[str, Any]
                 "hypothesis_id": clean_text(item.get("hypothesis_id") or ""),
                 "title": clean_text(item.get("title") or ""),
                 "severity": clean_text(item.get("severity") or ""),
+                "evidence": clean_text(item.get("evidence") or item.get("evidence_ref") or ""),
+                "ref": clean_text(item.get("ref") or item.get("cell_id") or item.get("artifact_id") or item.get("path") or ""),
             }
             for item in items
             if isinstance(item, dict)
@@ -153,6 +239,36 @@ def normalize_section(section_type: str, data: dict[str, Any]) -> dict[str, Any]
             clean_text(item.get("status") or item.get("state") or "")
             for item in checks
             if isinstance(item, dict) and clean_text(item.get("status") or item.get("state") or "")
+        })
+    elif kind == "narrative_band":
+        body = clean_text(data.get("body") or data.get("text") or data.get("summary") or "")
+        payload["paragraph_count"] = len([part for part in body.split("\n\n") if part.strip()])
+        payload["point_count"] = _count_optional_items(data.get("bullets") or data.get("key_points") or data.get("takeaways"))
+    elif kind == "methodology_block":
+        methods = data.get("methods", data.get("steps", data.get("items", [])))
+        checks = data.get("checks", [])
+        if methods is not None and not isinstance(methods, list):
+            raise SectionValidationError("invalid_methodology", "methodology_block methods/steps/items must be a list")
+        if checks is not None and not isinstance(checks, list):
+            raise SectionValidationError("invalid_methodology_checks", "methodology_block checks must be a list")
+        payload["method_count"] = len(methods or [])
+        payload["check_count"] = len(checks or [])
+    elif kind == "evidence_rail":
+        items = data.get("evidence", data.get("items", []))
+        if not isinstance(items, list):
+            raise SectionValidationError("invalid_evidence_rail", "evidence_rail requires list 'evidence' or 'items'")
+        payload["evidence_count"] = len(items)
+        payload["items"] = [_ledger_item_summary(item) for item in items if isinstance(item, dict)]
+    elif kind == "ledger_timeline":
+        events = data.get("events", data.get("timeline", data.get("items", [])))
+        if not isinstance(events, list):
+            raise SectionValidationError("invalid_timeline", "ledger_timeline requires list 'events', 'timeline', or 'items'")
+        payload["event_count"] = len(events)
+        payload["items"] = [_ledger_item_summary(item) for item in events if isinstance(item, dict)]
+        payload["statuses"] = sorted({
+            clean_text(item.get("status") or item.get("state") or item.get("disposition") or "")
+            for item in events
+            if isinstance(item, dict) and clean_text(item.get("status") or item.get("state") or item.get("disposition") or "")
         })
     elif kind == "hypothesis_ledger":
         hypotheses = data.get("hypotheses", data.get("items", []))
@@ -248,6 +364,8 @@ def _ledger_item_summary(item: dict[str, Any]) -> dict[str, str]:
         "title": clean_text(item.get("title") or item.get("statement") or item.get("name") or ""),
         "status": clean_text(item.get("status") or item.get("state") or ""),
         "severity": clean_text(item.get("severity") or ""),
+        "evidence": clean_text(item.get("evidence") or item.get("evidence_ref") or ""),
+        "ref": clean_text(item.get("ref") or item.get("cell_id") or item.get("artifact_id") or item.get("path") or ""),
     }
 
 
@@ -260,11 +378,15 @@ def _default_data_policy(kind: str) -> str:
         "insight_grid",
         "explanation",
         "checklist",
+        "narrative_band",
+        "methodology_block",
+        "evidence_rail",
+        "ledger_timeline",
         "hypothesis_ledger",
         "evidence_trace",
     }:
         return "narrative"
-    if kind in {"table", "comparison"}:
+    if kind in {"table", "comparison", "interactive_table"}:
         return "preview"
     return "aggregate_only"
 
@@ -275,3 +397,52 @@ def _positive_int(value: Any, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return parsed if parsed > 0 else default
+
+
+def _count_optional_items(value: Any) -> int:
+    if value is None or value == "":
+        return 0
+    if isinstance(value, list):
+        return len(value)
+    return 1
+
+
+def _data_json_size(value: Any) -> int:
+    return len(json.dumps(value, sort_keys=True, default=str).encode("utf-8"))
+
+
+def _columns_from_rows(rows: list[Any]) -> list[str]:
+    keys: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        for key in row:
+            clean_key = clean_text(key)
+            if clean_key and clean_key not in seen:
+                seen.add(clean_key)
+                keys.append(clean_key)
+    return keys
+
+
+def _interactive_payload_summary(records: list[Any], kind: str) -> dict[str, Any]:
+    row_count = len(records)
+    if row_count > INTERACTIVE_DATA_MAX_ROWS:
+        raise SectionValidationError(
+            "interactive_data_too_many_rows",
+            f"{kind} embeds {row_count} records, max {INTERACTIVE_DATA_MAX_ROWS}; aggregate or sample before publishing",
+            {"rows": row_count, "max_rows": INTERACTIVE_DATA_MAX_ROWS},
+        )
+    encoded_bytes = _data_json_size(records)
+    if encoded_bytes > INTERACTIVE_DATA_MAX_BYTES:
+        raise SectionValidationError(
+            "interactive_data_too_large",
+            f"{kind} embedded JSON is too large ({encoded_bytes} bytes, max {INTERACTIVE_DATA_MAX_BYTES})",
+            {"bytes": encoded_bytes, "max_bytes": INTERACTIVE_DATA_MAX_BYTES},
+        )
+    return {
+        "record_count": row_count,
+        "data_json_bytes": encoded_bytes,
+        "max_records": INTERACTIVE_DATA_MAX_ROWS,
+        "max_bytes": INTERACTIVE_DATA_MAX_BYTES,
+    }

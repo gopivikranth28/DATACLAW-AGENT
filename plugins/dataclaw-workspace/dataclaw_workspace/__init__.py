@@ -23,6 +23,7 @@ from dataclaw_workspace.tools import (
     ws_exec,
     display_image,
     build_report,
+    report_design_report,
     report_add_section,
     set_project_dir,
 )
@@ -163,12 +164,40 @@ class WorkspacePlugin:
         ))
 
         ctx.tool_registry.register_tool(PythonTool(
+            name="report_design_report",
+            description=(
+                "Design a cohesive analytical HTML report from completed notebook insights and analysis assets. "
+                "Use after EDA/modeling has produced findings: this tool storyboards the report, chooses section "
+                "layouts and interactive controls, writes a storyboard JSON, and renders the final HTML in one pass."
+            ),
+            fn=lambda **kw: report_design_report(cfg=cfg, **kw),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "report_goal": {"type": "string", "description": "Decision question or objective the report must answer"},
+                    "insights": {"type": "array", "description": "Completed findings/insights with title, summary/detail, evidence, caveat, metrics, ids", "items": {"type": "object"}},
+                    "analyses": {"type": "array", "description": "Analysis assets such as Plotly figures, aggregate records+chart specs, tables, cards, methods, or evidence", "items": {"type": "object"}, "default": []},
+                    "audience": {"type": "string", "description": "Target reader/audience", "default": ""},
+                    "requirements": {"type": "object", "description": "Optional report requirements: metrics, filters, methodology, hypotheses, checks, titles", "default": {}},
+                    "report_path": {"type": "string", "description": "Output report HTML path", "default": "report.html"},
+                    "storyboard_path": {"type": "string", "description": "Output storyboard JSON path", "default": "report_storyboard.json"},
+                    "title": {"type": "string", "description": "Report title", "default": "Analysis Report"},
+                    "quality_gate": {"type": "string", "description": "Report-quality behavior: warn and write, fail on required quality regressions, or off", "enum": ["warn", "fail", "off"], "default": "warn"},
+                },
+                "required": ["report_goal", "insights"],
+            },
+        ))
+
+        ctx.tool_registry.register_tool(PythonTool(
             name="report_add_section",
             description=(
-                "Append a designed section to a live HTML report. Use this to build a polished "
-                "visual report as analysis progresses: header, metric_row, insight_grid, "
-                "explanation, comparison, checklist, hypothesis_ledger, evidence_trace, "
-                "chart, table, findings, callout, or text."
+                "Append a low-level designed section to a live HTML report. Prefer report_design_report "
+                "for final cohesive reports after insights are complete. Supported sections: header, "
+                "metric_row, insight_grid, "
+                "explanation, comparison, checklist, narrative_band, methodology_block, "
+                "evidence_rail, ledger_timeline, chart_interpretation, hypothesis_ledger, "
+                "evidence_trace, filterable_chart, interactive_table, selector_panel, "
+                "chart_table_explorer, entity_card_grid, chart, table, findings, callout, or text."
             ),
             fn=lambda **kw: report_add_section(cfg=cfg, **kw),
             parameters={
@@ -184,8 +213,18 @@ class WorkspacePlugin:
                             "explanation",
                             "comparison",
                             "checklist",
+                            "narrative_band",
+                            "methodology_block",
+                            "evidence_rail",
+                            "ledger_timeline",
+                            "chart_interpretation",
                             "hypothesis_ledger",
                             "evidence_trace",
+                            "filterable_chart",
+                            "interactive_table",
+                            "selector_panel",
+                            "chart_table_explorer",
+                            "entity_card_grid",
                             "chart",
                             "findings",
                             "callout",
@@ -196,6 +235,7 @@ class WorkspacePlugin:
                     "data": {"type": "object", "description": "Section data payload"},
                     "report_path": {"type": "string", "description": "Output report path", "default": "report.html"},
                     "title": {"type": "string", "description": "Report title, used when creating a new report", "default": "Analysis Report"},
+                    "quality_gate": {"type": "string", "description": "Report-quality behavior: warn and write, fail on required quality regressions, or off", "enum": ["warn", "fail", "off"], "default": "warn"},
                 },
                 "required": ["section_type", "data"],
             },

@@ -37,6 +37,9 @@ data/
 
 # Testing
 .pytest_cache/
+ui/test-results/
+ui/playwright-report/
+ui/blob-report/
 
 # Claude
 .claude/

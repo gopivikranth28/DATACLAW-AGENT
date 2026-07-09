@@ -38,9 +38,47 @@ alias with the same arguments.
 
 ### 1. Artifact report sections - the primary surface
 Build the user-facing deliverable as artifact sections, not a long chat answer.
-Start early and add sections as findings emerge. `report_add_section` remains
-the compatibility helper, but its sections must map cleanly to artifact section
-types and pass artifact validation before publish.
+For final comprehensive reports, finish the notebook analysis and EDA findings
+first, then call `report_design_report` with the completed insights, analysis
+assets, aggregate payloads, evidence, methodology, and requirements. The report
+designer should storyboard the full report, choose section layouts and
+interactions, write a storyboard JSON, and render the HTML in one pass.
+`report_add_section` remains a low-level compatibility helper for manual or
+incremental assembly, but do not rely on appended report cells as the final
+strategy for a cohesive analytical report.
+
+```python
+report_design_report(
+    report_goal="Explain the player archetypes and which signals support each one.",
+    title="FIFA World Cup 2026 Player Archetypes",
+    report_path="reports/world-cup-player-archetypes.html",
+    storyboard_path="reports/world-cup-player-archetypes-storyboard.json",
+    insights=[
+        {
+            "title": "Creator archetype separates from finishers",
+            "detail": "Similarity scores show a distinct creator cluster with higher chance creation.",
+            "finding_id": "find-creator",
+            "hypothesis_id": "hyp-archetype",
+            "evidence": [{"kind": "notebook_cell", "cell_id": "cell-sim"}],
+            "caveat": "Simulation data is descriptive, not causal.",
+        }
+    ],
+    analyses=[
+        {
+            "title": "Player similarity explorer",
+            "records": player_similarity_aggregate.to_dict("records"),
+            "chart": {"type": "bar", "x": "player", "y": "similarity", "color": "archetype"},
+            "columns": ["team", "archetype", "player", "similarity"],
+            "filters": [{"key": "team"}, {"key": "archetype"}],
+            "interpretation": "The selector changes both the visual evidence and the lookup table.",
+        }
+    ],
+    requirements={"methodology": [{"title": "Aggregate first", "detail": "Embed only precomputed aggregate records."}]},
+)
+```
+
+When you do use `report_add_section`, each section must map cleanly to artifact
+section types and pass artifact validation before publish.
 
 ```python
 report_add_section(
@@ -63,21 +101,41 @@ report_add_section(section_type="metric_row", report_path="reports/world-cup-per
 })
 ```
 
-Allowed section types: `header`, `metric_row`, `insight_grid`, `explanation`,
-`comparison`, `checklist`, `hypothesis_ledger`, `evidence_trace`, `chart`,
-`findings`, `callout`, `text`, and `table`. Each section needs a stable title,
+Allowed section types: `header`, `metric_row`, `narrative_band`,
+`methodology_block`, `chart_interpretation`, `evidence_rail`,
+`ledger_timeline`, `insight_grid`, `explanation`, `comparison`, `checklist`,
+`hypothesis_ledger`, `evidence_trace`, `filterable_chart`,
+`interactive_table`, `selector_panel`, `chart_table_explorer`,
+`entity_card_grid`, `chart`, `findings`, `callout`, `text`, and `table`.
+Each section needs a stable title,
 short caption or body, and enough provenance for the living report to attach it
 to the current plan step. Step attribution travels by stable plan step id; names
 are display labels.
 
+Before emitting sections, storyboard the report: executive readout, primary
+insight, supporting evidence, caveats, methodology, and appendix. Persist the
+report assembly calls in the notebook or a source script so the final artifact
+can be regenerated and reviewed; do not leave the report-building logic only in
+transient tool calls.
+
 Use the richer narrative sections deliberately:
 
+- `narrative_band` for a short story turn, executive readout, caveat band, or revised interpretation.
+- `methodology_block` for how an analysis was checked: grain, denominator, validation, review, and assumptions.
+- `chart_interpretation` when a chart needs adjacent interpretation, caveat, evidence refs, or next action. Prefer it over plain `chart` for structured EDA.
+- `evidence_rail` to keep notebook cells, query cards, artifact sections, or findings beside the claim they support.
+- `ledger_timeline` for hypothesis, finding, review, risk-acceptance, publish, or supersession chronology.
 - `insight_grid` for 2-6 key insights, each with evidence, confidence/status, and caveat.
 - `explanation` for the analysis path, assumptions, or why a result matters.
 - `comparison` for side-by-side segments, cohorts, models, periods, or scenarios.
 - `checklist` for readiness, QA, validation, and launch/blocker states.
 - `hypothesis_ledger` for EDA hypotheses, dispositions, and next actions.
 - `evidence_trace` for notebook cells, tables, filters, or checks that support claims.
+- `filterable_chart` when the same aggregate chart should respond to a small set of embedded filters.
+- `interactive_table` for sortable/searchable aggregate or preview tables with captions and filters.
+- `selector_panel` for team, player, cohort, model, or scenario selectors that filter adjacent cards.
+- `chart_table_explorer` for chart + interpretation + searchable table over the same aggregate payload. Prefer this over repeated near-duplicate charts.
+- `entity_card_grid` for archetype, player, segment, cohort, or scenario cards with metric summaries.
 - `findings` for published EDA finding lists; each item should carry `finding_id`
   and, when applicable, `hypothesis_id` so review can trace claims back to the
   ledgers.
@@ -89,6 +147,12 @@ checked, `bullets`/`key_points` for scannable logic, and per-item `evidence`,
 `caveat`, `next_action`, and `bullets`. When a later insight changes the
 interpretation, append a new section that names the revised layer rather than
 silently replacing the earlier story.
+
+Use plain `chart` as supporting material, not the main storytelling unit. If a
+report naturally supports slicing, lookup, ranking, or side-by-side comparison,
+use `filterable_chart`, `interactive_table`, `selector_panel`, or
+`chart_table_explorer` with small aggregate JSON payloads. Do not embed raw full
+datasets in report controls.
 
 ```python
 report_add_section(section_type="insight_grid", report_path="reports/analysis.html", data={
@@ -150,15 +214,22 @@ To attach a one-line insight to a chart, re-show its cell with a caption:
 `display_cell_output(cell_index=..., caption="Stat + caveat in one sentence.")`
 
 To embed a notebook chart in an artifact section, pass the same Plotly figure
-object or JSON into a report chart section:
+object or JSON into a report chart section. Use `chart_interpretation` when the
+chart carries an analytical claim, caveat, evidence, or next action:
 
 ```python
-report_add_section(section_type="chart", report_path="reports/analysis.html", data={
+report_add_section(section_type="chart_interpretation", report_path="reports/analysis.html", data={
     "title": "Value vs output",
     "figure": fig.to_dict(),
     "caption": "Market value explains output only weakly; expensive does not equal elite.",
+    "interpretation": "The relationship is outlier-sensitive, so value should not be used as a single ranking signal.",
+    "caveat": "Correlation is descriptive and not causal.",
+    "evidence": [{"kind": "notebook_cell", "cell_id": "abc123", "summary": "Correlation recompute after outlier review."}],
 })
 ```
+
+Plain `chart` remains appropriate for supporting visuals whose interpretation
+is already carried by a nearby narrative or findings section.
 
 ### 3. Metric tiles - one call per headline KPI
 
@@ -187,6 +258,17 @@ Every table section should include:
 - sort order
 - source or filter note when the denominator matters
 - no more rows than a reader can scan; put long tables in downloadable files
+
+Prefer `interactive_table` when the reader needs search, sort, column filters,
+pagination, or row lookup. Include only aggregate, ranked, or sampled rows that
+are safe to embed in the artifact preview.
+
+## Report quality gate
+`report_add_section` returns a `quality` object. Treat warnings as action items
+before publishing. Use `quality_gate="fail"` before the final publish/revise pass
+to catch chart dumps, missing insight sections, missing evidence ids, missing
+table captions, stale installed skills, oversized HTML, or reports that should
+have an explorer but only contain static chart stacks.
 
 ## Artifact section contract
 Skill-generated sections should be representable as typed artifact sections:

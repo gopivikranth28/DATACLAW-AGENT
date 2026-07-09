@@ -230,6 +230,7 @@ export default function ArtifactPanel({
                 />
               ) : artifactUrl ? (
                 <iframe
+                  data-testid={isLivingReport ? 'living-report-preview-frame' : 'artifact-preview-frame'}
                   ref={frameRef}
                   title={isLivingReport ? `${selected.artifact_id} live` : `${selected.artifact_id} v${version}`}
                   src={artifactUrl}

@@ -28,8 +28,15 @@ def test_structured_eda_skill_is_bundled_and_parseable():
     assert "Insight loop behavior" in body
     assert "Default to at most 3 insight loops" in body
     assert "Fetch the `visualization` skill" in body
+    assert "report_design_report" in body
+    assert "Do not treat appended report cells as the final EDA report" in body
     assert "`hypothesis_ledger`" in body
+    assert "`ledger_timeline`" in body
     assert "`evidence_trace`" in body
+    assert "`evidence_rail`" in body
+    assert "`chart_interpretation`" in body
+    assert "`methodology_block`" in body
+    assert "`narrative_band`" in body
     assert "`insight_grid`" in body
     assert "`methodology`" in body
     assert "new layer of\nunderstanding" in body

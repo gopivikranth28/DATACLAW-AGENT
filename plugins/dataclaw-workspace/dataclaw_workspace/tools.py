@@ -9,22 +9,28 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import json
 from pathlib import Path
 from typing import Any
 
 from dataclaw.config.paths import workspaces_dir
+from dataclaw.storage.skill_library import stale_installed_library_skills
 from dataclaw_workspace.config import WorkspaceConfig
 from dataclaw_workspace.report_renderer import (
+    CHART_SECTION_KINDS,
     BODY_CLOSE_RE as _BODY_CLOSE_RE,
     BODY_OPEN_RE as _BODY_OPEN_RE,
     REPORT_SECTION_END as _REPORT_SECTION_END,
     REPORT_SECTION_START as _REPORT_SECTION_START,
     REPORT_SHELL_CSS_ATTR as _REPORT_SHELL_CSS_ATTR,
     REPORT_SHELL_SCRIPT_ATTR as _REPORT_SHELL_SCRIPT_ATTR,
+    analyze_report_quality as _analyze_report_quality,
+    design_report_storyboard as _design_report_storyboard,
     ensure_plotly_runtime as _ensure_plotly_runtime,
     ensure_report_shell_context as _ensure_report_shell_context,
     plotly_script_tag as _plotly_script_tag,
     render_report_section as _render_report_section,
+    render_report_from_storyboard as _render_report_from_storyboard,
     report_shell as _report_shell,
     report_shell_css as _report_shell_css,
     report_shell_script as _report_shell_script,
@@ -315,6 +321,78 @@ async def build_report(
     return result
 
 
+async def report_design_report(
+    *,
+    cfg: WorkspaceConfig,
+    report_goal: str,
+    insights: list[dict[str, Any]],
+    analyses: list[dict[str, Any]] | None = None,
+    audience: str = "",
+    requirements: dict[str, Any] | None = None,
+    report_path: str = "report.html",
+    storyboard_path: str = "report_storyboard.json",
+    title: str = "Analysis Report",
+    quality_gate: str = "warn",
+    workspace_id: str = "default",
+    **_: Any,
+) -> dict[str, Any]:
+    """Design a cohesive report from completed insights, then render it in one pass.
+
+    This is the report-designer layer: it plans the story, layout, controls,
+    evidence sections, and quality checks before creating the HTML report.
+    """
+    if not isinstance(insights, list):
+        raise ValueError("insights must be a list of insight dictionaries")
+    if analyses is not None and not isinstance(analyses, list):
+        raise ValueError("analyses must be a list of analysis asset dictionaries")
+    if requirements is not None and not isinstance(requirements, dict):
+        raise ValueError("requirements must be a dictionary")
+    if quality_gate not in {"warn", "fail", "off"}:
+        raise ValueError("quality_gate must be one of: warn, fail, off")
+
+    if not report_path.endswith(".html"):
+        report_path = report_path.rsplit(".", 1)[0] + ".html"
+    if not storyboard_path.endswith(".json"):
+        storyboard_path = storyboard_path.rsplit(".", 1)[0] + ".json"
+
+    storyboard = _design_report_storyboard(
+        report_goal=report_goal,
+        insights=insights,
+        analyses=analyses or [],
+        audience=audience,
+        title=title,
+        requirements=requirements or {},
+    )
+    doc = _render_report_from_storyboard(storyboard, title=title)
+    stale_skills = [] if quality_gate == "off" else stale_installed_library_skills()
+    quality = _analyze_report_quality(doc, stale_skills=stale_skills) if quality_gate != "off" else {"status": "off", "warnings": []}
+    if quality_gate == "fail" and quality.get("status") == "fail":
+        codes = ", ".join(w.get("code", "unknown") for w in quality.get("warnings", []) if w.get("severity") == "fail")
+        raise ValueError(f"Report quality gate failed: {codes}")
+
+    storyboard["quality"] = quality
+
+    resolved_html = _resolve_path(workspace_id, report_path)
+    resolved_html.parent.mkdir(parents=True, exist_ok=True)
+    resolved_html.write_text(doc, encoding="utf-8")
+
+    resolved_storyboard = _resolve_path(workspace_id, storyboard_path)
+    resolved_storyboard.parent.mkdir(parents=True, exist_ok=True)
+    resolved_storyboard.write_text(json.dumps(storyboard, indent=2, default=str), encoding="utf-8")
+
+    return {
+        "type": "report_design",
+        "html_path": str(resolved_html),
+        "storyboard_path": str(resolved_storyboard),
+        "title": title,
+        "section_count": len(storyboard.get("section_plan", [])),
+        "interaction_count": len(storyboard.get("interaction_plan", [])),
+        "quality": quality,
+        "size": resolved_html.stat().st_size,
+        "updated": True,
+    }
+
+
 async def report_add_section(
     *,
     cfg: WorkspaceConfig,
@@ -322,6 +400,7 @@ async def report_add_section(
     data: dict[str, Any],
     report_path: str = "report.html",
     title: str = "Analysis Report",
+    quality_gate: str = "warn",
     workspace_id: str = "default",
     **_: Any,
 ) -> dict[str, Any]:
@@ -342,14 +421,22 @@ async def report_add_section(
     if resolved.exists():
         doc = resolved.read_text(encoding="utf-8")
         doc = _ensure_report_shell_context(doc)
-        if typed_section.get("kind") == "chart":
+        if typed_section.get("kind") in CHART_SECTION_KINDS:
             doc = _ensure_plotly_runtime(doc)
         if _REPORT_SECTION_END in doc:
             doc = doc.replace(_REPORT_SECTION_END, section_html + "\n" + _REPORT_SECTION_END, 1)
         else:
             doc += "\n" + section_html
     else:
-        doc = _report_shell(title=title, first_section=section_html, include_plotly=typed_section.get("kind") == "chart")
+        doc = _report_shell(title=title, first_section=section_html, include_plotly=typed_section.get("kind") in CHART_SECTION_KINDS)
+
+    if quality_gate not in {"warn", "fail", "off"}:
+        raise ValueError("quality_gate must be one of: warn, fail, off")
+    stale_skills = [] if quality_gate == "off" else stale_installed_library_skills()
+    quality = _analyze_report_quality(doc, stale_skills=stale_skills) if quality_gate != "off" else {"status": "off", "warnings": []}
+    if quality_gate == "fail" and quality.get("status") == "fail":
+        codes = ", ".join(w.get("code", "unknown") for w in quality.get("warnings", []) if w.get("severity") == "fail")
+        raise ValueError(f"Report quality gate failed: {codes}")
 
     resolved.write_text(doc, encoding="utf-8")
     return {
@@ -357,6 +444,7 @@ async def report_add_section(
         "html_path": str(resolved),
         "section_type": section_type,
         "section": typed_section,
+        "quality": quality,
         "title": title,
         "size": resolved.stat().st_size,
         "updated": True,

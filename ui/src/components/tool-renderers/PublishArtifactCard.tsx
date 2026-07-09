@@ -113,6 +113,7 @@ export default function PublishArtifactCard({ data, sessionId }: {
       </div>
       {shouldMount ? (
         <iframe
+          data-testid="published-artifact-preview-frame"
           ref={frameRef}
           title={`${data.artifact_id} v${data.version}`}
           src={artifactUrl}
@@ -141,6 +142,7 @@ export default function PublishArtifactCard({ data, sessionId }: {
       >
         {modalOpen && (
           <iframe
+            data-testid="published-artifact-expanded-frame"
             ref={modalFrameRef}
             title={`${data.artifact_id} v${data.version} expanded`}
             src={artifactUrl}

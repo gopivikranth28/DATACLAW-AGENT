@@ -280,6 +280,7 @@ function ReportFrame({ htmlPath, title, updatedAt }: { htmlPath: string; title?:
           style={{ fontSize: 12, color: '#2563eb' }}>Open</a>
       </div>
       <iframe
+        data-testid="report-preview-frame"
         src={documentUrl}
         title={title || 'Report'}
         sandbox="allow-scripts allow-forms allow-popups allow-modals"

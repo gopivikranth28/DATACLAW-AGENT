@@ -24,6 +24,7 @@ from typing import Any
 import yaml
 
 from dataclaw.config.paths import skills_dir
+from dataclaw.storage.skill_library import skill_freshness_for_installed_skill
 from dataclaw.state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ def _parse_skill_file(path: Path) -> dict[str, Any] | None:
         return None
 
     body = parts[2].strip()
-    return {
+    skill = {
         "id": path.stem,
         "name": meta.get("name", path.stem),
         "description": meta.get("description", ""),
@@ -54,6 +55,10 @@ def _parse_skill_file(path: Path) -> dict[str, Any] | None:
         "body": body,
         "path": str(path),
     }
+    for key, value in meta.items():
+        skill.setdefault(key, value)
+    skill.update(skill_freshness_for_installed_skill(path.stem, body, meta))
+    return skill
 
 
 class FileSkillProvider:
@@ -140,7 +145,16 @@ class FileSkillProvider:
             line = f"- {skill['name']} (id: {sid})"
             if desc:
                 line += f" - {desc}"
+            if skill.get("installed_stale"):
+                line += " [stale installed library copy]"
             lines.append(line)
+        stale_names = [str(skill.get("name") or skill.get("id")) for skill in skills if skill.get("installed_stale")]
+        if stale_names:
+            lines.append("")
+            lines.append(
+                "Skill freshness warning: installed library skills are stale versus the bundled skill-library "
+                f"({', '.join(stale_names)}). Reinstall or force-update them before relying on report composition guidance."
+            )
         return ["\n".join(lines)]
 
     async def fetch_skill(self, skill_id: str, **kwargs: Any) -> dict[str, Any]:
@@ -149,10 +163,12 @@ class FileSkillProvider:
         for skill in self._resolved_skills:
             if skill.get("serial_id") == skill_id or skill["id"] == skill_id:
                 return {
-                    "content": f"# {skill['name']}\n\n{skill.get('body', '')}",
+                    "content": _skill_content(skill),
                     "id": skill.get("serial_id", skill["id"]),
                     "name": skill["name"],
                     "description": skill.get("description", ""),
+                    "installed_stale": bool(skill.get("installed_stale")),
+                    "stale_reason": skill.get("stale_reason", ""),
                 }
         # Fallback only when no per-request resolve happened (e.g., a
         # standalone CLI invocation). If the session-aware preToolCallHook
@@ -162,10 +178,12 @@ class FileSkillProvider:
             for skill in self._load_all():
                 if skill["id"] == skill_id:
                     return {
-                        "content": f"# {skill['name']}\n\n{skill.get('body', '')}",
+                        "content": _skill_content(skill),
                         "id": skill["id"],
                         "name": skill["name"],
                         "description": skill.get("description", ""),
+                        "installed_stale": bool(skill.get("installed_stale")),
+                        "stale_reason": skill.get("stale_reason", ""),
                     }
         return {"content": f"Skill not found: {skill_id}", "is_error": True}
 
@@ -183,5 +201,17 @@ class FileSkillProvider:
         lines = []
         for i, s in enumerate(skills):
             sid = s.get("serial_id", f"skill_{i + 1}")
-            lines.append(f"- {s['name']} (id: {sid}): {s.get('description', '')}")
+            stale = " [stale installed library copy]" if s.get("installed_stale") else ""
+            lines.append(f"- {s['name']} (id: {sid}): {s.get('description', '')}{stale}")
         return {"content": "\n".join(lines) if lines else "No skills available."}
+
+
+def _skill_content(skill: dict[str, Any]) -> str:
+    warning = ""
+    if skill.get("installed_stale"):
+        reason = skill.get("stale_reason") or "installed copy differs from bundled skill-library"
+        warning = (
+            "Skill freshness warning: this installed library skill is stale versus the bundled "
+            f"skill-library ({reason}). Reinstall or force-update it before relying on these instructions.\n\n"
+        )
+    return f"{warning}# {skill['name']}\n\n{skill.get('body', '')}"

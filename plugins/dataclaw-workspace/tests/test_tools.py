@@ -14,6 +14,7 @@ from dataclaw_workspace.tools import (
     ws_update_file,
     ws_exec,
     display_image,
+    report_design_report,
     report_add_section,
     _BODY_CLOSE_RE,
     _BODY_OPEN_RE,
@@ -173,6 +174,61 @@ async def test_display_image_bad_format(cfg):
 
 
 @pytest.mark.asyncio
+async def test_report_design_report_storyboards_then_renders_cohesive_html(cfg):
+    result = await report_design_report(
+        cfg=cfg,
+        report_goal="Explain player archetypes and where the evidence supports slicing by team.",
+        title="World Cup Archetype Report",
+        report_path="reports/designed.html",
+        storyboard_path="reports/designed-storyboard.json",
+        insights=[
+            {
+                "title": "Creator archetype separates from finishers",
+                "detail": "Similarity scores show a distinct creator cluster with higher chance creation.",
+                "finding_id": "find-creator",
+                "hypothesis_id": "hyp-archetype",
+                "evidence": [{"kind": "notebook_cell", "cell_id": "cell-sim", "summary": "Similarity matrix recompute."}],
+                "metrics": [{"label": "Creator avg score", "value": "8.2"}],
+                "caveat": "Simulation data is descriptive.",
+            }
+        ],
+        analyses=[
+            {
+                "title": "Player similarity explorer",
+                "caption": "Aggregate similarity scores by archetype and team.",
+                "records": [
+                    {"team": "A", "archetype": "Creator", "player": "One", "similarity": 0.94},
+                    {"team": "B", "archetype": "Finisher", "player": "Two", "similarity": 0.87},
+                ],
+                "chart": {"type": "bar", "x": "player", "y": "similarity", "color": "archetype"},
+                "columns": ["team", "archetype", "player", "similarity"],
+                "filters": [{"key": "team", "label": "Team"}, {"key": "archetype", "label": "Archetype"}],
+                "interpretation": "The explorer lets the reader compare archetype similarity without repeated static charts.",
+                "evidence": [{"kind": "notebook_cell", "cell_id": "cell-sim"}],
+            }
+        ],
+        requirements={
+            "methodology": [{"title": "Aggregate first", "detail": "Use only precomputed aggregate records in report controls."}],
+            "checks": [{"title": "Evidence ids attached", "status": "pass"}],
+        },
+    )
+
+    html = Path(result["html_path"]).read_text()
+    storyboard = Path(result["storyboard_path"]).read_text()
+    assert result["type"] == "report_design"
+    assert result["section_count"] >= 6
+    assert result["interaction_count"] == 1
+    assert "World Cup Archetype Report" in html
+    assert "Creator archetype separates from finishers" in html
+    assert "Player similarity explorer" in html
+    assert "data-dc-section=\"chart_table_explorer\"" in html
+    assert "initChartTableExplorer" in html
+    assert "report_design" in result["type"]
+    assert "\"mode\": \"whole_report\"" in storyboard
+    assert "section_plan" in storyboard
+
+
+@pytest.mark.asyncio
 async def test_report_add_section_builds_live_html_report(cfg):
     header = await report_add_section(
         cfg=cfg,
@@ -302,6 +358,142 @@ async def test_report_add_section_builds_live_html_report(cfg):
             ],
         },
     )
+    await report_add_section(
+        cfg=cfg,
+        section_type="narrative_band",
+        report_path="reports/live.html",
+        data={
+            "title": "Narrative readout",
+            "summary": "The first pass found a concentrated tail and one unresolved leakage question.",
+            "bullets": ["Lead with the decision-changing signal.", "Keep the blocker visible."],
+        },
+    )
+    await report_add_section(
+        cfg=cfg,
+        section_type="methodology_block",
+        report_path="reports/live.html",
+        data={
+            "title": "Methodology",
+            "methods": [
+                {"title": "Validate denominator", "detail": "Recomputed at account grain.", "evidence": "notebook_cell:abc123"},
+                {"title": "Review leakage", "detail": "Checked post-event fields before readiness."},
+            ],
+            "checks": [{"title": "Notebook evidence attached", "status": "pass"}],
+        },
+    )
+    await report_add_section(
+        cfg=cfg,
+        section_type="evidence_rail",
+        report_path="reports/live.html",
+        data={
+            "title": "Evidence rail",
+            "summary": "Evidence stays beside the claim instead of buried at the end.",
+            "evidence": [
+                {"kind": "notebook_cell", "cell_id": "abc123", "summary": "Segment recompute."},
+                {"kind": "finding", "finding_id": "find-1", "summary": "Validated outlier finding."},
+            ],
+        },
+    )
+    await report_add_section(
+        cfg=cfg,
+        section_type="ledger_timeline",
+        report_path="reports/live.html",
+        data={
+            "title": "EDA timeline",
+            "events": [
+                {"title": "Hypothesis proposed", "status": "open", "time": "loop 1", "hypothesis_id": "hyp-1"},
+                {"title": "Finding recorded", "status": "confirmed", "time": "loop 2", "finding_id": "find-1"},
+            ],
+        },
+    )
+    await report_add_section(
+        cfg=cfg,
+        section_type="chart_interpretation",
+        report_path="reports/live.html",
+        data={
+            "title": "Chart plus interpretation",
+            "figure": {"data": [{"x": ["Enterprise", "SMB"], "y": [2.1, 8.4], "type": "bar"}], "layout": {"title": {"text": "Missingness by segment"}}},
+            "caption": "SMB has higher missingness and needs a denominator check.",
+            "interpretation": "The chart changes readiness because one segment requires remediation before modeling.",
+            "caveat": "Rates are descriptive until reviewed with domain owners.",
+            "evidence": [{"kind": "notebook_cell", "cell_id": "abc123", "summary": "Segment missingness recompute."}],
+        },
+    )
+    await report_add_section(
+        cfg=cfg,
+        section_type="filterable_chart",
+        report_path="reports/live.html",
+        data={
+            "title": "Filterable team chart",
+            "caption": "Aggregate score by team.",
+            "records": [
+                {"team": "A", "player": "One", "score": 9.4},
+                {"team": "B", "player": "Two", "score": 8.1},
+            ],
+            "chart": {"type": "bar", "x": "player", "y": "score", "color": "team"},
+            "filters": [{"key": "team", "label": "Team"}],
+            "interpretation": "The filter keeps the chart tied to a reader-selected team.",
+        },
+    )
+    await report_add_section(
+        cfg=cfg,
+        section_type="interactive_table",
+        report_path="reports/live.html",
+        data={
+            "title": "Interactive leaderboard",
+            "caption": "Top aggregate player scores; sortable and searchable.",
+            "columns": ["team", "player", "score"],
+            "rows": [
+                {"team": "A", "player": "One", "score": 9.4},
+                {"team": "B", "player": "Two", "score": 8.1},
+            ],
+            "filters": [{"key": "team", "label": "Team"}],
+        },
+    )
+    await report_add_section(
+        cfg=cfg,
+        section_type="chart_table_explorer",
+        report_path="reports/live.html",
+        data={
+            "title": "Player similarity explorer",
+            "caption": "A chart and table share the same aggregate payload.",
+            "records": [
+                {"archetype": "Creator", "player": "One", "similarity": 0.94},
+                {"archetype": "Finisher", "player": "Two", "similarity": 0.87},
+            ],
+            "chart": {"type": "bar", "x": "player", "y": "similarity", "color": "archetype"},
+            "columns": ["archetype", "player", "similarity"],
+            "filters": [{"key": "archetype", "label": "Archetype"}],
+            "interpretation": "The selector changes both the visual evidence and the lookup table.",
+            "evidence": [{"kind": "notebook_cell", "cell_id": "sim-1", "summary": "Similarity matrix aggregate."}],
+        },
+    )
+    await report_add_section(
+        cfg=cfg,
+        section_type="selector_panel",
+        report_path="reports/live.html",
+        data={
+            "title": "Scenario selector",
+            "caption": "Cards filter by scenario type.",
+            "controls": [{"key": "scenario", "label": "Scenario"}],
+            "items": [
+                {"id": "base", "name": "Base case", "scenario": "Base", "metrics": {"win_rate": "18%"}},
+                {"id": "upside", "name": "Upside case", "scenario": "Upside", "metrics": {"win_rate": "24%"}},
+            ],
+        },
+    )
+    await report_add_section(
+        cfg=cfg,
+        section_type="entity_card_grid",
+        report_path="reports/live.html",
+        data={
+            "title": "Archetype cards",
+            "items": [
+                {"name": "Creator", "status": "confirmed", "metrics": {"players": 12, "avg_score": 8.2}},
+                {"name": "Finisher", "status": "confirmed", "metrics": {"players": 9, "avg_score": 8.0}},
+            ],
+        },
+    )
 
     report_path = Path(header["html_path"])
     html = report_path.read_text()
@@ -323,6 +515,28 @@ async def test_report_add_section_builds_live_html_report(cfg):
     assert "Readiness checks" in html
     assert "Target leakage may exist" in html
     assert "Evidence trace" in html
+    assert "Narrative readout" in html
+    assert "Methodology" in html
+    assert "Evidence rail" in html
+    assert "EDA timeline" in html
+    assert "Chart plus interpretation" in html
+    assert "Filterable team chart" in html
+    assert "Interactive leaderboard" in html
+    assert "Player similarity explorer" in html
+    assert "Scenario selector" in html
+    assert "Archetype cards" in html
+    assert "r-narrative-band" in html
+    assert "r-methodology-grid" in html
+    assert "r-evidence-rail" in html
+    assert "r-timeline" in html
+    assert "r-chart-story-grid" in html
+    assert "r-interactive-shell" in html
+    assert "r-explorer-grid" in html
+    assert "r-entity-grid" in html
+    assert "initFilterableChart" in html
+    assert "initInteractiveTable" in html
+    assert "initChartTableExplorer" in html
+    assert "initSelectorPanel" in html
     assert "Plotly.newPlot" in html
     assert "Plotly is loaded by the DataClaw artifact runtime" not in html
     assert "DATACLAW_REPORT_SECTIONS_START" in html
@@ -342,9 +556,57 @@ async def test_report_add_section_builds_live_html_report(cfg):
     assert "data-dc-section=\"checklist\"" in html
     assert "data-dc-section=\"hypothesis_ledger\"" in html
     assert "data-dc-section=\"evidence_trace\"" in html
+    assert "data-dc-section=\"filterable_chart\"" in html
+    assert "data-dc-section=\"interactive_table\"" in html
+    assert "data-dc-section=\"chart_table_explorer\"" in html
+    assert "data-dc-section=\"selector_panel\"" in html
+    assert "data-dc-section=\"entity_card_grid\"" in html
     assert "data-dc-section-meta" in html
     assert "--dc-bg" in html
     assert "data-dc-runtime=\"plotly\"" in html
+
+
+@pytest.mark.asyncio
+async def test_report_add_section_quality_warns_on_chart_dump(cfg):
+    report_path = "reports/chart-dump.html"
+    last = None
+    for i in range(4):
+        last = await report_add_section(
+            cfg=cfg,
+            section_type="chart",
+            report_path=report_path,
+            data={
+                "title": f"Chart {i}",
+                "figure": {"data": [{"x": [1, 2], "y": [i, i + 1]}]},
+            },
+        )
+
+    assert last is not None
+    assert last["quality"]["status"] == "fail"
+    codes = {warning["code"] for warning in last["quality"]["warnings"]}
+    assert "consecutive_plain_charts" in codes
+    assert "chart_dump" in codes
+
+
+@pytest.mark.asyncio
+async def test_report_add_section_quality_gate_can_fail_before_write(cfg):
+    report_path = "reports/chart-gate.html"
+    for i in range(2):
+        await report_add_section(
+            cfg=cfg,
+            section_type="chart",
+            report_path=report_path,
+            data={"title": f"Chart {i}", "figure": {"data": [{"x": [1], "y": [i]}]}},
+        )
+
+    with pytest.raises(ValueError, match="Report quality gate failed"):
+        await report_add_section(
+            cfg=cfg,
+            section_type="chart",
+            report_path=report_path,
+            quality_gate="fail",
+            data={"title": "Chart 2", "figure": {"data": [{"x": [1], "y": [2]}]}},
+        )
 
 
 def test_report_visual_system_lives_in_renderer_module():
@@ -388,6 +650,10 @@ def test_report_shell_parts_keep_original_context_contract():
     assert ".r-comparison" in css
     assert ".r-checks" in css
     assert ".r-ledger-item" in css
+    assert ".r-evidence-rail" in css
+    assert ".r-timeline" in css
+    assert ".r-chart-story-grid" in css
+    assert ".r-methodology-grid" in css
     assert ".r-chart-target" in css
     assert "@media (max-width: 720px)" in css
 
@@ -448,6 +714,30 @@ def test_existing_report_shell_context_upgrade_is_idempotent():
     assert _ensure_report_shell_context(migrated).count("data-dc-report-shell-css") == 1
     assert _ensure_report_shell_context(migrated).count("data-dc-report-shell-script") == 1
     assert _ensure_report_shell_context(migrated).count('class="r-story-nav"') == 1
+
+
+def test_legacy_shell_without_attrs_gets_current_runtime():
+    legacy = """<!doctype html>
+<html><head><title>Legacy</title><style>.r-story-nav { display: flex; }</style></head>
+<body><main class="r-page">
+<!-- DATACLAW_REPORT_SECTIONS_START -->
+<section class="r-section" data-dc-section="findings" data-dc-section-id="old"><h2>Old</h2></section>
+<!-- DATACLAW_REPORT_SECTIONS_END -->
+</main>
+<script>
+(function() {
+  var sections = Array.prototype.slice.call(document.querySelectorAll('.r-hero, .r-section'));
+})();
+</script>
+</body></html>"""
+
+    migrated = _ensure_report_shell_context(legacy)
+
+    assert migrated.count("data-dc-report-shell-css") == 1
+    assert migrated.count("data-dc-report-shell-script") == 1
+    assert "window.DataClawReport" in migrated
+    assert "r-interactive-shell" in migrated
+    assert migrated.count("document.querySelectorAll('.r-hero, .r-section')") == 1
 
 
 @pytest.mark.asyncio
