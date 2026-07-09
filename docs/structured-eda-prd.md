@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | Approved for build (rev 2 — skill-alignment fixes, concurrency model, gate-acceptance hardening) |
+| **Status** | Approved for build (rev 3 — workflow & agent-interaction diagrams) |
 | **Owner** | Nandini Mathan |
-| **Last updated** | 2026-07-08 |
+| **Last updated** | 2026-07-09 |
 | **Branch** | `structured-eda` (base: `release3` + cherry-picked structured-EDA skill from `eda-upgrade`) |
 | **Ships as** | `plugins/dataclaw-eda/`, `plugins/dataclaw-analysis-review/`, patch to `plugins/dataclaw-plans/`, patch to `plugins/dataclaw-notebooks/`, `skill-library/{structured_eda,insight_validation,analysis_review,dataclaw}.md`, `ui/src` Findings surfaces, `evals/` harness |
 | **Composes with** | `plugins/dataclaw-plans`, `plugins/dataclaw-notebooks`, `plugins/dataclaw-artifacts`, `plugins/dataclaw-projects` (sub-agent registry), MLflow tooling |
@@ -204,7 +204,7 @@ Human validation bandwidth is the binding constraint (per the portfolio PRD). Th
 | P1 — EDA ledgers | plugin skeleton, both stores + enum constants, 8 tools + floors, AG-UI events, router, context hook | tool-level goldens green; caps + floors enforced; alias fixture passes |
 | P2 — Evidence | notebooks `cell_id` patch, anchor resolution, evidence stash, stale flags | finding links to producing cell by id+hash; stale path covered |
 | P3 — Readiness | purpose/mode policies, hypothesis rollup, deferred-vs-unresolved distinction, artifact sections + living-report events | leakage blocks modeling; budget-deferred hypothesis is caveat not blocker; verdict persists supersedable |
-| P4 — Skills | `structured_eda` restructure, `insight_validation`, `analysis_review`, `dataclaw` routing, adjacent-skill contract touch-ups (FR-34a: `artifacts`/`visualization`/`dashboarding`), OpenClaw mirrors, skill tests | skill tests assert hypothesis step, loop wiring, reserved-surprise-loop rule, caveat rule, report_note supersession line |
+| P4 — Skills | `structured_eda` restructure, `insight_validation`, `analysis_review`, `dataclaw` routing, OpenClaw mirrors, skill tests | skill tests assert hypothesis step, loop wiring, reserved-surprise-loop rule, caveat rule |
 | P5 — Review checklist | review store/tools/router, context collectors, 13 checks, gates wiring, auto-checklist hook | checklist golden: flags seeded issues, leaves valid chart alone; gate blocks then clears |
 | P6 — Reviewer sub-agent | definition + rubric rendering, direct-provider run, JSON parsing, degradation labeling | seeded fixture: unsupported claim + ledger-hygiene finding caught; checklist-only never passes required gate |
 | P7 — UI | hooks, inline cards, Findings tab (EDA + Review views), AG-UI handlers | manual: cards stream, panel groups by hypothesis, readiness pinned, badge not auto-switch |
@@ -238,7 +238,9 @@ Deterministic tests land inside each phase, not as a trailing phase. P0/P1 are p
 | `plugins/dataclaw-artifacts` | consumes findings as typed sections; living-report event log |
 | `evals/` | committed harness: hypothesis-disposition scoring + LLM judge |
 
-## 2. Flow
+## 2. Workflow and agent interactions
+
+### 2.1 Pipeline summary
 
 ```
 GOAL       structured_eda: mode + unit-of-observation + role map
@@ -256,6 +258,152 @@ GATE       update_plan(ready_for_validation) blocked on required fail/unknown
 SURFACE    inline cards; Findings tab; living report; artifact sections
 EVAL       evals/: Tier1 records, Tier2 dispositions (thresholded sets), Tier3 judge
 ```
+
+### 2.2 Runtime actors
+
+One main agent, one optional bounded sub-agent, deterministic plugins between them. Skills are fetched
+instructions, not processes — they change what the main agent decides, never who executes.
+
+```
+┌─ LEFT: chat (acts) ────────────────────┐      ┌─ RIGHT: panels (read-only) ───────────────┐
+│  user ⇄ main agent (LangGraph loop)    │      │  Plan panel · Findings tab (EDA | Review) │
+│  skills fetched into context:          │      │  Artifact library / living report         │
+│   dataclaw → structured_eda →          │      └───────────▲───────────────────────────────┘
+│   insight_validation → visualization/  │            REST reads + AG-UI custom events
+│   dashboarding/artifacts               │
+└───────────────┬────────────────────────┘
+                │ tool calls   (preToolCallHook injects session/proposal/plan_step_id;
+                ▼              postToolCallHook stashes evidence, auto-runs checklist)
+  plugins (persist / enforce)
+    dataclaw-eda ············ hypotheses.jsonl · findings.jsonl · readiness records
+    dataclaw-plans ·········· proposals + snapshots · gate_events.jsonl · blocks ready_for_validation
+    dataclaw-analysis-review · review runs + findings · checklist · delegates to reviewer
+    dataclaw-notebooks ······ kernel + cells (evidence: cell_id + source hash) · MLflow env
+    dataclaw-artifacts ······ published artifacts · living report (sections cite finding ids)
+                │
+                ▼ delegated by dataclaw-analysis-review (sequential, ≤6 turns)
+  reviewer sub-agent (read-only tools; structured context manifest; returns JSON findings)
+```
+
+### 2.3 End-to-end sequence
+
+**Phase A — goal and hypotheses (pre-plan, FR-1a)**
+
+```
+user  → agent   "is this dataset ready for a churn model?"
+agent → skills  fetch_skill(dataclaw) → fetch_skill(structured_eda)
+agent → data    preview/profile/describe (initial EDA; quick inspection tools)
+agent → eda     propose_eda_hypotheses(batch ≤7, ≤3 high; user_goal/mode_expected_risk/domain_prior)
+                → hypotheses.jsonl; AG-UI eda_hypothesis_proposed → Findings tab
+```
+
+**Phase B — plan approval (human interaction #1)**
+
+```
+agent → plans   propose_plan(steps, plan_markdown citing the hypothesis set)
+UI    ← plans   pending-plan banner (left chat card; right panel mirrors read-only)
+user  → agent   approve / deny / revise (plain chat message)
+agent → eda     on deny/revision: update_eda_hypothesis(out_of_scope, reason=revision)
+```
+
+**Phase C — execution and insight loops (per approved step)**
+
+```
+agent → notebooks  execute_cell(...)            postToolCallHook stashes {cell_id, source_sha256}
+agent (loop ≤3)    pick top open hypothesis — or propose_eda_hypotheses(source=data_signal) first
+agent → skills     fetch_skill(insight_validation)   [Validate: internal recompute + external plausibility]
+agent → notebooks  execute_cell(independent-slice recompute)
+agent → eda        record_eda_finding(hypothesis_id, hypothesis_status, disposition, validation, evidence)
+                   preToolCallHook injects plan_step_id; plugin enforces floors (FR-10)
+                   → findings.jsonl + hypothesis_update link + living-report event (analyses)
+                   → AG-UI eda_finding_recorded → inline card + Findings tab refresh
+agent → eda        supersede_eda_finding(...) when evidence changes → needs_reevaluation flag (FR-12)
+```
+
+**Phase D — verdict and step completion**
+
+```
+agent → eda     summarize_eda_readiness(dataset, purpose, mode) → readiness record citing dispositions
+agent → plans   update_plan(step completed, summary, outputs)
+hooks → review  postToolCallHook auto-runs the deterministic checklist (never the sub-agent)
+review→ plans   set_step_gate("analysis_review", pass|fail|unknown) → gate_events.jsonl audit
+```
+
+**Phase E — review and gates (agent ↔ sub-agent interaction)**
+
+```
+agent  → review    request_analysis_review(scope=plan_step, ...)      [explicit; or required by policy]
+review → context   collect manifest: plan step + ledgers + section metas + cell summaries + MLflow
+review → reviewer  delegate (SubAgentContext, read-only tools, rubric from analysis_review.md)
+reviewer → review  fenced JSON findings (claims vs anchors, ledger hygiene, both validation axes)
+review → plans     set_step_gate(...); AG-UI analysis_review_* events → ReviewCard + Review panel
+agent  → plans     update_plan(ready_for_validation=true)
+plans  → agent     allowed — or gate_blocked {blocking_gates} (FR-20)
+agent  → user      if blocked: resolve findings, or ask the user
+user   → agent     "accept the risk" → accept_gate_risk (guardrail approval flow, FR-22; audited)
+```
+
+**Phase F — publish and delivery**
+
+```
+agent → artifacts  publish_artifact(report assembled from typed sections; findings sections cite finding ids)
+review hook        unresolved required findings at publish → "unresolved review risk" living-report event (FR-30a)
+agent → user       final summary; PlanCompletion guardrail warns on steps lacking ready_for_validation (FR-23)
+```
+
+**Offline — evals (no user in the loop)**
+
+```
+harness → app      TestClient(create_app()) with isolated home; scripted or live agent runs Phases A–F
+scorer  → ledgers  Tier 1 asserts records; Tier 2 matches seeded↔agent hypotheses, reads dispositions
+judge   → bundle   Tier 3 scores qualitative criteria (separate model); reports per run
+```
+
+### 2.4 Agent-interaction contract and trust boundaries
+
+```
+main agent ──── delegates via dataclaw-analysis-review ────► analysis-reviewer (llm, ≤6 turns)
+    ▲             context: structured manifest only (FR-26)      │
+    │             never raw artifact HTML; no data-query tools   │ tools (read-only):
+    │                                                            │  list_eda_hypotheses · list_eda_findings
+    │ review findings (fenced JSON; parse-guarded)               │  read_eda_finding · get_plan
+    └────────────────────────────────────────────────────────────┘  list_review_findings · list_artifacts
+```
+
+- The reviewer **never mutates** analysis state: it returns findings; only the main agent records
+  hypotheses (`source=reviewer`) or resolves review findings (FR-29).
+- All mutations flow through the main agent's tool calls, so hooks, guardrails, gates, and audit
+  logs see everything; the sub-agent cannot bypass them.
+- Today the delegation is sequential and blocking; §8/D13 name the async-review extension and the
+  parallel-panel prerequisites. The interaction contract above is unchanged by either.
+
+### 2.5 Ledger state machines
+
+Hypothesis (fold of append-only `hypothesis` + `hypothesis_update` records):
+
+```
+ propose ──► open ──► testing ──► confirmed      (requires ≥1 linked internally-validated finding)
+              │  ▲        ├─────► rejected       (rejecting finding kept as rejected_hypothesis)
+              │  │        ├─────► unresolved_needs_domain_input   (surfaces as question to user)
+              │  └────────┘      (back to open: "deferred: loop budget" — readiness caveat, not blocker)
+              └─────► out_of_scope               (untestable / plan revised away)
+ any state + linked evidence superseded ──► needs_reevaluation flag (checklist CHK-hypothesis-stale-evidence)
+```
+
+Finding: `active ──► superseded` (edge record with reason + optional replacement; history immutable).
+Readiness verdicts persist as `readiness`-type findings — supersedable like any other.
+
+### 2.6 Gate lifecycle (per step × gate name)
+
+```
+ (no review run) unknown ──checklist/sub-agent run──► fail ◄──new required findings── pass
+        │                                              │                                ▲
+        │ required gate: blocks ready_for_validation   │ resolve/accept findings ───────┘
+        └──► accept_gate_risk (user-approved, audited) ─────────────────────────────────┘
+ checklist-only where sub-agent required: capped at unknown — never pass (degradation rule)
+```
+
+Every transition appends to `gate_events.jsonl` with actor, previous, new, and reason (FR-18).
 
 ## 3. Key decisions
 
