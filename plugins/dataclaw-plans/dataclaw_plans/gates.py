@@ -38,6 +38,15 @@ HIGH_RISK_STEP_KEYWORDS = (
     "share",
     "send",
 )
+EDA_STEP_KEYWORDS = (
+    "eda",
+    "exploratory",
+    "explore",
+    "profile",
+    "profiling",
+    "readiness",
+    "data quality",
+)
 
 
 def _now_iso() -> str:
@@ -133,10 +142,19 @@ def step_requires_review_gate(step: dict[str, Any]) -> bool:
         [
             str(step.get("name") or ""),
             str(step.get("description") or ""),
+            str(step.get("summary") or ""),
             " ".join(str(o) for o in (step.get("outputs") or [])),
         ]
     ).lower()
-    return any(keyword in haystack for keyword in HIGH_RISK_STEP_KEYWORDS)
+    return any(keyword in haystack for keyword in HIGH_RISK_STEP_KEYWORDS + EDA_STEP_KEYWORDS)
+
+
+def _gate_has_audited_acceptance(gate: dict[str, Any]) -> bool:
+    if not gate.get("accepted") and gate.get("status") != "accepted":
+        return False
+    return bool(str(gate.get("accepted_at") or "").strip()) and bool(
+        str(gate.get("accepted_rationale") or "").strip()
+    )
 
 
 async def _maybe_await(value: Any) -> Any:
@@ -186,7 +204,7 @@ async def blocking_gates(proposal: dict[str, Any], step: dict[str, Any]) -> list
     for gate in gates.values():
         if not gate.get("required"):
             continue
-        if gate.get("accepted") or gate.get("status") == "accepted":
+        if _gate_has_audited_acceptance(gate):
             continue
         if gate.get("status") in {"fail", "unknown"}:
             blockers.append(gate)

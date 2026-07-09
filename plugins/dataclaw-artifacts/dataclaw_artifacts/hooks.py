@@ -63,9 +63,14 @@ async def artifact_capture_hook(state: AgentState) -> AgentState:
         if result.get("is_error"):
             continue
         tool_name = str(result.get("tool_name") or "")
-        event = _event_for_tool_result(tool_name, result.get("tool_input", {}), _parse_result(result.get("result")))
+        tool_input = result.get("tool_input", {}) if isinstance(result.get("tool_input"), dict) else {}
+        parsed_result = _parse_result(result.get("result"))
+        event = _event_for_tool_result(tool_name, tool_input, parsed_result)
         if event:
             append_living_report_event(session_id=session_id, project_id=project_id, event=event)
+        risk_event = _review_risk_event_for_publish(tool_name, tool_input, parsed_result)
+        if risk_event:
+            append_living_report_event(session_id=session_id, project_id=project_id, event=risk_event)
     return state
 
 
@@ -176,3 +181,62 @@ def _event_for_tool_result(tool_name: str, tool_input: dict[str, Any], result: d
         }
 
     return None
+
+
+def _review_risk_event_for_publish(
+    tool_name: str,
+    tool_input: dict[str, Any],
+    result: dict[str, Any],
+) -> dict[str, Any] | None:
+    if tool_name != "publish_artifact" or not result.get("success"):
+        return None
+    session_id = str(tool_input.get("session_id") or result.get("session_id") or "default")
+    plan_step_id = str(tool_input.get("plan_step_id") or result.get("plan_step_id") or "")
+    if plan_step_id and _gate_risk_accepted(session_id, plan_step_id):
+        return None
+    findings = _open_required_review_findings(session_id=session_id, plan_step_id=plan_step_id)
+    if not findings:
+        return None
+    finding_ids = [str(f.get("finding_id") or "") for f in findings if f.get("finding_id")]
+    return {
+        "kind": "unresolved_review_risk",
+        "page": "analyses",
+        "plan_step_id": plan_step_id,
+        "session_id": session_id,
+        "status": "active",
+        "payload": {
+            "title": "Unresolved review risk",
+            "summary": "Published while required analysis-review findings remain open.",
+            "artifact_id": result.get("artifact_id"),
+            "version": result.get("version"),
+            "finding_ids": finding_ids,
+        },
+    }
+
+
+def _open_required_review_findings(*, session_id: str, plan_step_id: str) -> list[dict[str, Any]]:
+    try:
+        from dataclaw_analysis_review.store import open_required_findings
+
+        if plan_step_id:
+            return open_required_findings(scope="plan_step", target_id=plan_step_id, session_id=session_id)
+        return open_required_findings(scope="session", target_id=session_id, session_id=session_id)
+    except Exception:
+        return []
+
+
+def _gate_risk_accepted(session_id: str, plan_step_id: str) -> bool:
+    try:
+        from dataclaw_plans.store import read_proposals
+    except Exception:
+        return False
+    for proposal in read_proposals():
+        if str(proposal.get("session_id") or "") != str(session_id or ""):
+            continue
+        for step in proposal.get("steps", []) or []:
+            step_id = str(step.get("plan_step_id") or step.get("id") or step.get("step_id") or "")
+            if step_id != plan_step_id:
+                continue
+            gate = (step.get("gates") or {}).get("analysis_review") or {}
+            return bool(gate.get("accepted")) and bool(gate.get("accepted_at")) and bool(gate.get("accepted_rationale"))
+    return False

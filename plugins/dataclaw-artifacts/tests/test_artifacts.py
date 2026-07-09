@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 import dataclaw.config.paths as paths
+from dataclaw_analysis_review.store import append_review_finding, new_finding_id, now_iso
 from dataclaw_artifacts.compiler import compile_living_report
 from dataclaw_artifacts.hooks import artifact_capture_hook
 from dataclaw_artifacts.sections import (
@@ -529,3 +530,50 @@ async def test_artifact_capture_hook_appends_publish_event_to_living_report():
     assert "Open artifact" in html
     assert "Export HTML" in html
     assert "session_id=session-hook" in html
+
+
+@pytest.mark.asyncio
+async def test_artifact_capture_hook_appends_unresolved_review_risk_event():
+    finding_id = new_finding_id()
+    append_review_finding(
+        {
+            "finding_id": finding_id,
+            "review_id": "rev-test",
+            "scope": "plan_step",
+            "target_id": "step-eda",
+            "plan_step_id": "step-eda",
+            "session_id": "session-risk",
+            "severity": "required",
+            "category": "unsupported_claim",
+            "source": "checklist:CHK-test",
+            "claim": "Required review issue remains open",
+            "evidence": ["step-eda"],
+            "recommendation": "Resolve before publishing",
+            "status": "open",
+            "created_at": now_iso(),
+        },
+        "session-risk",
+    )
+    state = {
+        "session_id": "session-risk",
+        "project_id": "",
+        "tool_results": [{
+            "tool_name": "publish_artifact",
+            "tool_input": {
+                "title": "EDA Dashboard",
+                "description": "Main dashboard",
+                "session_id": "session-risk",
+                "plan_step_id": "step-eda",
+            },
+            "result": '{"success": true, "artifact_id": "art-1234abcd", "version": 2, "session_id": "session-risk", "url": "/api/artifacts/art-1234abcd?version=2&session_id=session-risk"}',
+            "is_error": False,
+        }],
+    }
+
+    await artifact_capture_hook(state)
+
+    living = (await list_artifacts(session_id="session-risk"))["artifacts"][0]
+    events = read_manifest_events(living["artifact_id"])
+    assert [event["kind"] for event in events] == ["artifact_published", "unresolved_review_risk"]
+    assert events[1]["plan_step_id"] == "step-eda"
+    assert events[1]["payload"]["finding_ids"] == [finding_id]

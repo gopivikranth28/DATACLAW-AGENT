@@ -66,5 +66,12 @@ async def get_readiness(
     session_id: str = "default",
     purpose: str = "dashboard",
     mode: str = "",
+    plan_step_id: str = "",
 ) -> dict[str, Any]:
-    return evaluate_readiness(dataset_id=dataset_id, session_id=session_id, purpose=purpose, mode=mode)
+    return evaluate_readiness(
+        dataset_id=dataset_id,
+        session_id=session_id,
+        purpose=purpose,
+        mode=mode,
+        plan_step_id=plan_step_id,
+    )

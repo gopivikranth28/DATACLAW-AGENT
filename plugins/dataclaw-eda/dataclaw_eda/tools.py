@@ -140,6 +140,25 @@ def _selection_requires_correction(selection: dict[str, Any]) -> bool:
     return screened_n > 5 and correction == "none"
 
 
+def _real_internal_evidence_refs(evidence: list[dict[str, Any]]) -> set[str]:
+    refs: set[str] = set()
+    for anchor in evidence:
+        kind = str(anchor.get("kind") or "")
+        if kind == "notebook_cell" and anchor.get("cell_id") and anchor.get("source_sha256"):
+            refs.add(f"notebook_cell:{anchor.get('cell_id')}")
+        elif kind in {"artifact_section", "dataset_profile", "query_card"} and anchor.get("id"):
+            refs.add(f"{kind}:{anchor.get('id')}")
+        elif kind == "inline_summary" and anchor.get("summary"):
+            refs.add("inline_summary")
+    return refs
+
+
+def _has_real_internal_evidence_ref(validation: dict[str, Any], evidence: list[dict[str, Any]]) -> bool:
+    internal = validation.get("internal") or {}
+    refs = {str(ref).strip() for ref in internal.get("evidence_refs") or [] if str(ref).strip()}
+    return bool(refs & _real_internal_evidence_refs(evidence))
+
+
 def _finding_is_internal_validated(
     finding: dict[str, Any],
     hypothesis: dict[str, Any] | None = None,
@@ -153,7 +172,7 @@ def _finding_is_internal_validated(
     )
     return (
         internal.get("status") == "validated"
-        and bool(internal.get("evidence_refs"))
+        and _has_real_internal_evidence_ref(finding.get("validation") or {}, finding.get("evidence") or [])
         and not _selection_requires_correction(selection or hypothesis_selection or {})
     )
 
@@ -392,15 +411,17 @@ async def record_eda_finding(
         else {}
     )
     effective_selection = normalized_selection or hypothesis_selection or {}
-    if internal["status"] == "validated" and not internal["evidence_refs"]:
-        return _error("validated_requires_evidence_refs", "Internal validation requires non-empty evidence_refs")
+    if internal["status"] == "validated" and not _has_real_internal_evidence_ref(normalized_validation, anchors):
+        return _error("validated_requires_evidence_refs", "Internal validation requires a non-prose evidence_ref")
     if internal["status"] == "validated" and _selection_requires_correction(effective_selection):
         return _error(
             "screened_validation_requires_correction",
             "Screened findings with screened_n > 5 require correction or holdout confirmation before internal validation counts as validated",
         )
-    if confidence == "high" and (internal["status"] != "validated" or not internal["evidence_refs"]):
-        return _error("high_confidence_requires_internal_validation", "High confidence requires internal validated status with evidence_refs")
+    if confidence == "high" and (
+        internal["status"] != "validated" or not _has_real_internal_evidence_ref(normalized_validation, anchors)
+    ):
+        return _error("high_confidence_requires_internal_validation", "High confidence requires internal validated status with a non-prose evidence_ref")
 
     caveats: list[str] = [caveat.strip()] if caveat.strip() else []
     if external["status"] == "unverified":
@@ -442,7 +463,9 @@ async def record_eda_finding(
     if normalized_selection:
         record["selection"] = normalized_selection
 
-    if hypothesis_status == "confirmed" and (internal["status"] != "validated" or not internal["evidence_refs"]):
+    if hypothesis_status == "confirmed" and (
+        internal["status"] != "validated" or not _has_real_internal_evidence_ref(normalized_validation, anchors)
+    ):
         return _error("confirmed_requires_internal_validation", "Confirmed findings require internal validation evidence")
 
     append_finding(record, session_id)
@@ -562,6 +585,7 @@ async def summarize_eda_readiness(
         purpose=purpose,
         mode=mode,
         required_checks=required_checks,
+        plan_step_id=plan_step_id,
     )
     severity = "blocker" if verdict["status"] == "blocked" else "warning" if verdict["status"] in {"unknown", "ready_with_caveats"} else "info"
     validation = {

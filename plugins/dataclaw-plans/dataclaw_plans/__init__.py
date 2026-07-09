@@ -59,7 +59,6 @@ class PlansPlugin:
                                 "summary": {"type": "string", "description": "Step summary", "default": ""},
                                 "outputs": {"type": "array", "items": {"type": "string"}, "description": "Output file paths", "default": []},
                                 "ready_for_validation": {"type": "boolean", "description": "Whether this step is ready for human validation", "default": False},
-                                "gates": {"type": "object", "description": "Per-step validation gates keyed by gate name", "default": {}},
                             },
                             "required": ["name", "description"],
                         },
@@ -87,7 +86,6 @@ class PlansPlugin:
                                 "outputs": {"type": "array", "items": {"type": "string"}, "description": "Output file paths"},
                                 "note": {"type": "string", "description": "Additional note"},
                                 "ready_for_validation": {"type": "boolean", "description": "Set true only after required gates pass or are accepted"},
-                                "gates": {"type": "object", "description": "Per-step validation gates keyed by gate name"},
                             },
                             "anyOf": [
                                 {"required": ["plan_step_id"]},

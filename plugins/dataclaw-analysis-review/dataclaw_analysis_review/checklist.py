@@ -116,8 +116,8 @@ def build_review_context(
         context["eda_hypotheses"] = fold_hypotheses(session_id)
         return context
 
-    if scope == "artifact":
-        artifact, sections = _artifact_context(target_id)
+    if scope in {"artifact", "living_report"}:
+        artifact, sections = _artifact_context(target_id, living_report=scope == "living_report")
         context["artifact"] = artifact
         context["artifact_sections"] = sections
         if artifact:
@@ -254,7 +254,11 @@ def _finding_validation_checks(context: dict[str, Any]) -> list[dict[str, Any]]:
         finding_id = str(finding.get("finding_id") or "")
         internal = (finding.get("validation") or {}).get("internal") or {}
         external = (finding.get("validation") or {}).get("external") or {}
-        if finding.get("disposition") == "confirmed" and internal.get("status") != "validated":
+        if (
+            finding.get("finding_type") != "readiness"
+            and finding.get("disposition") == "confirmed"
+            and internal.get("status") != "validated"
+        ):
             results.append(
                 _finding(
                     check_id="CHK-unvalidated-confirmed",
@@ -315,7 +319,8 @@ def _artifact_checks(context: dict[str, Any]) -> list[dict[str, Any]]:
     for section in sections:
         kind = str(section.get("kind") or "")
         section_id = str(section.get("section_id") or artifact_id)
-        if kind == "findings":
+        section_schema = int(section.get("section_schema") or 0)
+        if kind == "findings" and section_schema >= 2:
             for item in ((section.get("payload") or {}).get("items") or []):
                 if isinstance(item, dict) and not item.get("finding_id"):
                     results.append(
@@ -343,12 +348,21 @@ def _artifact_checks(context: dict[str, Any]) -> list[dict[str, Any]]:
     return results
 
 
-def _artifact_context(artifact_id: str) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+def _artifact_context(
+    artifact_id: str,
+    *,
+    living_report: bool = False,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     try:
         from dataclaw_artifacts.store import latest_version, read_meta, read_source
 
         meta = read_meta(artifact_id)
-        html = read_source(artifact_id, latest_version(artifact_id))
+        if living_report:
+            from dataclaw_artifacts.compiler import compile_living_report
+
+            html = compile_living_report(artifact_id)
+        else:
+            html = read_source(artifact_id, latest_version(artifact_id))
     except Exception:
         return None, []
     return meta, _extract_section_metadata(html)

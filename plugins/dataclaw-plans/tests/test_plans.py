@@ -298,6 +298,62 @@ async def test_ready_for_validation_blocks_on_required_gate():
 
 
 @pytest.mark.asyncio
+async def test_ready_for_validation_blocks_on_eda_like_step_before_auto_review():
+    r = await propose_plan(
+        name="Plan",
+        description="d",
+        steps=[{"name": "EDA", "description": "Explore data quality and readiness"}],
+        session_id="sess-1",
+    )
+    pid = r["proposal_id"]
+    step_id = (await get_plan(proposal_id=pid))["steps"][0]["plan_step_id"]
+
+    result = await update_plan(
+        proposal_id=pid,
+        step_patches=[{"plan_step_id": step_id, "status": "completed", "ready_for_validation": True}],
+        session_id="sess-1",
+    )
+
+    assert result["success"] is False
+    assert result["error"]["code"] == "gate_blocked"
+    assert result["error"]["blocking_gates"][0]["name"] == "analysis_review"
+
+
+@pytest.mark.asyncio
+async def test_update_plan_cannot_accept_gate_by_patch():
+    r = await propose_plan(
+        name="Plan",
+        description="d",
+        steps=[{"name": "Model", "description": "Train model and export results"}],
+        session_id="sess-1",
+    )
+    pid = r["proposal_id"]
+    step_id = (await get_plan(proposal_id=pid))["steps"][0]["plan_step_id"]
+
+    result = await update_plan(
+        proposal_id=pid,
+        step_patches=[
+            {
+                "plan_step_id": step_id,
+                "ready_for_validation": True,
+                "gates": {
+                    "analysis_review": {
+                        "status": "accepted",
+                        "required": True,
+                        "accepted": True,
+                        "reason": "agent-patched",
+                    }
+                },
+            }
+        ],
+        session_id="sess-1",
+    )
+
+    assert result["success"] is False
+    assert result["error"]["code"] == "gate_blocked"
+
+
+@pytest.mark.asyncio
 async def test_required_gate_pass_allows_ready_for_validation():
     r = await propose_plan(
         name="Plan",

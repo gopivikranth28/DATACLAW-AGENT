@@ -497,15 +497,8 @@ def _review_target_error(scope: str, target_id: str, context: dict[str, Any]) ->
         return None
     if scope == "plan_step" and not isinstance(context.get("plan_step"), dict):
         return _error("unknown_review_target", f"Plan step not found: {target_id}", scope=scope, target_id=target_id)
-    if scope == "artifact" and not isinstance(context.get("artifact"), dict):
+    if scope in {"artifact", "living_report"} and not isinstance(context.get("artifact"), dict):
         return _error("unknown_review_target", f"Artifact not found: {target_id}", scope=scope, target_id=target_id)
-    if scope == "living_report":
-        return _error(
-            "unsupported_review_scope",
-            "living_report review context is not implemented yet; use scope='session' for current review coverage",
-            scope=scope,
-            target_id=target_id,
-        )
     return None
 
 

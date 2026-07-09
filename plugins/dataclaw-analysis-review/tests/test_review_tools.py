@@ -16,7 +16,7 @@ from dataclaw_analysis_review.tools import (
     request_analysis_review,
     resolve_review_finding,
 )
-from dataclaw_eda.tools import record_eda_finding
+from dataclaw_eda.tools import record_eda_finding, summarize_eda_readiness
 from dataclaw_plans.gates import get_plan_gates
 from dataclaw_plans.tools import get_plan, propose_plan, update_plan
 
@@ -129,6 +129,54 @@ async def test_resolving_review_finding_clears_plan_gate():
         session_id="sess-1",
     )
     assert ready["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_ready_readiness_finding_does_not_block_review():
+    proposal_id, step_id = await _high_risk_plan()
+    for finding_type, check in [("data_quality", "data_quality"), ("missingness", "missingness")]:
+        await record_eda_finding(
+            title=f"{check} checked",
+            finding_type=finding_type,
+            summary=f"{check} complete",
+            evidence={"kind": "notebook_cell", "cell_id": f"c-{check}", "source_sha256": f"hash-{check}"},
+            dataset_id="ds",
+            validation={
+                "internal": {
+                    "status": "validated",
+                    "method": "recomputed",
+                    "evidence_refs": [f"notebook_cell:c-{check}"],
+                },
+                "external": {"status": "validated", "basis": "domain_prior", "note": "plausible"},
+            },
+            covers_checks=[check],
+            proposal_id=proposal_id,
+            plan_step_id=step_id,
+            session_id="sess-1",
+        )
+    readiness = await summarize_eda_readiness(
+        dataset_id="ds",
+        purpose="query",
+        proposal_id=proposal_id,
+        plan_step_id=step_id,
+        session_id="sess-1",
+    )
+    assert readiness["status"] == "ready"
+    await update_plan(
+        proposal_id=proposal_id,
+        step_patches=[{"plan_step_id": step_id, "status": "completed"}],
+        session_id="sess-1",
+    )
+
+    review = await request_analysis_review(
+        scope="plan_step",
+        target_id=step_id,
+        proposal_id=proposal_id,
+        session_id="sess-1",
+    )
+
+    assert review["gate"]["gate"] == "pass"
+    assert review["finding_ids"] == []
 
 
 @pytest.mark.asyncio

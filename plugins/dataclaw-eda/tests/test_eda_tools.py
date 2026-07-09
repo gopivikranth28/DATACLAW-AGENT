@@ -116,6 +116,48 @@ async def test_validated_internal_status_requires_evidence_refs():
 
 
 @pytest.mark.asyncio
+async def test_interpretive_note_alone_is_not_internal_validation_evidence():
+    result = await record_eda_finding(
+        title="Narrated pattern",
+        finding_type="distribution",
+        summary="A pattern was described in prose",
+        evidence={"kind": "interpretive_note", "text": "I looked at the pattern"},
+        dataset_id="ds",
+        validation={
+            "internal": {
+                "status": "validated",
+                "method": "self report",
+                "evidence_refs": ["interpretive_note"],
+            }
+        },
+    )
+
+    assert result["success"] is False
+    assert result["error"]["code"] == "validated_requires_evidence_refs"
+
+
+@pytest.mark.asyncio
+async def test_internal_validation_ref_must_match_attached_evidence_anchor():
+    result = await record_eda_finding(
+        title="Narrated pattern",
+        finding_type="distribution",
+        summary="A pattern was described in prose",
+        evidence={"kind": "interpretive_note", "text": "I looked at the pattern"},
+        dataset_id="ds",
+        validation={
+            "internal": {
+                "status": "validated",
+                "method": "self report",
+                "evidence_refs": ["made_up_anchor"],
+            }
+        },
+    )
+
+    assert result["success"] is False
+    assert result["error"]["code"] == "validated_requires_evidence_refs"
+
+
+@pytest.mark.asyncio
 async def test_external_unverified_caps_confidence_and_adds_caveat():
     result = await record_eda_finding(
         title="Distribution",
@@ -414,6 +456,58 @@ async def test_rejected_hypothesis_covers_required_check_in_readiness():
 
     verdict = await summarize_eda_readiness(dataset_id="ds", purpose="modeling")
     assert "leakage_risk" not in verdict["missing_checks"]
+
+
+@pytest.mark.asyncio
+async def test_plan_step_readiness_ignores_unattributed_findings():
+    await record_eda_finding(
+        title="Unattributed data quality",
+        finding_type="data_quality",
+        summary="Data quality was checked before a plan step existed",
+        evidence={"kind": "notebook_cell", "cell_id": "c-unattr-quality", "source_sha256": "hash-unattr-quality"},
+        dataset_id="ds",
+        validation=_validated_internal("c-unattr-quality"),
+        covers_checks=["data_quality"],
+    )
+    await record_eda_finding(
+        title="Unattributed missingness",
+        finding_type="missingness",
+        summary="Missingness was checked before a plan step existed",
+        evidence={"kind": "notebook_cell", "cell_id": "c-unattr-missing", "source_sha256": "hash-unattr-missing"},
+        dataset_id="ds",
+        validation=_validated_internal("c-unattr-missing"),
+        covers_checks=["missingness"],
+    )
+
+    blocked = await summarize_eda_readiness(
+        dataset_id="ds",
+        purpose="query",
+        plan_step_id="step-12345678",
+    )
+
+    assert blocked["status"] == "blocked"
+    assert set(blocked["missing_checks"]) == {"data_quality", "missingness"}
+
+    for finding_type, check in [("data_quality", "data_quality"), ("missingness", "missingness")]:
+        await record_eda_finding(
+            title=f"Attributed {check}",
+            finding_type=finding_type,
+            summary=f"{check} checked inside the plan step",
+            evidence={"kind": "notebook_cell", "cell_id": f"c-{check}", "source_sha256": f"hash-{check}"},
+            dataset_id="ds",
+            validation=_validated_internal(f"c-{check}"),
+            covers_checks=[check],
+            plan_step_id="step-12345678",
+        )
+
+    ready = await summarize_eda_readiness(
+        dataset_id="ds",
+        purpose="query",
+        plan_step_id="step-12345678",
+    )
+
+    assert ready["status"] == "ready"
+    assert ready["missing_checks"] == []
 
 
 @pytest.mark.asyncio

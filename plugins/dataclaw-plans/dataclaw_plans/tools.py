@@ -64,7 +64,7 @@ def _normalize_steps(steps: list[dict[str, Any]], previous_steps: list[dict[str,
             "summary": str(raw.get("summary") or ""),
             "outputs": raw.get("outputs") or [],
             "ready_for_validation": bool(raw.get("ready_for_validation", False)),
-            "gates": raw.get("gates") or {},
+            "gates": copy.deepcopy((prior or {}).get("gates") or {}),
         })
     return normalized
 
@@ -204,7 +204,7 @@ async def update_plan(
                 candidate["plan_step_id"] = _step_identity(candidate) or _new_step_id()
             candidate.pop("id", None)
             candidate.pop("step_id", None)
-            for key in ("name", "description", "status", "summary", "outputs", "note", "ready_for_validation", "gates"):
+            for key in ("name", "description", "status", "summary", "outputs", "note", "ready_for_validation"):
                 if key in update:
                     candidate[key] = update[key]
 
@@ -249,7 +249,7 @@ async def update_plan(
                 match["plan_step_id"] = _step_identity(match) or _new_step_id()
             match.pop("id", None)
             match.pop("step_id", None)
-            for key in ("name", "description", "status", "summary", "outputs", "note", "ready_for_validation", "gates"):
+            for key in ("name", "description", "status", "summary", "outputs", "note", "ready_for_validation"):
                 if key in update:
                     match[key] = update[key]
             match["updated_at"] = datetime.now(timezone.utc).isoformat()
