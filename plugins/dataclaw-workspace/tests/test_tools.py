@@ -14,7 +14,11 @@ from dataclaw_workspace.tools import (
     ws_exec,
     display_image,
     report_add_section,
+    _ensure_plotly_runtime,
     _plotly_script_tag,
+    _report_shell,
+    _report_shell_css,
+    _report_shell_script,
     _typed_report_section,
     _base_dir,
 )
@@ -173,6 +177,7 @@ async def test_report_add_section_builds_live_html_report(cfg):
     assert header["updated"] is True
     assert header["section"]["kind"] == "header"
     assert "--dc-bg" in header["section"]["tokens"]
+    assert "data-dc-runtime=\"plotly\"" not in Path(header["html_path"]).read_text()
 
     await report_add_section(
         cfg=cfg,
@@ -201,6 +206,94 @@ async def test_report_add_section_builds_live_html_report(cfg):
             "figure": {"data": [{"x": [1, 2], "y": [3, 4]}], "layout": {"title": {"text": "Simple trend"}}},
         },
     )
+    await report_add_section(
+        cfg=cfg,
+        section_type="insight_grid",
+        report_path="reports/live.html",
+        data={
+            "title": "Structured EDA insights",
+            "caption": "The report should separate interpretation, method, evidence, and caveats.",
+            "tags": ["structured", {"label": "validated", "status": "pass"}],
+            "methodology": "Validate each high-value observation against notebook evidence before promotion.",
+            "bullets": ["Lead with decision-changing findings.", "Keep unresolved caveats visible."],
+            "items": [{
+                "title": "Revenue outliers drive tail risk",
+                "summary": "A small account cohort explains most variance.",
+                "evidence": "cell abc123",
+                "confidence": "medium",
+                "finding_id": "find-1",
+                "hypothesis_id": "hyp-1",
+                "bullets": ["Tail risk is concentrated.", "Median behavior remains stable."],
+            }],
+        },
+    )
+    await report_add_section(
+        cfg=cfg,
+        section_type="explanation",
+        report_path="reports/live.html",
+        data={
+            "title": "Why this matters",
+            "summary": "The analysis separates signal from notebook noise.",
+            "steps": [
+                {"title": "Validate grain", "detail": "Compare user-event and account-level denominators."},
+                {"title": "Track caveats", "detail": "Keep unresolved domain questions visible."},
+            ],
+        },
+    )
+    await report_add_section(
+        cfg=cfg,
+        section_type="comparison",
+        report_path="reports/live.html",
+        data={
+            "title": "Segment comparison",
+            "metrics": [{"key": "missing_rate", "label": "Missing rate"}, {"key": "rows", "label": "Rows"}],
+            "groups": [
+                {"name": "Enterprise", "values": {"missing_rate": "2.1%", "rows": "12,420"}},
+                {"name": "SMB", "values": {"missing_rate": "8.4%", "rows": "41,030"}},
+            ],
+        },
+    )
+    await report_add_section(
+        cfg=cfg,
+        section_type="checklist",
+        report_path="reports/live.html",
+        data={
+            "title": "Readiness checks",
+            "method": "Treat blockers as unresolved until a supporting evidence trace exists.",
+            "checks": [
+                {"title": "Missingness sweep", "status": "passed", "detail": "No blocker missingness in target."},
+                {"title": "Leakage review", "status": "blocked", "detail": "Requires domain confirmation."},
+            ],
+        },
+    )
+    await report_add_section(
+        cfg=cfg,
+        section_type="hypothesis_ledger",
+        report_path="reports/live.html",
+        data={
+            "hypotheses": [
+                {
+                    "id": "hyp-1",
+                    "statement": "Target leakage may exist in post-event flags.",
+                    "status": "unresolved",
+                    "priority": "high",
+                    "linked_finding_ids": ["find-1"],
+                    "covers_checks": ["leakage_risk"],
+                }
+            ],
+        },
+    )
+    await report_add_section(
+        cfg=cfg,
+        section_type="evidence_trace",
+        report_path="reports/live.html",
+        data={
+            "evidence": [
+                {"kind": "notebook_cell", "cell_id": "abc123", "summary": "Recomputed segment missingness."},
+                {"kind": "finding", "finding_id": "find-1", "summary": "Outlier finding anchored to cell abc123."},
+            ],
+        },
+    )
 
     report_path = Path(header["html_path"])
     html = report_path.read_text()
@@ -211,16 +304,97 @@ async def test_report_add_section_builds_live_html_report(cfg):
     assert "Consistency and pressure resistance dominate the signal." in html
     assert "{&#x27;title&#x27;" not in html
     assert "Simple trend" in html
+    assert "Revenue outliers drive tail risk" in html
+    assert "The report should separate interpretation" in html
+    assert "r-section-context" in html
+    assert "r-method-note" in html
+    assert "r-bullets" in html
+    assert "Why this matters" in html
+    assert "Segment comparison" in html
+    assert "Enterprise" in html
+    assert "Readiness checks" in html
+    assert "Target leakage may exist" in html
+    assert "Evidence trace" in html
     assert "Plotly.newPlot" in html
     assert "Plotly is loaded by the DataClaw artifact runtime" not in html
     assert "DATACLAW_REPORT_SECTIONS_START" in html
+    assert "r-story-nav" in html
+    assert "r-progress" in html
+    assert "IntersectionObserver" in html
+    assert "data-dc-section-id" in html
+    assert "getAttribute(&#x27;data-dc-section-id&#x27;)" not in html
+    assert "getAttribute('data-dc-section-id')" in html
     assert "data-dc-section=\"header\"" in html
     assert "data-dc-section=\"metric_row\"" in html
     assert "data-dc-section=\"findings\"" in html
     assert "data-dc-section=\"chart\"" in html
+    assert "data-dc-section=\"insight_grid\"" in html
+    assert "data-dc-section=\"explanation\"" in html
+    assert "data-dc-section=\"comparison\"" in html
+    assert "data-dc-section=\"checklist\"" in html
+    assert "data-dc-section=\"hypothesis_ledger\"" in html
+    assert "data-dc-section=\"evidence_trace\"" in html
     assert "data-dc-section-meta" in html
     assert "--dc-bg" in html
     assert "data-dc-runtime=\"plotly\"" in html
+
+
+def test_report_shell_parts_keep_original_context_contract():
+    css = _report_shell_css()
+    script = _report_shell_script()
+    first_section = (
+        '    <section class="r-section" data-dc-section="findings" '
+        'data-dc-section-id="findings-alpha"><h2>Findings Alpha</h2></section>'
+    )
+    html = _report_shell(title="Shell Contract", first_section=first_section)
+
+    assert "--dc-bg" in css
+    assert ".r-story-nav" in css
+    assert ".r-section-context" in css
+    assert ".r-method-note" in css
+    assert ".r-bullets" in css
+    assert ".r-insight-grid" in css
+    assert ".r-steps" in css
+    assert ".r-comparison" in css
+    assert ".r-checks" in css
+    assert ".r-ledger-item" in css
+    assert ".r-chart-target" in css
+    assert "@media (max-width: 720px)" in css
+
+    assert "document.querySelectorAll('.r-hero, .r-section')" in script
+    assert "document.querySelector('.r-story-nav')" in script
+    assert "document.querySelector('.r-progress span')" in script
+    assert "getAttribute('data-dc-section-id')" in script
+    assert "IntersectionObserver" in script
+    assert "updateProgress" in script
+
+    assert css.strip() in html
+    assert script.strip() in html
+    assert "DATACLAW_REPORT_SECTIONS_START" in html
+    assert "DATACLAW_REPORT_SECTIONS_END" in html
+    assert first_section in html
+    assert "data-dc-runtime=\"plotly\"" not in html
+    assert "{shell_css}" not in html
+    assert "{shell_script}" not in html
+
+
+def test_report_shell_parts_can_be_called_independently():
+    first_section = (
+        '    <section class="r-section" data-dc-section="chart" '
+        'data-dc-section-id="chart-alpha"><h2>Chart Alpha</h2></section>'
+    )
+    html = _report_shell(title="Runtime Contract", first_section=first_section, include_plotly=True)
+
+    assert _report_shell_css().strip()
+    assert _report_shell_script().strip()
+    assert "Runtime Contract" in html
+    assert "Chart Alpha" in html
+    assert html.count("data-dc-runtime=\"plotly\"") == 1
+
+    without_runtime = html.replace(_plotly_script_tag(), "")
+    with_runtime = _ensure_plotly_runtime(without_runtime)
+    assert with_runtime.count("data-dc-runtime=\"plotly\"") == 1
+    assert _ensure_plotly_runtime(with_runtime).count("data-dc-runtime=\"plotly\"") == 1
 
 
 def test_plotly_script_tag_never_falls_back_to_cdn(monkeypatch):

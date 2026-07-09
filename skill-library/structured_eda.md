@@ -187,6 +187,25 @@ Use visuals that match the goal:
 - Relationship: scatter, grouped box/violin, faceted bars, or heatmap depending on data types.
 - Correlation: small, relevant matrix or ranked relationship table, not a giant unreadable heatmap.
 
+When producing a living report, make the report read like an analytical story,
+not a dump of notebook outputs:
+
+- Start with `header` and `metric_row` for objective, grain, row/column counts, coverage, and headline risk.
+- Use `hypothesis_ledger` after proposing hypotheses and again near the end to show dispositions.
+- Use `evidence_trace` to connect material findings to notebook cells, filters, sample sizes, and validation checks.
+- Use `insight_grid` for the 3-7 findings that change the user's answer, each with evidence, status, and caveat.
+- Use `comparison` when the claim depends on cohorts, time periods, segments, target classes, or model baselines.
+- Use `checklist` for data-quality, validation, and readiness verdicts; mark blockers explicitly.
+- Use `explanation` to narrate why the route changed, why a caveat matters, or why a finding is not causal.
+- Use `chart` and `table` only when they are the clearest representation; avoid repeating the same cell output as a report section unless it adds interpretation or provenance.
+
+As the EDA evolves, append report sections that show the new layer of
+understanding: revised hypotheses, a clarified denominator, a changed cohort
+comparison, or a readiness blocker becoming resolved. Use `caption`, `tags` or
+`pills`, `methodology`, `bullets`, item-level `evidence`, and item-level
+`caveat` consistently so readers can scan the logic without rereading the
+notebook.
+
 Every chart must have a title, labelled axes with units, sample size when relevant, and a one-line interpretation plus caveat.
 
 ## Standard deliverables

@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
 import { Button } from 'antd'
 import { FileTextOutlined, EyeOutlined, PrinterOutlined, ExportOutlined, DownloadOutlined } from '@ant-design/icons'
-import { FileViewerModal, rewriteRelativeUrls } from '../FilePreview'
 import { API } from '../../api'
+import { reportDocumentUrl, reportPreviewUrl } from '../reportPreview'
 
 interface ReportData {
   html_path?: string
@@ -18,47 +17,25 @@ export default function ReportDisplay({ data, onFileClick }: {
   data: ReportData
   onFileClick?: (path: string) => void
 }) {
-  const iframeRef = useRef<HTMLIFrameElement>(null)
-  const [blobUrl, setBlobUrl] = useState<string | null>(null)
-  const [viewerFile, setViewerFile] = useState<{ name: string; path: string } | null>(null)
   const htmlPath = data.html_path || data.path
   const name = htmlPath?.split('/').pop() || 'report.html'
-  const dirPath = htmlPath ? htmlPath.substring(0, htmlPath.lastIndexOf('/')) : undefined
-
-  useEffect(() => {
-    if (!htmlPath) return
-
-    const url = `${API}/workspace/files?path=${encodeURIComponent(htmlPath)}`
-    fetch(url)
-      .then(r => r.ok ? r.text() : Promise.reject('Not found'))
-      .then(html => {
-        const resolved = dirPath ? rewriteRelativeUrls(html, dirPath) : html
-        // Inject @page rule to suppress browser print headers/footers by default
-        const printStyle = '<style>@page { margin: 1cm; }</style>'
-        const withPrintStyle = resolved.includes('</head>')
-          ? resolved.replace('</head>', printStyle + '</head>')
-          : printStyle + resolved
-        const blob = new Blob([withPrintStyle], { type: 'text/html' })
-        setBlobUrl(URL.createObjectURL(blob))
-      })
-      .catch(() => setBlobUrl(null))
-
-    return () => setBlobUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null })
-  }, [htmlPath])
+  const previewUrl = htmlPath ? reportPreviewUrl(htmlPath) : ''
+  const documentUrl = htmlPath ? reportDocumentUrl(htmlPath, data.size !== undefined ? String(data.size) : undefined) : ''
 
   const handleView = () => {
     if (!htmlPath) return
     if (onFileClick) onFileClick(htmlPath)
-    else setViewerFile({ name, path: htmlPath })
+    else handleOpenNewTab()
   }
 
   const handlePrint = () => {
-    iframeRef.current?.contentWindow?.print()
+    if (!htmlPath) return
+    window.open(reportPreviewUrl(htmlPath, { print: true }), '_blank')
   }
 
   const handleOpenNewTab = () => {
     if (!htmlPath) return
-    window.open(`${API}/workspace/files?path=${encodeURIComponent(htmlPath)}`, '_blank')
+    window.open(previewUrl, '_blank')
   }
 
   const handleDownloadDocx = async () => {
@@ -91,14 +68,13 @@ export default function ReportDisplay({ data, onFileClick }: {
           )}
         </div>
       </div>
-      {blobUrl && (
+      {documentUrl && (
         <iframe
-          ref={iframeRef}
-          src={blobUrl}
+          src={documentUrl}
+          sandbox="allow-scripts allow-forms allow-popups allow-modals"
           style={{ width: '100%', minHeight: 500, border: '1px solid #f0f0f0', borderRadius: 8, background: '#fff' }}
         />
       )}
-      {!onFileClick && <FileViewerModal file={viewerFile} onClose={() => setViewerFile(null)} />}
     </div>
   )
 }

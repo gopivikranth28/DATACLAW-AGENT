@@ -19,8 +19,20 @@ const AUTO_EXPAND_TOOLS = new Set([
   'insert_cell', 'edit_cell', 'edit_cell_source',
 ])
 
+const CUSTOM_RENDER_TOOLS = new Set([
+  ...AUTO_EXPAND_TOOLS,
+  'ws_update_file',
+  'close_notebook',
+  'propose_plan',
+  'update_plan',
+])
+
 export function shouldAutoExpand(toolName: string): boolean {
   return AUTO_EXPAND_TOOLS.has(toolName)
+}
+
+export function hasCustomRenderer(toolName: string): boolean {
+  return CUSTOM_RENDER_TOOLS.has(toolName)
 }
 
 export function shouldRenderWhileCalling(_toolName: string): boolean {
@@ -75,13 +87,48 @@ export default function ToolResultRenderer({ toolName, result, args, status, onF
     case 'ws_read_file':
       return <FileReadDisplay data={parsed} onFileClick={onFileClick} />
     case 'build_report':
-    case 'report_add_section':
       return <ReportDisplay data={parsed} onFileClick={onFileClick} />
+    case 'report_add_section':
+      return <ReportUpdateNotice data={parsed} onFileClick={onFileClick} />
     case 'publish_artifact':
       return <PublishArtifactCard data={parsed} sessionId={sessionId} />
     default:
       return <GenericResult result={result} />
   }
+}
+
+function ReportUpdateNotice({ data, onFileClick }: {
+  data: any
+  onFileClick?: (path: string) => void
+}) {
+  const htmlPath = data?.html_path || data?.path
+  const sectionType = data?.section_type || data?.section?.kind || 'section'
+  const name = htmlPath?.split('/').pop() || 'report.html'
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+      fontSize: 12, color: '#667085',
+    }}>
+      <span>Report updated: <b>{sectionType}</b></span>
+      {htmlPath && (
+        <>
+          <span style={{ color: '#98a2b3' }}>{name}</span>
+          {onFileClick && (
+            <button
+              type="button"
+              onClick={() => onFileClick(htmlPath)}
+              style={{
+                border: 0, background: 'transparent', color: '#2563eb',
+                padding: 0, cursor: 'pointer', fontSize: 12,
+              }}
+            >
+              Preview
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  )
 }
 
 function PlanToolNotice({ data, draft, toolName, status }: {

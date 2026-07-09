@@ -63,10 +63,62 @@ report_add_section(section_type="metric_row", report_path="reports/world-cup-per
 })
 ```
 
-Allowed section types: `header`, `metric_row`, `chart`, `findings`, `callout`,
-`text`, and `table`. Each section needs a stable title, short caption or body,
-and enough provenance for the living report to attach it to the current plan
-step. Step attribution travels by stable plan step id; names are display labels.
+Allowed section types: `header`, `metric_row`, `insight_grid`, `explanation`,
+`comparison`, `checklist`, `hypothesis_ledger`, `evidence_trace`, `chart`,
+`findings`, `callout`, `text`, and `table`. Each section needs a stable title,
+short caption or body, and enough provenance for the living report to attach it
+to the current plan step. Step attribution travels by stable plan step id; names
+are display labels.
+
+Use the richer narrative sections deliberately:
+
+- `insight_grid` for 2-6 key insights, each with evidence, confidence/status, and caveat.
+- `explanation` for the analysis path, assumptions, or why a result matters.
+- `comparison` for side-by-side segments, cohorts, models, periods, or scenarios.
+- `checklist` for readiness, QA, validation, and launch/blocker states.
+- `hypothesis_ledger` for EDA hypotheses, dispositions, and next actions.
+- `evidence_trace` for notebook cells, tables, filters, or checks that support claims.
+
+Use consistent section structure as the report evolves. Prefer these optional
+fields whenever they clarify the story: `caption` for the section thesis,
+`tags`/`pills` for state or scope, `methodology`/`method` for how the claim was
+checked, `bullets`/`key_points` for scannable logic, and per-item `evidence`,
+`caveat`, `next_action`, and `bullets`. When a later insight changes the
+interpretation, append a new section that names the revised layer rather than
+silently replacing the earlier story.
+
+```python
+report_add_section(section_type="insight_grid", report_path="reports/analysis.html", data={
+    "title": "What changed the interpretation",
+    "caption": "Only promote insights that changed the answer or readiness verdict.",
+    "tags": ["validated", "decision-relevant"],
+    "methodology": "Each card ties back to a notebook cell, denominator check, or hypothesis disposition.",
+    "bullets": ["Separate signal from data artifacts.", "Keep unresolved caveats visible."],
+    "items": [
+        {
+            "title": "High-value users are concentrated in two cohorts",
+            "detail": "The top decile contributes 48% of revenue, but only after excluding refund rows.",
+            "status": "confirmed",
+            "meta": ["n=18,420", "validated against revenue_total"],
+            "bullets": ["Tail concentration persists by account age.", "Refund rows explain the largest outliers."],
+        },
+        {
+            "title": "Signup channel is confounded by tenure",
+            "detail": "Paid channels look weaker until account age is controlled.",
+            "status": "caution",
+            "meta": ["requires cohort-normalized view"],
+        },
+    ],
+})
+
+report_add_section(section_type="checklist", report_path="reports/analysis.html", data={
+    "title": "Model-readiness checks",
+    "checks": [
+        {"title": "Target leakage audit", "status": "pass", "detail": "Future-only fields excluded."},
+        {"title": "Class balance", "status": "warning", "detail": "Positive class is 7.8%; use stratified split."},
+    ],
+})
+```
 
 If the generated compatibility shell includes a remote CDN fallback or other
 artifact-invalid HTML, fix the source once before publishing. If publish tools

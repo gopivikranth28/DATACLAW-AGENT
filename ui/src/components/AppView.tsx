@@ -1,9 +1,8 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import type { CSSProperties } from 'react'
 import { EyeOutlined, EyeInvisibleOutlined, UpOutlined, DownOutlined } from '@ant-design/icons'
-import { API } from '../api'
-import { rewriteRelativeUrls } from './FilePreview'
 import MetricDisplay, { type MetricData } from './tool-renderers/MetricDisplay'
 import PlotlyRenderer, { type PlotlyFigure } from './tool-renderers/PlotlyRenderer'
+import { reportDocumentUrl, reportPreviewUrl } from './reportPreview'
 
 export interface AppCall {
   name: string
@@ -267,28 +266,8 @@ export default function AppView({ items, layout, editable = false, onLayoutChang
 }
 
 function ReportFrame({ htmlPath, title, updatedAt }: { htmlPath: string; title?: string; updatedAt?: string }) {
-  const [blobUrl, setBlobUrl] = useState<string | null>(null)
-  const dirPath = htmlPath.substring(0, htmlPath.lastIndexOf('/'))
-
-  useEffect(() => {
-    const url = `${API}/workspace/files?path=${encodeURIComponent(htmlPath)}`
-    fetch(url)
-      .then(r => r.ok ? r.text() : Promise.reject('Not found'))
-      .then(html => {
-        const resolved = dirPath ? rewriteRelativeUrls(html, dirPath) : html
-        const blob = new Blob([resolved], { type: 'text/html' })
-        setBlobUrl(prev => {
-          if (prev) URL.revokeObjectURL(prev)
-          return URL.createObjectURL(blob)
-        })
-      })
-      .catch(() => setBlobUrl(null))
-
-    return () => setBlobUrl(prev => {
-      if (prev) URL.revokeObjectURL(prev)
-      return null
-    })
-  }, [htmlPath, updatedAt])
+  const openUrl = reportPreviewUrl(htmlPath)
+  const documentUrl = reportDocumentUrl(htmlPath, updatedAt)
 
   return (
     <div>
@@ -297,18 +276,15 @@ function ReportFrame({ htmlPath, title, updatedAt }: { htmlPath: string; title?:
         padding: '10px 14px', background: '#fff', borderBottom: '1px solid #e5e7eb',
       }}>
         <div style={{ fontSize: 13, fontWeight: 650, color: '#1f2937' }}>{title || 'Report'}</div>
-        <a href={`${API}/workspace/files?path=${encodeURIComponent(htmlPath)}`} target="_blank" rel="noreferrer"
+        <a href={openUrl} target="_blank" rel="noreferrer"
           style={{ fontSize: 12, color: '#2563eb' }}>Open</a>
       </div>
-      {blobUrl ? (
-        <iframe
-          src={blobUrl}
-          title={title || 'Report'}
-          style={{ width: '100%', minHeight: 760, border: 0, display: 'block', background: '#f5f6f8' }}
-        />
-      ) : (
-        <div style={{ padding: 24, color: '#8c8c8c', fontSize: 13 }}>Report preview unavailable.</div>
-      )}
+      <iframe
+        src={documentUrl}
+        title={title || 'Report'}
+        sandbox="allow-scripts allow-forms allow-popups allow-modals"
+        style={{ width: '100%', minHeight: 760, border: 0, display: 'block', background: '#f5f6f8' }}
+      />
     </div>
   )
 }

@@ -22,13 +22,39 @@ SECTION_TOKENS = [
     "--dc-muted",
     "--dc-line",
     "--dc-accent",
+    "--dc-accent-2",
+    "--dc-accent-3",
     "--dc-accent-soft",
     "--dc-good",
     "--dc-warn",
     "--dc-danger",
 ]
-SECTION_KINDS = {"header", "metric_row", "chart", "table", "findings", "callout", "text"}
-SECTION_ALIASES = {"kpi": "metric_row", "metrics": "metric_row", "markdown": "text"}
+SECTION_KINDS = {
+    "header",
+    "metric_row",
+    "chart",
+    "table",
+    "findings",
+    "callout",
+    "text",
+    "insight_grid",
+    "explanation",
+    "comparison",
+    "checklist",
+    "hypothesis_ledger",
+    "evidence_trace",
+}
+SECTION_ALIASES = {
+    "kpi": "metric_row",
+    "metrics": "metric_row",
+    "markdown": "text",
+    "insights": "insight_grid",
+    "insight_cards": "insight_grid",
+    "validation": "checklist",
+    "readiness": "checklist",
+    "hypotheses": "hypothesis_ledger",
+    "evidence": "evidence_trace",
+}
 DATA_POLICIES = {"narrative", "aggregate_only", "preview"}
 CHART_SUMMARY_MAX_BYTES = 200 * 1024
 TABLE_PREVIEW_MAX_ROWS = 20
@@ -98,6 +124,48 @@ def normalize_section(section_type: str, data: dict[str, Any]) -> dict[str, Any]
             for item in items
             if isinstance(item, dict)
         ]
+    elif kind == "insight_grid":
+        items = data.get("items", data.get("insights", []))
+        if not isinstance(items, list):
+            raise SectionValidationError("invalid_insights", "insight_grid requires list 'items' or 'insights'")
+        payload["insight_count"] = len(items)
+        payload["items"] = [_ledger_item_summary(item) for item in items if isinstance(item, dict)]
+    elif kind == "explanation":
+        steps = data.get("steps", data.get("points", []))
+        if steps is not None and not isinstance(steps, list):
+            raise SectionValidationError("invalid_explanation", "explanation steps/points must be a list")
+        payload["step_count"] = len(steps or [])
+    elif kind == "comparison":
+        groups = data.get("groups", data.get("items", []))
+        metrics = data.get("metrics", [])
+        if groups is not None and not isinstance(groups, list):
+            raise SectionValidationError("invalid_comparison_groups", "comparison groups/items must be a list")
+        if metrics is not None and not isinstance(metrics, list):
+            raise SectionValidationError("invalid_comparison_metrics", "comparison metrics must be a list")
+        payload["group_count"] = len(groups or [])
+        payload["metric_count"] = len(metrics or [])
+    elif kind == "checklist":
+        checks = data.get("checks", data.get("items", []))
+        if not isinstance(checks, list):
+            raise SectionValidationError("invalid_checklist", "checklist requires list 'checks' or 'items'")
+        payload["check_count"] = len(checks)
+        payload["statuses"] = sorted({
+            clean_text(item.get("status") or item.get("state") or "")
+            for item in checks
+            if isinstance(item, dict) and clean_text(item.get("status") or item.get("state") or "")
+        })
+    elif kind == "hypothesis_ledger":
+        hypotheses = data.get("hypotheses", data.get("items", []))
+        if not isinstance(hypotheses, list):
+            raise SectionValidationError("invalid_hypotheses", "hypothesis_ledger requires list 'hypotheses' or 'items'")
+        payload["hypothesis_count"] = len(hypotheses)
+        payload["items"] = [_ledger_item_summary(item) for item in hypotheses if isinstance(item, dict)]
+    elif kind == "evidence_trace":
+        items = data.get("evidence", data.get("items", []))
+        if not isinstance(items, list):
+            raise SectionValidationError("invalid_evidence", "evidence_trace requires list 'evidence' or 'items'")
+        payload["evidence_count"] = len(items)
+        payload["items"] = [_ledger_item_summary(item) for item in items if isinstance(item, dict)]
 
     return {
         "section_id": section_id,
@@ -173,10 +241,30 @@ def _stable_section_id(kind: str, data: dict[str, Any]) -> str:
     return f"sec-{kind}-{digest}"
 
 
+def _ledger_item_summary(item: dict[str, Any]) -> dict[str, str]:
+    return {
+        "finding_id": clean_text(item.get("finding_id") or ""),
+        "hypothesis_id": clean_text(item.get("hypothesis_id") or item.get("id") or ""),
+        "title": clean_text(item.get("title") or item.get("statement") or item.get("name") or ""),
+        "status": clean_text(item.get("status") or item.get("state") or ""),
+        "severity": clean_text(item.get("severity") or ""),
+    }
+
+
 def _default_data_policy(kind: str) -> str:
-    if kind in {"header", "callout", "text", "findings"}:
+    if kind in {
+        "header",
+        "callout",
+        "text",
+        "findings",
+        "insight_grid",
+        "explanation",
+        "checklist",
+        "hypothesis_ledger",
+        "evidence_trace",
+    }:
         return "narrative"
-    if kind == "table":
+    if kind in {"table", "comparison"}:
         return "preview"
     return "aggregate_only"
 

@@ -25,6 +25,21 @@ function cleanText(text?: string) {
   return (text || '').trim()
 }
 
+function isGenericPlanName(name?: string) {
+  const cleaned = cleanText(name)
+  return !cleaned || /^plan(?:\s+\d+)?$/i.test(cleaned) || /^analysis plan$/i.test(cleaned)
+}
+
+function planSortTime(plan: Plan) {
+  const parsed = Date.parse(plan.created_at || plan.updated_at || '')
+  return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed
+}
+
+function planSelectorLabel(plan: Plan, chronologicalIndex: number) {
+  const name = cleanText(plan.name)
+  return isGenericPlanName(name) ? `Plan ${chronologicalIndex}` : name
+}
+
 function outputsMarkdown(outputs?: string[]) {
   const files = outputs?.filter(Boolean) || []
   if (files.length === 0) return ''
@@ -162,6 +177,15 @@ export default function PlanPanel({
     return plans[plans.length - 1]?.id ?? null
   }, [plans])
 
+  const chronologicalPlanNumbers = useMemo(() => {
+    const sorted = [...plans].sort((a, b) => {
+      const timeDelta = planSortTime(a) - planSortTime(b)
+      if (timeDelta !== 0) return timeDelta
+      return (a.iteration || 0) - (b.iteration || 0)
+    })
+    return new Map(sorted.map((item, index) => [item.id, index + 1]))
+  }, [plans])
+
   useEffect(() => {
     if (plans.length === 0) {
       setSelectedPlanId(null)
@@ -199,8 +223,9 @@ export default function PlanPanel({
           {plans.map((item, i) => (
             <Button key={item.id} size="small" type={item.id === plan.id ? 'primary' : 'default'}
               onClick={() => setSelectedPlanId(item.id)}
-              style={{ flexShrink: 0, borderRadius: 8, fontSize: 11 }}>
-              Plan {i + 1}
+              title={cleanText(item.name) || `Plan ${chronologicalPlanNumbers.get(item.id) || i + 1}`}
+              style={{ flexShrink: 0, borderRadius: 8, fontSize: 11, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {planSelectorLabel(item, chronologicalPlanNumbers.get(item.id) || i + 1)}
             </Button>
           ))}
         </div>

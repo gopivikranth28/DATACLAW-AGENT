@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { LoadingOutlined, CheckCircleOutlined, ExclamationCircleOutlined, RightOutlined, TeamOutlined, CodeOutlined } from '@ant-design/icons'
 import type { ToolCallState } from '../hooks/useAGUI'
-import ToolResultRenderer, { shouldAutoExpand, shouldRenderWhileCalling } from './tool-renderers/ToolResultRenderer'
+import ToolResultRenderer, { hasCustomRenderer, shouldAutoExpand, shouldRenderWhileCalling } from './tool-renderers/ToolResultRenderer'
 import SubagentProgressPanel from './SubagentProgressPanel'
 
 interface Props {
@@ -30,7 +30,7 @@ export default function ToolCallCard({ toolCall, onFileClick, sessionId }: Props
     ? <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 13 }} />
     : <ExclamationCircleOutlined style={{ color: '#ff4d4f', fontSize: 13 }} />
 
-  const hasRichRenderer = shouldAutoExpand(toolCall.name)
+  const hasRichRenderer = hasCustomRenderer(toolCall.name)
 
   return (
     <div style={{
@@ -63,7 +63,7 @@ export default function ToolCallCard({ toolCall, onFileClick, sessionId }: Props
         <span style={{ fontWeight: 500, color: '#333' }}>
           {isDelegate
             ? <>{hasSubagent ? toolCall.subagent!.name : (safeParseField(toolCall.args, 'subagent_name') || 'unknown')} <span style={{ fontWeight: 400, color: '#999', fontSize: 12 }}>(<TeamOutlined style={{ fontSize: 11 }} /> subagent)</span></>
-            : toolCall.name}
+            : toolLabel(toolCall.name)}
         </span>
         {hasSubagent && (
           <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 4, background: '#f0f0f0', color: '#666' }}>
@@ -122,6 +122,16 @@ export default function ToolCallCard({ toolCall, onFileClick, sessionId }: Props
       </div>
     </div>
   )
+}
+
+function toolLabel(toolName: string): string {
+  const labels: Record<string, string> = {
+    report_add_section: 'Report update',
+    build_report: 'Report',
+    propose_plan: 'Plan proposal',
+    update_plan: 'Plan update',
+  }
+  return labels[toolName] || toolName
 }
 
 /** Friendly display for a completed delegate_to_subagent call.

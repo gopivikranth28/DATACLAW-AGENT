@@ -49,6 +49,9 @@ def test_visual_output_skills_route_publish_to_artifacts_skill():
     assert "fetch and follow the `artifacts` skill" in dashboarding
     assert "Step attribution travels by stable plan step id" in visualization
     assert "dataclaw_report_add_section" in visualization
+    assert "`insight_grid`" in visualization
+    assert "`hypothesis_ledger`" in visualization
+    assert "`evidence_trace`" in visualization
     assert "artifact publication is unavailable" in visualization
     assert "Attribute sections and notes by stable plan step id" in dashboarding
     assert "publication is unavailable" in dashboarding

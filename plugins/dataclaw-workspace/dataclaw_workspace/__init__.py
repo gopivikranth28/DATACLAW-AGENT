@@ -164,7 +164,12 @@ class WorkspacePlugin:
 
         ctx.tool_registry.register_tool(PythonTool(
             name="report_add_section",
-            description="Append a designed section to a live HTML report. Use this to build a polished visual report as analysis progresses: header, metric_row, chart, findings, callout, text, or table.",
+            description=(
+                "Append a designed section to a live HTML report. Use this to build a polished "
+                "visual report as analysis progresses: header, metric_row, insight_grid, "
+                "explanation, comparison, checklist, hypothesis_ledger, evidence_trace, "
+                "chart, table, findings, callout, or text."
+            ),
             fn=lambda **kw: report_add_section(cfg=cfg, **kw),
             parameters={
                 "type": "object",
@@ -172,7 +177,21 @@ class WorkspacePlugin:
                     "section_type": {
                         "type": "string",
                         "description": "Section type",
-                        "enum": ["header", "metric_row", "chart", "findings", "callout", "text", "table"],
+                        "enum": [
+                            "header",
+                            "metric_row",
+                            "insight_grid",
+                            "explanation",
+                            "comparison",
+                            "checklist",
+                            "hypothesis_ledger",
+                            "evidence_trace",
+                            "chart",
+                            "findings",
+                            "callout",
+                            "text",
+                            "table",
+                        ],
                     },
                     "data": {"type": "object", "description": "Section data payload"},
                     "report_path": {"type": "string", "description": "Output report path", "default": "report.html"},
