@@ -17,6 +17,7 @@ dependencies = [
     "dataclaw-workspace",
     "dataclaw-data",
     "dataclaw-plans",
+    "dataclaw-eda",
     "dataclaw-artifacts",
     "dataclaw-notebooks",
     "dataclaw-projects",
@@ -32,6 +33,7 @@ dependencies = [
 dataclaw-workspace = { path = "plugins/dataclaw-workspace", editable = true }
 dataclaw-data = { path = "plugins/dataclaw-data", editable = true }
 dataclaw-plans = { path = "plugins/dataclaw-plans", editable = true }
+dataclaw-eda = { path = "plugins/dataclaw-eda", editable = true }
 dataclaw-artifacts = { path = "plugins/dataclaw-artifacts", editable = true }
 dataclaw-notebooks = { path = "plugins/dataclaw-notebooks", editable = true }
 dataclaw-projects = { path = "plugins/dataclaw-projects", editable = true }

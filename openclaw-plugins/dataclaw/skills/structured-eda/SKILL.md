@@ -73,25 +73,49 @@ Assign semantic roles before analysis. Do not treat a column as numeric just bec
 2. **Load and inventory the data.** Show dataset name/id, row count, column count, source, time coverage if available, and sample rows. Use DataClaw dataset tools for quick inspection and a notebook for durable work.
 3. **Define the unit of observation.** State what one row represents. Identify primary keys, natural keys, duplicated entities, and whether the data grain matches the user's goal.
 4. **Build a column role map.** For each important column, assign semantic role: id, dimension, measure, target, timestamp, text, geography, weight, grouping, or derived field.
-5. **Audit data quality.** Missingness counts and rates, duplicate rows/entities, mixed types, parse failures, impossible values, invalid categories, out-of-range values, and columns with too little variation.
-6. **Run goal-specific checks.** Based on the EDA mode, inspect target/KPI/segment/time variables first. Do not spend equal time on irrelevant columns.
-7. **Univariate analysis.** For key columns, inspect distributions with appropriate summaries: median/IQR for skew, mean/std where useful, frequency tables for categories, min/max for ranges, and time coverage for dates.
-8. **Relationship analysis.** Use bivariate and multivariate checks guided by the goal:
+5. **Propose the hypothesis ledger.** Before deep exploration, call `propose_eda_hypotheses` with up to 7 prioritized hypotheses, at most 3 high priority. Include candidates from user goal, mode expected risks, domain priors, and early data signals. Record untestable or irrelevant candidates and immediately move them `out_of_scope` with `update_eda_hypothesis` rather than silently dropping them. Cite the initial hypothesis set in `plan_markdown` under what is already known from previous inspection.
+6. **Audit data quality.** Missingness counts and rates, duplicate rows/entities, mixed types, parse failures, impossible values, invalid categories, out-of-range values, and columns with too little variation. Routine mode-required checks do not consume the insight-loop budget.
+7. **Run goal-specific checks.** Based on the EDA mode, inspect target/KPI/segment/time variables first. Do not spend equal time on irrelevant columns.
+8. **Univariate analysis.** For key columns, inspect distributions with appropriate summaries: median/IQR for skew, mean/std where useful, frequency tables for categories, min/max for ranges, and time coverage for dates.
+9. **Relationship analysis.** Use bivariate and multivariate checks guided by the goal:
    - numeric vs numeric: scatter, correlation, trend, nonlinearity, outliers
    - categorical vs numeric: grouped distribution, median/mean with sample sizes
    - categorical vs categorical: contingency table, proportions, chi-square only if appropriate
    - time vs metric: trend, seasonality, gaps, changepoints
    - segment vs outcome: effect size and uncertainty, not just sorted averages
-9. **Correlation audit.** Compute correlations only for variables where correlation is meaningful. Exclude ids, codes, leakage fields, constants, and arbitrary labels. Prefer:
+10. **Correlation audit.** Compute correlations only for variables where correlation is meaningful. Exclude ids, codes, leakage fields, constants, and arbitrary labels. Prefer:
    - Pearson for roughly linear continuous relationships
    - Spearman for monotonic or ordinal relationships
    - Cramer's V or normalized contingency summaries for categorical relationships
    Always state correlation is not causation and flag likely confounding.
-10. **Outlier and anomaly review.** Separate data errors from real extreme values. Do not drop outliers without a domain reason and a before/after note.
-11. **Domain and problem review.** Ask: do findings make sense in the domain? Are there missing constraints, denominators, sampling caveats, time effects, or operational definitions that could change interpretation?
-12. **Loop on emerging insights.** When a finding changes the likely problem, data grain, quality risk, target definition, segmentation, correlation story, or domain interpretation, run a focused follow-up loop before finalizing. Keep loops small and documented.
-13. **Readiness verdict.** State what the data is ready for and what it is not ready for: dashboarding, modeling, causal claims, survey readout, segmentation, forecasting, or further cleaning.
-14. **Summarize first findings.** Provide 3-7 findings, each with evidence and caveat. Include recommended next steps.
+11. **Outlier and anomaly review.** Separate data errors from real extreme values. Do not drop outliers without a domain reason and a before/after note.
+12. **Domain and problem review.** Ask: do findings make sense in the domain? Are there missing constraints, denominators, sampling caveats, time effects, or operational definitions that could change interpretation?
+13. **Loop on hypotheses and emerging insights.** When a hypothesis or surprise can change the likely problem, data grain, quality risk, target definition, segmentation, correlation story, or domain interpretation, run a focused follow-up loop before finalizing. Keep loops small and documented.
+14. **Readiness verdict.** Call `summarize_eda_readiness(dataset_id, purpose, mode)` and state what the data is ready for and what it is not ready for: dashboarding, modeling, causal claims, survey readout, segmentation, forecasting, or further cleaning. Readiness must cite hypothesis dispositions and required-check blockers.
+15. **Summarize first findings.** Provide 3-7 findings, each with evidence, validation state, and caveat. Include recommended next steps.
+
+## Hypothesis ledger
+
+Structured EDA is hypothesis-driven. The notebook computes evidence, but the durable ledger is written through tools.
+
+1. After the column role map, propose an initial batch with `propose_eda_hypotheses`.
+2. Use these sources deliberately: `user_goal`, `mode_expected_risk`, `domain_prior`, and `data_signal`. Use `prior_finding` during later loops and `reviewer` only when the analysis reviewer raises a new hypothesis.
+3. Keep the batch tight: 7 maximum, 3 high-priority maximum. If the list is bigger, merge or downgrade before calling the tool.
+4. Mark irrelevant or untestable candidates `out_of_scope` with `update_eda_hypothesis` and a reason. Rejected ideas are evidence of coverage, not clutter.
+5. For every material observation, call `record_eda_finding` with evidence anchors, validation, disposition, `covers_checks`, and the linked `hypothesis_id` when one applies.
+6. If a finding updates a hypothesis, pass `hypothesis_status` in the same `record_eda_finding` call. A rejected hypothesis should be recorded as rejecting evidence, not only mentioned in prose.
+7. If a re-run changes the evidence, call `supersede_eda_finding`; do not overwrite the old conclusion in chat or notebook text.
+
+Mode expected-risk seeds:
+
+| Mode | Seed checks |
+|---|---|
+| Data-quality EDA | missingness, duplicates, impossible values, type/parse risk |
+| Modeling-readiness EDA | target distribution, leakage risk, feature availability at prediction time, split strategy |
+| Dashboard/KPI EDA | denominator/grain mismatch, time coverage, metric definition, aggregation risk |
+| Survey/research EDA | sample size by segment, weights, nonresponse, small-N comparisons |
+| Time-series EDA | gaps, seasonality, timezone/grain, future leakage |
+| Event/log/funnel EDA | identity resolution, duplicate events, event order, censoring |
 
 ## Insight loop behavior
 
@@ -99,12 +123,13 @@ EDA is iterative. Treat every material surprise as a candidate insight, then dec
 
 Use this loop:
 
-1. **Observe.** Name the new pattern, anomaly, data-quality issue, segment difference, correlation, or domain inconsistency.
-2. **Interpret.** Explain why it might matter for the user's goal. Is it a real signal, data artifact, leakage risk, denominator issue, or domain constraint?
-3. **Branch.** Choose one focused follow-up check that can confirm, weaken, or reframe the insight.
-4. **Validate.** Run the smallest useful query, summary, or chart. Compare across segments, time, missingness groups, or relevant controls when needed.
-5. **Decide.** Mark the insight as confirmed, weakened, unresolved, or blocked by missing domain/user input.
-6. **Update.** Revise the EDA mode, assumptions, column roles, readiness verdict, or next-step recommendation if the insight changes them.
+1. **Select.** Pick the highest-value open hypothesis, or a new data-signal surprise. Reserve at least one loop for emergent surprises when any exist so the ledger does not create tunnel vision.
+2. **Observe.** Name the pattern, anomaly, data-quality issue, segment difference, correlation, or domain inconsistency.
+3. **Interpret.** Explain why it might matter for the user's goal. Is it a real signal, data artifact, leakage risk, denominator issue, or domain constraint?
+4. **Branch.** Choose one focused follow-up check that can confirm, weaken, reject, or reframe the hypothesis.
+5. **Validate.** Follow `insight_validation` before any `confirmed` disposition: internal recompute or denominator/grain check, plus external plausibility or the mandatory unverified caveat.
+6. **Decide.** Call `record_eda_finding` with disposition `confirmed`, `weakened`, `rejected`, `unresolved`, or `blocked`. Include `hypothesis_id` and `hypothesis_status` when the finding dispositions a hypothesis.
+7. **Update.** Revise the EDA mode, assumptions, column roles, readiness verdict, or next-step recommendation if the insight changes them. Mark untested leftovers as `open` with `disposition_reason: "deferred: loop budget"` so readiness treats them as caveats, not blockers.
 
 Trigger a loop when you see:
 
@@ -126,7 +151,7 @@ Looping rules:
 - If a loop reveals a different primary goal, state the pivot and continue under the new EDA mode.
 - If two plausible branches require a domain choice, ask the user instead of silently choosing.
 - Stop looping when new checks no longer change the conclusions, when the remaining questions require user/domain input, or when the agreed scope is complete.
-- Keep an insight log in the notebook/report: insight, evidence, follow-up check, decision, caveat.
+- Keep an insight log in the notebook/report, but the ledger is authoritative: hypothesis, evidence, follow-up check, decision, caveat, and readiness implication must be persisted through the EDA tools.
 
 ## Correlation and relationship rules
 

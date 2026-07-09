@@ -226,6 +226,27 @@ class PlanCompletionGuardrail:
                 phase=self.phase,
                 severity="warning",
             )
+        proposal_id = tool_input.get("proposal_id", "")
+        if proposal_id:
+            try:
+                from dataclaw_plans.gates import plan_completion_warnings_sync
+
+                gate_warnings = plan_completion_warnings_sync(proposal_id)
+            except Exception:
+                gate_warnings = []
+            if gate_warnings:
+                return GuardrailVerdict(
+                    tool_call_id=tool_call.get("call_id", ""),
+                    guardrail_id=self.id,
+                    message=(
+                        "Plan has required validation gates that are not ready: "
+                        + "; ".join(gate_warnings)
+                        + ". Resolve the gates or explicitly accept the risk before finalizing."
+                    ),
+                    mode=self.mode,
+                    phase=self.phase,
+                    severity="warning",
+                )
         return None
 
 

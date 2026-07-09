@@ -42,7 +42,7 @@ class FakeClient:
 
 async def test_read_only_disables_save_tool():
     provider = GbrainMemoryProvider(
-        brain_home=Path("/tmp/x"), mode="read_only", client=FakeClient(),
+        brain_home=Path("/tmp/x"), mode="read_only", location="existing", client=FakeClient(),
     )
     assert provider.as_save_tool_definition() is None
 
@@ -50,7 +50,7 @@ async def test_read_only_disables_save_tool():
 async def test_read_only_save_is_noop():
     fake = FakeClient()
     provider = GbrainMemoryProvider(
-        brain_home=Path("/tmp/x"), mode="read_only", client=fake,
+        brain_home=Path("/tmp/x"), mode="read_only", location="existing", client=fake,
     )
     result = await provider.save_memory("anything", metadata={"foo": "bar"})
     assert result == {"status": "noop", "reason": "read_only"}
@@ -63,7 +63,7 @@ async def test_read_only_search_still_works():
         {"slug": "a", "score": 0.5, "chunk_text": "hello", "title": "A", "type": "note"},
     ]
     provider = GbrainMemoryProvider(
-        brain_home=Path("/tmp/x"), mode="read_only", client=fake,
+        brain_home=Path("/tmp/x"), mode="read_only", location="existing", client=fake,
     )
     out = await provider.search_memory("hi", limit=3)
     assert len(out) == 1
@@ -77,7 +77,7 @@ async def test_read_only_search_still_works():
 
 async def test_read_write_exposes_save_tool():
     provider = GbrainMemoryProvider(
-        brain_home=Path("/tmp/x"), mode="read_write", client=FakeClient(),
+        brain_home=Path("/tmp/x"), mode="read_write", location="existing", client=FakeClient(),
     )
     save_def = provider.as_save_tool_definition()
     assert save_def is not None
@@ -88,7 +88,7 @@ async def test_read_write_exposes_save_tool():
 async def test_save_writes_page_with_frontmatter():
     fake = FakeClient()
     provider = GbrainMemoryProvider(
-        brain_home=Path("/tmp/x"), mode="read_write", client=fake,
+        brain_home=Path("/tmp/x"), mode="read_write", location="existing", client=fake,
     )
     result = await provider.save_memory(
         "User prefers DuckDB over Postgres for ad-hoc work.",
@@ -110,7 +110,7 @@ async def test_save_writes_page_with_frontmatter():
 
 async def test_retrieve_memories_empty_query():
     provider = GbrainMemoryProvider(
-        brain_home=Path("/tmp/x"), mode="read_write", client=FakeClient(),
+        brain_home=Path("/tmp/x"), mode="read_write", location="existing", client=FakeClient(),
     )
     out = await provider.retrieve_memories({"user_query": "", "messages": []})
     assert out == []
@@ -124,7 +124,7 @@ async def test_retrieve_memories_formats_hits():
         {"slug": "x", "chunk_text": ""},  # filtered out — empty content
     ]
     provider = GbrainMemoryProvider(
-        brain_home=Path("/tmp/x"), mode="read_write", top_k=5, client=fake,
+        brain_home=Path("/tmp/x"), mode="read_write", top_k=5, location="existing", client=fake,
     )
     out = await provider.retrieve_memories({"user_query": "what does jack like"})
     assert out == [

@@ -13,6 +13,7 @@ from dataclaw_plans.store import (
 )
 from dataclaw_plans.tools import propose_plan, update_plan, get_plan_decision, list_plans, get_plan
 from dataclaw_plans.hooks import active_plan_context_hook
+from dataclaw_plans.gates import accept_gate_risk, get_plan_gates, set_step_gate
 
 
 @pytest.fixture(autouse=True)
@@ -272,6 +273,88 @@ async def test_update_plan_not_found_returns_soft_failure():
         "proposal_id": "nonexistent",
         "error": "Plan proposal not found",
     }
+
+
+@pytest.mark.asyncio
+async def test_ready_for_validation_blocks_on_required_gate():
+    r = await propose_plan(
+        name="Plan",
+        description="d",
+        steps=[{"name": "Model", "description": "Train model and export results"}],
+        session_id="sess-1",
+    )
+    pid = r["proposal_id"]
+    step_id = (await get_plan(proposal_id=pid))["steps"][0]["plan_step_id"]
+
+    result = await update_plan(
+        proposal_id=pid,
+        step_patches=[{"plan_step_id": step_id, "ready_for_validation": True}],
+        session_id="sess-1",
+    )
+
+    assert result["success"] is False
+    assert result["error"]["code"] == "gate_blocked"
+    assert result["error"]["blocking_gates"][0]["name"] == "analysis_review"
+
+
+@pytest.mark.asyncio
+async def test_required_gate_pass_allows_ready_for_validation():
+    r = await propose_plan(
+        name="Plan",
+        description="d",
+        steps=[{"name": "Model", "description": "Train model and export results"}],
+        session_id="sess-1",
+    )
+    pid = r["proposal_id"]
+    step_id = (await get_plan(proposal_id=pid))["steps"][0]["plan_step_id"]
+    set_step_gate(
+        proposal_id=pid,
+        plan_step_id=step_id,
+        gate_name="analysis_review",
+        status="pass",
+        required=True,
+        reason="review passed",
+        actor="test",
+    )
+
+    result = await update_plan(
+        proposal_id=pid,
+        step_patches=[{"plan_step_id": step_id, "ready_for_validation": True}],
+        session_id="sess-1",
+    )
+
+    assert result["success"] is True
+    plan = await get_plan(proposal_id=pid)
+    assert plan["steps"][0]["ready_for_validation"] is True
+    gate_state = await get_plan_gates(pid)
+    assert gate_state["steps"][0]["blocking_gates"] == []
+
+
+@pytest.mark.asyncio
+async def test_accept_gate_risk_unblocks_required_gate():
+    r = await propose_plan(
+        name="Plan",
+        description="d",
+        steps=[{"name": "Model", "description": "Train model and export results"}],
+        session_id="sess-1",
+    )
+    pid = r["proposal_id"]
+    step_id = (await get_plan(proposal_id=pid))["steps"][0]["plan_step_id"]
+
+    accepted = await accept_gate_risk(
+        proposal_id=pid,
+        plan_step_id=step_id,
+        gate_name="analysis_review",
+        rationale="User accepts checklist-only risk for this draft",
+    )
+    assert accepted["success"] is True
+
+    result = await update_plan(
+        proposal_id=pid,
+        step_patches=[{"plan_step_id": step_id, "ready_for_validation": True}],
+        session_id="sess-1",
+    )
+    assert result["success"] is True
 
 
 @pytest.mark.asyncio

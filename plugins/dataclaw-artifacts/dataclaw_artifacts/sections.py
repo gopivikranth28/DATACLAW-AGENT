@@ -88,9 +88,20 @@ def normalize_section(section_type: str, data: dict[str, Any]) -> dict[str, Any]
         if not isinstance(items, list):
             raise SectionValidationError("invalid_findings", "findings requires list 'items' or 'findings'")
         payload["finding_count"] = len(items)
+        payload["items"] = [
+            {
+                "finding_id": clean_text(item.get("finding_id") or ""),
+                "hypothesis_id": clean_text(item.get("hypothesis_id") or ""),
+                "title": clean_text(item.get("title") or ""),
+                "severity": clean_text(item.get("severity") or ""),
+            }
+            for item in items
+            if isinstance(item, dict)
+        ]
 
     return {
         "section_id": section_id,
+        "section_schema": 2,
         "kind": kind,
         "title": clean_text(data.get("title") or ""),
         "caption": clean_text(data.get("caption") or ""),

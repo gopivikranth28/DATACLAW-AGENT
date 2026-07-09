@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+import copy
 from datetime import datetime, timezone
 from typing import Any
 
@@ -15,6 +16,11 @@ from dataclaw_plans.store import (
     find_proposal,
     get_active_plan_id,
     append_snapshot,
+)
+from dataclaw_plans.gates import (
+    accept_gate_risk,
+    append_ready_check_event,
+    blocking_gates,
 )
 
 
@@ -57,6 +63,8 @@ def _normalize_steps(steps: list[dict[str, Any]], previous_steps: list[dict[str,
             "status": str(raw.get("status") or "not_started"),
             "summary": str(raw.get("summary") or ""),
             "outputs": raw.get("outputs") or [],
+            "ready_for_validation": bool(raw.get("ready_for_validation", False)),
+            "gates": raw.get("gates") or {},
         })
     return normalized
 
@@ -188,6 +196,53 @@ async def update_plan(
                     raise ValueError(f"Unknown plan_step_id requires name: {step_id}")
                 match = {"plan_step_id": step_id or _new_step_id(), "name": step_name, "description": "", "status": "not_started"}
                 existing.append(match)
+
+            candidate = copy.deepcopy(match)
+            if step_id:
+                candidate["plan_step_id"] = step_id
+            elif not candidate.get("plan_step_id"):
+                candidate["plan_step_id"] = _step_identity(candidate) or _new_step_id()
+            candidate.pop("id", None)
+            candidate.pop("step_id", None)
+            for key in ("name", "description", "status", "summary", "outputs", "note", "ready_for_validation", "gates"):
+                if key in update:
+                    candidate[key] = update[key]
+
+            if update.get("ready_for_validation") is True:
+                blockers = await blocking_gates(proposal, candidate)
+                if blockers:
+                    append_ready_check_event(
+                        proposal_id=proposal["id"],
+                        plan_step_id=str(candidate.get("plan_step_id") or ""),
+                        requested=True,
+                        outcome="blocked",
+                        blocking=blockers,
+                    )
+                    return {
+                        "success": False,
+                        "proposal_id": proposal["id"],
+                        "error": {
+                            "code": "gate_blocked",
+                            "plan_step_id": candidate.get("plan_step_id"),
+                            "blocking_gates": blockers,
+                        },
+                    }
+                append_ready_check_event(
+                    proposal_id=proposal["id"],
+                    plan_step_id=str(candidate.get("plan_step_id") or ""),
+                    requested=True,
+                    outcome="allowed",
+                    blocking=[],
+                )
+            elif update.get("ready_for_validation") is False:
+                append_ready_check_event(
+                    proposal_id=proposal["id"],
+                    plan_step_id=str(candidate.get("plan_step_id") or ""),
+                    requested=False,
+                    outcome="allowed",
+                    blocking=[],
+                )
+
             if step_id:
                 match["plan_step_id"] = step_id
             elif not match.get("plan_step_id"):

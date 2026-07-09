@@ -768,6 +768,7 @@ dependencies = [
     { name = "dataclaw-codex" },
     { name = "dataclaw-custom-tools" },
     { name = "dataclaw-data" },
+    { name = "dataclaw-eda" },
     { name = "dataclaw-gbrain" },
     { name = "dataclaw-kaggle" },
     { name = "dataclaw-notebooks" },
@@ -804,6 +805,7 @@ requires-dist = [
     { name = "dataclaw-codex", editable = "plugins/dataclaw-codex" },
     { name = "dataclaw-custom-tools", editable = "plugins/dataclaw-custom-tools" },
     { name = "dataclaw-data", editable = "plugins/dataclaw-data" },
+    { name = "dataclaw-eda", editable = "plugins/dataclaw-eda" },
     { name = "dataclaw-gbrain", editable = "plugins/dataclaw-gbrain" },
     { name = "dataclaw-kaggle", editable = "plugins/dataclaw-kaggle" },
     { name = "dataclaw-notebooks", editable = "plugins/dataclaw-notebooks" },
@@ -976,6 +978,22 @@ provides-extras = ["dev"]
 name = "dataclaw-artifacts"
 version = "0.1.0"
 source = { editable = "plugins/dataclaw-artifacts" }
+dependencies = [
+    { name = "dataclaw" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dataclaw" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
+]
+provides-extras = ["dev"]
+
+[[package]]
+name = "dataclaw-eda"
+version = "0.1.0"
+source = { editable = "plugins/dataclaw-eda" }
 dependencies = [
     { name = "dataclaw" },
 ]

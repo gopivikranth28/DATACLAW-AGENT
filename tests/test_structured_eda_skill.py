@@ -20,6 +20,11 @@ def test_structured_eda_skill_is_bundled_and_parseable():
 
     assert meta["name"] == "structured_eda"
     assert "goal-directed exploratory data analysis" in meta["description"]
+    assert "Hypothesis ledger" in body
+    assert "propose_eda_hypotheses" in body
+    assert "record_eda_finding" in body
+    assert "summarize_eda_readiness" in body
+    assert "deferred: loop budget" in body
     assert "Insight loop behavior" in body
     assert "Default to at most 3 insight loops" in body
     assert "Fetch the `visualization` skill" in body
@@ -30,6 +35,8 @@ def test_core_library_skills_route_nontrivial_eda_to_structured_eda():
     profiling = _read(SKILL_LIBRARY / "data_profiling.md")
 
     assert "fetch the `structured_eda` skill" in dataclaw
+    assert "dataclaw_propose_eda_hypotheses" in dataclaw
+    assert "dataclaw_summarize_eda_readiness" in dataclaw
     assert "Use `data_profiling` only for a compact quick profile" in dataclaw
     assert "fetch and follow `structured_eda` instead" in profiling
     assert "Stop condition" in profiling

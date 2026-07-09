@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from dataclaw_plans.store import read_proposals, find_proposal, write_proposals, find_snapshot
 from dataclaw_plans.mlflow_tools import query_mlflow_runs, query_mlflow_runs_for_project
+from dataclaw_plans.gates import get_plan_gates
 
 router = APIRouter()
 mlflow_router = APIRouter()
@@ -43,6 +44,14 @@ async def get_snapshot(proposal_id: str, snapshot_id: str) -> dict[str, Any]:
     if snap.get("proposal_id") != proposal_id:
         raise HTTPException(status_code=404, detail="Snapshot not found")
     return snap
+
+
+@router.get("/{proposal_id}/gates")
+async def get_proposal_gates(proposal_id: str) -> dict[str, Any]:
+    try:
+        return await get_plan_gates(proposal_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Proposal not found")
 
 
 class DecisionRequest(BaseModel):

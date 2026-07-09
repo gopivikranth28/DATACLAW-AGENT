@@ -1,0 +1,21 @@
+[project]
+name = "dataclaw-eda"
+version = "0.1.0"
+description = "Dataclaw plugin - structured EDA hypotheses, findings, and readiness"
+requires-python = ">=3.12"
+dependencies = [
+    "dataclaw",
+]
+
+[project.entry-points."dataclaw.plugins"]
+dataclaw-eda = "dataclaw_eda:EdaPlugin"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

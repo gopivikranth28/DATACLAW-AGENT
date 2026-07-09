@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Any
 
@@ -14,12 +15,18 @@ def cell_summary(cell: Any, index: int) -> dict[str, Any]:
     lines = source.split("\n")
     return {
         "index": index,
+        "cell_id": cell.get("id", ""),
         "cell_type": cell.get("cell_type", "unknown"),
         "source_lines": len(lines),
+        "source_sha256": source_sha256(source),
         "preview": lines[0][:80] if lines else "",
         "output_count": len(cell.get("outputs", [])),
         "execution_count": cell.get("execution_count"),
     }
+
+
+def source_sha256(source: str) -> str:
+    return hashlib.sha256((source or "").encode("utf-8")).hexdigest()
 
 
 def format_cell_outputs(cell: Any) -> list[dict[str, str]]:

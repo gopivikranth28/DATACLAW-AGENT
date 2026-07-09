@@ -107,6 +107,8 @@ async def test_read_cell_tool(sample_notebook):
     result = await tools.read_cell(cell_index=0)
     assert result["source"] == "x = 1"
     assert result["cell_type"] == "code"
+    assert result["cell_id"]
+    assert len(result["source_sha256"]) == 64
 
 
 @pytest.mark.asyncio
@@ -116,6 +118,8 @@ async def test_insert_cell_tool(sample_notebook):
     assert result["inserted_at"] == 1
     assert result["cell_index"] == 1            # alias for the renderer
     assert result["source"] == "z = 42"          # echoed for the renderer
+    assert result["cell_id"]
+    assert len(result["source_sha256"]) == 64
     assert result["cell_type"] == "code"
     assert result["num_cells"] == 4
 
@@ -281,6 +285,8 @@ async def test_execute_cell_empty_source_returns_source(sample_notebook):
     await tools.edit_cell(cell_index=0, new_source="   \n   ")
     result = await tools.execute_cell(cell_index=0)
     assert "source" in result
+    assert result["cell_id"]
+    assert len(result["source_sha256"]) == 64
     assert result["source"].strip() == ""
     assert result["outputs"] == []
 

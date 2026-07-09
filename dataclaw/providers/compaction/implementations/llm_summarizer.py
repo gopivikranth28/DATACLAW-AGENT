@@ -203,7 +203,8 @@ class LLMSummarizingCompactor:
             # ChatGPT backend (codex) — the standard API's "minimal" tier is
             # rejected by the codex backend. Ignored by providers that don't
             # support these knobs.
-            reasoning_effort="low"
+            reasoning_effort="low",
+            text_verbosity="low",
         ):
             if isinstance(event, TextDeltaEvent):
                 chunks.append(event.text)

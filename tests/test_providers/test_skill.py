@@ -57,4 +57,4 @@ async def test_fetch_skill(provider, skill_dir):
 @pytest.mark.asyncio
 async def test_fetch_nonexistent(provider):
     result = await provider.fetch_skill("nonexistent")
-    assert result is None
+    assert result == {"content": "Skill not found: nonexistent", "is_error": True}
