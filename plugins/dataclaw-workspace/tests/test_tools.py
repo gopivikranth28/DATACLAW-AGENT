@@ -5,6 +5,7 @@ from pathlib import Path
 
 import builtins
 
+from dataclaw_workspace import report_renderer
 from dataclaw_workspace.config import WorkspaceConfig
 from dataclaw_workspace.tools import (
     ws_list_files,
@@ -14,6 +15,12 @@ from dataclaw_workspace.tools import (
     ws_exec,
     display_image,
     report_add_section,
+    _BODY_CLOSE_RE,
+    _BODY_OPEN_RE,
+    _REPORT_SECTION_END,
+    _REPORT_SECTION_START,
+    _REPORT_SHELL_CSS_ATTR,
+    _REPORT_SHELL_SCRIPT_ATTR,
     _ensure_plotly_runtime,
     _ensure_report_shell_context,
     _plotly_script_tag,
@@ -338,6 +345,28 @@ async def test_report_add_section_builds_live_html_report(cfg):
     assert "data-dc-section-meta" in html
     assert "--dc-bg" in html
     assert "data-dc-runtime=\"plotly\"" in html
+
+
+def test_report_visual_system_lives_in_renderer_module():
+    assert _REPORT_SECTION_START == report_renderer.REPORT_SECTION_START
+    assert _REPORT_SECTION_END == report_renderer.REPORT_SECTION_END
+    assert _REPORT_SHELL_CSS_ATTR == report_renderer.REPORT_SHELL_CSS_ATTR
+    assert _REPORT_SHELL_SCRIPT_ATTR == report_renderer.REPORT_SHELL_SCRIPT_ATTR
+    assert _BODY_OPEN_RE is report_renderer.BODY_OPEN_RE
+    assert _BODY_CLOSE_RE is report_renderer.BODY_CLOSE_RE
+    assert _report_shell is report_renderer.report_shell
+    assert _report_shell_css is report_renderer.report_shell_css
+    assert _report_shell_script is report_renderer.report_shell_script
+    assert _ensure_report_shell_context is report_renderer.ensure_report_shell_context
+
+    html = report_renderer.render_report_section(
+        "evidence_trace",
+        {"evidence": [{"kind": "notebook_cell", "cell_id": "cell-1", "summary": "Validated grain."}]},
+    )
+
+    assert "r-ledger" in html
+    assert "r-evidence-ref" in html
+    assert "cell-1" in html
 
 
 def test_report_shell_parts_keep_original_context_contract():
