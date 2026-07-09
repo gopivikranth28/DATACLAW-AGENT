@@ -196,6 +196,19 @@ async def tool_call_proxy(tool_name: str, body: ToolCallBody, request: Request) 
     if emitter:
         tracker.append_event(session_id, emitter.tool_call_result(call_id, result_json))
 
+    state = {
+        **state,
+        "pending_tool_calls": [],
+        "tool_results": [{
+            "call_id": call_id,
+            "tool_name": tool_name,
+            "tool_input": clean_params,
+            "result": result_json,
+            "is_error": status == "error",
+        }],
+    }
+    state = await hooks.run("postToolCallHook", state)
+
     # Persist to session storage
     await sessions.append_message(session_id, {
         "role": "tool_call", "messageId": f"tc-{call_id}",

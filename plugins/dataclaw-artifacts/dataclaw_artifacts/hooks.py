@@ -16,6 +16,7 @@ ARTIFACT_TOOLS = {
     "export_artifact",
     "delete_artifact",
     "report_note",
+    "report_add_section",
 }
 
 
@@ -41,6 +42,10 @@ async def artifact_context_hook(state: AgentState) -> AgentState:
                 injected["project_id"] = project_id
             if tool_name in {"publish_artifact", "report_note"} and active_plan_step_id and not injected.get("plan_step_id"):
                 injected["plan_step_id"] = active_plan_step_id
+            if tool_name == "report_add_section" and active_plan_step_id:
+                data = injected.get("data")
+                if isinstance(data, dict) and not data.get("plan_step_id"):
+                    injected["data"] = {**data, "plan_step_id": active_plan_step_id}
             tc = {**tc, "tool_input": injected}
         updated.append(tc)
 
@@ -92,6 +97,24 @@ def _event_for_tool_result(tool_name: str, tool_input: dict[str, Any], result: d
                 "version": result.get("version"),
                 "url": result.get("url"),
                 "session_id": session_id,
+            },
+        }
+
+    if tool_name == "report_add_section" and result.get("updated"):
+        section = result.get("section") if isinstance(result.get("section"), dict) else {}
+        data = tool_input.get("data") if isinstance(tool_input.get("data"), dict) else {}
+        kind = str(result.get("section_type") or section.get("kind") or tool_input.get("section_type") or "section")
+        return {
+            "kind": "report_section",
+            "page": "analyses" if kind != "metric_row" else "overview",
+            "plan_step_id": str(data.get("plan_step_id") or section.get("plan_step_id") or ""),
+            "status": "active",
+            "payload": {
+                "title": data.get("title") or section.get("title") or kind.replace("_", " ").title(),
+                "summary": data.get("caption") or data.get("subtitle") or data.get("summary") or "",
+                "section_type": kind,
+                "section_id": section.get("section_id"),
+                "html_path": result.get("html_path"),
             },
         }
 

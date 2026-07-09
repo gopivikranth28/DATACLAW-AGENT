@@ -20,7 +20,7 @@ from dataclaw_artifacts.store import (
     resolve_workspace_path,
     write_artifact_version,
 )
-from dataclaw_artifacts.validator import ArtifactValidationError, validate_and_prepare_html
+from dataclaw_artifacts.validator import ArtifactValidationError, strip_dataclaw_runtime_scripts, validate_and_prepare_html
 from dataclaw_artifacts.wrapper import export_shell, new_nonce
 
 
@@ -74,7 +74,7 @@ async def publish_artifact(
 
     try:
         prepared = validate_and_prepare_html(
-            html or "",
+            strip_dataclaw_runtime_scripts(html or ""),
             base_dir=base_dir,
             session_id=session_id,
             project_id=project_id,

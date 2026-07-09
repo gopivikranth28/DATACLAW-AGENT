@@ -180,15 +180,44 @@ async def test_report_add_section_builds_live_html_report(cfg):
         report_path="reports/live.html",
         data={"metrics": [{"label": "Rows", "value": "54,600"}]},
     )
+    await report_add_section(
+        cfg=cfg,
+        section_type="findings",
+        report_path="reports/live.html",
+        data={
+            "items": [{
+                "title": "Value is bought with consistency",
+                "detail": "Consistency and pressure resistance dominate the signal.",
+                "caveat": "Correlations are descriptive, not causal.",
+            }]
+        },
+    )
+    await report_add_section(
+        cfg=cfg,
+        section_type="chart",
+        report_path="reports/live.html",
+        data={
+            "title": "Simple trend",
+            "figure": {"data": [{"x": [1, 2], "y": [3, 4]}], "layout": {"title": {"text": "Simple trend"}}},
+        },
+    )
 
     report_path = Path(header["html_path"])
     html = report_path.read_text()
     assert "World Cup Analysis" in html
     assert "Rows" in html
     assert "54,600" in html
+    assert "Value is bought with consistency" in html
+    assert "Consistency and pressure resistance dominate the signal." in html
+    assert "{&#x27;title&#x27;" not in html
+    assert "Simple trend" in html
+    assert "Plotly.newPlot" in html
+    assert "Plotly is loaded by the DataClaw artifact runtime" not in html
     assert "DATACLAW_REPORT_SECTIONS_START" in html
     assert "data-dc-section=\"header\"" in html
     assert "data-dc-section=\"metric_row\"" in html
+    assert "data-dc-section=\"findings\"" in html
+    assert "data-dc-section=\"chart\"" in html
     assert "data-dc-section-meta" in html
     assert "--dc-bg" in html
     assert "data-dc-runtime=\"plotly\"" in html
@@ -204,10 +233,11 @@ def test_plotly_script_tag_never_falls_back_to_cdn(monkeypatch):
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
     tag = _plotly_script_tag()
-    assert "cdn.plot.ly" not in tag
-    assert "https://" not in tag
+    open_tag = tag.split(">", 1)[0]
+    assert "src=" not in open_tag
     assert "data-dc-runtime=\"plotly\"" in tag
     assert "window.Plotly" in tag
+    assert "Plotly is loaded by the DataClaw artifact runtime" not in tag
 
 
 def test_report_sections_use_artifact_contract():

@@ -32,6 +32,10 @@ FORBIDDEN_JS_PATTERNS = [
     (re.compile(r"\b(?:window\.)?location\.(?:assign|replace)\s*\(", re.I), "location_navigation"),
 ]
 CSS_URL_RE = re.compile(r"url\(\s*(['\"]?)([^'\"\)]+)\1\s*\)", re.I)
+DATACLAW_RUNTIME_SCRIPT_RE = re.compile(
+    r"<script\b(?=[^>]*\bdata-dc-runtime=(['\"])plotly\1)[^>]*>.*?</script>",
+    re.I | re.S,
+)
 
 
 class ArtifactValidationError(ValueError):
@@ -249,6 +253,15 @@ def _inline_images(html: str, base_dir: Path | None, session_id: str, project_id
         return f"{match.group(1)}{match.group(2)}{_asset_data_uri(path)}{match.group(2)}"
 
     return pattern.sub(repl, html)
+
+
+def strip_dataclaw_runtime_scripts(html: str) -> str:
+    """Remove workspace-only DataClaw runtimes before artifact validation.
+
+    Workspace reports inline Plotly so raw ``file://`` downloads render. Published
+    artifacts receive the runtime from the artifact wrapper instead, under CSP.
+    """
+    return DATACLAW_RUNTIME_SCRIPT_RE.sub("", html)
 
 
 def validate_and_prepare_html(

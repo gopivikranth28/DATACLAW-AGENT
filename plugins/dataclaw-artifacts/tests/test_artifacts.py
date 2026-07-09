@@ -126,6 +126,28 @@ async def test_publish_revise_read_and_conflict_by_source_path():
 
 
 @pytest.mark.asyncio
+async def test_publish_strips_workspace_plotly_runtime_before_validation():
+    html = """<!doctype html><html><head>
+    <script data-dc-runtime="plotly">window.parent.postMessage({bad: true}, "*")</script>
+    </head><body>
+    <div id="chart"></div>
+    <script>Plotly.newPlot("chart", [], {}, {responsive: true})</script>
+    </body></html>"""
+
+    result = await publish_artifact(
+        title="Workspace report",
+        html=html,
+        session_id="runtime-strip",
+    )
+
+    assert result["success"] is True
+    stored = read_source(result["artifact_id"], result["version"])
+    assert 'data-dc-runtime="plotly"' not in stored
+    assert "window.parent.postMessage" not in stored
+    assert "Plotly.newPlot" in stored
+
+
+@pytest.mark.asyncio
 async def test_identical_publish_dedupes_without_new_version():
     session_id = "s2"
     html = "<!doctype html><html><body><h1>Same</h1></body></html>"

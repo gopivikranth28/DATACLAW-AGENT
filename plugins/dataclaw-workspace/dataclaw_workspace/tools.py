@@ -23,6 +23,7 @@ from dataclaw_artifacts.sections import (
     section_attrs as artifact_section_attrs,
     section_meta_script as artifact_section_meta_script,
 )
+from dataclaw_artifacts.wrapper import plotly_runtime_js
 
 from dataclaw_workspace.config import WorkspaceConfig
 
@@ -454,6 +455,9 @@ def _report_shell(*, title: str, first_section: str) -> str:
     .r-callout {{ border-left: 4px solid var(--accent); background: var(--accent-soft); padding: 13px 14px; border-radius: 8px; }}
     .r-findings {{ display: grid; gap: 10px; padding: 0; margin: 0; list-style: none; }}
     .r-finding {{ padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--dc-surface-raised); }}
+    .r-finding-title {{ font-weight: 720; margin-bottom: 4px; color: var(--ink); }}
+    .r-finding-detail {{ margin: 0; color: var(--ink); }}
+    .r-finding-meta {{ margin: 6px 0 0; color: var(--muted); font-size: 12px; }}
     .r-chart-target {{ width: 100%; min-height: 390px; }}
     .r-caption {{ color: var(--muted); font-size: 12px; margin: 8px 2px 0; }}
     table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
@@ -479,25 +483,14 @@ def _report_shell(*, title: str, first_section: str) -> str:
 
 
 def _plotly_script_tag() -> str:
-    """Declare the Plotly dependency without inlining or reaching for a CDN.
+    """Embed the local Plotly dependency for raw workspace report files.
 
-    Published artifacts receive the real Plotly bundle from the artifact runtime
-    under a per-response nonce. The tiny fallback keeps raw workspace previews
-    intelligible without competing with the artifact runtime when it is present.
+    Published artifacts strip this workspace runtime during validation and
+    receive the artifact runtime under a per-response nonce. Raw reports opened
+    from ``file://`` still need the runtime inline so downloaded HTML renders.
     """
-    return """<script data-dc-runtime="plotly">
-window.Plotly = window.Plotly || {
-  newPlot: function(target) {
-    var el = typeof target === "string" ? document.getElementById(target) : target;
-    if (el) {
-      el.innerHTML = '<div class="r-caption" style="padding:18px;border:1px solid var(--line);border-radius:8px">Plotly is loaded by the DataClaw artifact runtime; chart data is embedded in the report source.</div>';
-    }
-  },
-  react: function(target, data, layout, config) {
-    return this.newPlot(target, data, layout, config);
-  },
-  purge: function() {}
-};
+    return f"""<script data-dc-runtime="plotly">
+{plotly_runtime_js()}
 </script>"""
 
 
@@ -572,7 +565,7 @@ def _render_report_section(section_type: str, data: dict[str, Any], typed: dict[
 
     if st == "findings":
         items = data.get("items", data.get("findings", []))
-        lis = "".join(f'<li class="r-finding">{_esc(str(item))}</li>' for item in (items if isinstance(items, list) else []))
+        lis = "".join(_render_finding_item(item) for item in (items if isinstance(items, list) else []))
         return f"""    <section class="r-section" {attrs}>
       <h2>{_esc(data.get("title", "Key findings"))}</h2>
       <ul class="r-findings">{lis}</ul>
@@ -630,6 +623,38 @@ def _render_report_section(section_type: str, data: dict[str, Any], typed: dict[
 
 def _esc(value: Any) -> str:
     return html_lib.escape(clean_text(value))
+
+
+def _render_finding_item(item: Any) -> str:
+    if not isinstance(item, dict):
+        return f'<li class="r-finding">{_esc(item)}</li>'
+
+    title = item.get("title") or item.get("headline") or item.get("finding") or item.get("name")
+    detail = (
+        item.get("detail")
+        or item.get("summary")
+        or item.get("description")
+        or item.get("text")
+        or item.get("body")
+    )
+    evidence = item.get("evidence")
+    caveat = item.get("caveat") or item.get("limitation")
+
+    if not title and not detail:
+        parts = []
+        for key, value in item.items():
+            if value in (None, ""):
+                continue
+            label = str(key).replace("_", " ").title()
+            parts.append(f'<p class="r-finding-meta"><strong>{_esc(label)}:</strong> {_esc(value)}</p>')
+        body = "".join(parts) or '<p class="r-finding-detail">No finding text provided.</p>'
+        return f'<li class="r-finding">{body}</li>'
+
+    title_html = f'<div class="r-finding-title">{_esc(title)}</div>' if title else ""
+    detail_html = f'<p class="r-finding-detail">{_esc(detail)}</p>' if detail else ""
+    evidence_html = f'<p class="r-finding-meta"><strong>Evidence:</strong> {_esc(evidence)}</p>' if evidence else ""
+    caveat_html = f'<p class="r-finding-meta"><strong>Caveat:</strong> {_esc(caveat)}</p>' if caveat else ""
+    return f'<li class="r-finding">{title_html}{detail_html}{evidence_html}{caveat_html}</li>'
 
 
 def _paragraphs(value: Any) -> str:
