@@ -35,6 +35,11 @@ course changes in the living report. Pass `plan_step_id` when available; names
 are display labels. A major published artifact should also be linked or
 summarized in the living report.
 
+For EDA findings, `record_eda_finding` is the living-report entry. Do not add a
+separate `report_note` for the same finding just to satisfy the living-report
+habit; use `report_note` only for non-EDA interpretation, decisions, rationale,
+and course changes that are not already captured by the EDA ledger.
+
 ## Tool names and fallback
 Use the canonical tool names in this skill: `publish_artifact`,
 `read_artifact`, `list_artifacts`, `export_artifact`, `delete_artifact`, and
@@ -138,7 +143,7 @@ Use `report_note(page, markdown, plan_step_id?)` for interpretation, rationale,
 direction changes, or decisions that hooks cannot infer.
 
 Good notes are short and evidence-linked:
-- one note per finding
+- one note per non-EDA finding
 - one note per changed course
 - include the stable plan step id when available; names are display labels
 - explain why the user should care, not just what happened

@@ -358,6 +358,47 @@ async def test_accept_gate_risk_unblocks_required_gate():
 
 
 @pytest.mark.asyncio
+async def test_new_gate_failure_clears_prior_acceptance():
+    r = await propose_plan(
+        name="Plan",
+        description="d",
+        steps=[{"name": "Model", "description": "Train model and export results"}],
+        session_id="sess-1",
+    )
+    pid = r["proposal_id"]
+    step_id = (await get_plan(proposal_id=pid))["steps"][0]["plan_step_id"]
+    accepted = await accept_gate_risk(
+        proposal_id=pid,
+        plan_step_id=step_id,
+        gate_name="analysis_review",
+        rationale="User accepts the first review risk",
+    )
+    assert accepted["success"] is True
+
+    set_step_gate(
+        proposal_id=pid,
+        plan_step_id=step_id,
+        gate_name="analysis_review",
+        status="fail",
+        required=True,
+        reason="new review finding",
+        actor="test",
+    )
+
+    gate_state = await get_plan_gates(pid)
+    gate = gate_state["steps"][0]["gates"]["analysis_review"]
+    assert gate["status"] == "fail"
+    assert gate["accepted"] is False
+    result = await update_plan(
+        proposal_id=pid,
+        step_patches=[{"plan_step_id": step_id, "ready_for_validation": True}],
+        session_id="sess-1",
+    )
+    assert result["success"] is False
+    assert result["error"]["code"] == "gate_blocked"
+
+
+@pytest.mark.asyncio
 async def test_update_plan_snapshots_preserve_history():
     """Each update_plan persists a frozen snapshot — older ones don't mutate."""
     r = await propose_plan(

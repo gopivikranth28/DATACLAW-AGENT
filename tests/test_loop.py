@@ -3,6 +3,7 @@
 import pytest
 
 from dataclaw.loop.runner import run_loop
+from dataclaw.loop.nodes import make_tool_execution_node
 from dataclaw.plugins.registry import ProviderRegistry
 from dataclaw.hooks.registry import HookRegistry
 
@@ -72,3 +73,26 @@ async def test_loop_with_tool_call(mock_providers, hooks):
 
     assert result is not None
     assert call_count == 2  # Agent was called twice (tool call + response)
+
+
+@pytest.mark.asyncio
+async def test_tool_execution_node_preserves_tool_metadata_for_post_hooks():
+    async def echo_tool(**kwargs):
+        return {"echo": kwargs}
+
+    node = make_tool_execution_node()
+    result = await node(
+        {
+            "pending_tool_calls": [
+                {"call_id": "c1", "tool_name": "echo", "tool_input": {"msg": "hello"}}
+            ],
+            "tool_callables": {"echo": echo_tool},
+            "messages": [],
+            "metadata": {},
+        }
+    )
+
+    tool_result = result["tool_results"][0]
+    assert tool_result["tool_name"] == "echo"
+    assert tool_result["tool_input"] == {"msg": "hello"}
+    assert tool_result["result"] == tool_result["content"]

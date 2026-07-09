@@ -33,15 +33,22 @@ def test_structured_eda_skill_is_bundled_and_parseable():
     assert "`insight_grid`" in body
     assert "`methodology`" in body
     assert "new layer of\nunderstanding" in body
+    assert "`loop_index`" in body
+    assert "`selection` with `screened_n`, `selection_rule`, and `correction`" in body
 
 
 def test_core_library_skills_route_nontrivial_eda_to_structured_eda():
     dataclaw = _read(SKILL_LIBRARY / "dataclaw.md")
     profiling = _read(SKILL_LIBRARY / "data_profiling.md")
+    analysis_review = _read(SKILL_LIBRARY / "analysis_review.md")
 
     assert "fetch the `structured_eda` skill" in dataclaw
     assert "dataclaw_propose_eda_hypotheses" in dataclaw
     assert "dataclaw_summarize_eda_readiness" in dataclaw
+    assert "dataclaw_request_analysis_review" in dataclaw
+    assert "automatic checklist review" in dataclaw
+    assert "request_analysis_review(scope=\"plan_step\"" in analysis_review
+    assert "sub-agent-required" in analysis_review
     assert "Use `data_profiling` only for a compact quick profile" in dataclaw
     assert "fetch and follow `structured_eda` instead" in profiling
     assert "Stop condition" in profiling
@@ -59,6 +66,7 @@ def test_openclaw_dataclaw_skill_routes_eda_to_structured_eda():
 
     assert "fetch the `structured_eda` skill" in bundled_skill
     assert "Use `data_profiling` only for a compact quick profile" in bundled_skill
+    assert "dataclaw_request_analysis_review" in bundled_skill
 
 
 def test_openclaw_bundles_structured_eda_skill():

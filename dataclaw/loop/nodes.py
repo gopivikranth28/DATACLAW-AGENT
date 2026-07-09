@@ -189,26 +189,37 @@ def make_tool_execution_node() -> Callable[[AgentState], Awaitable[dict[str, Any
                 tool_results.append({
                     "type": "tool_result",
                     "call_id": tc["call_id"],
+                    "tool_name": tc["tool_name"],
+                    "tool_input": tc["tool_input"],
                     "content": f'{{"error": "Unknown tool: {tc["tool_name"]}"}}',
+                    "result": f'{{"error": "Unknown tool: {tc["tool_name"]}"}}',
                     "is_error": True,
                 })
                 continue
             try:
                 import json
                 result = await fn(**tc["tool_input"])
+                result_json = json.dumps(result, default=str)
                 tool_results.append({
                     "type": "tool_result",
                     "call_id": tc["call_id"],
-                    "content": json.dumps(result, default=str),
+                    "tool_name": tc["tool_name"],
+                    "tool_input": tc["tool_input"],
+                    "content": result_json,
+                    "result": result_json,
                     "is_error": False,
                 })
             except Exception as e:
                 import json
+                result_json = json.dumps({"error": str(e)})
                 logger.exception("Tool %s failed", tc["tool_name"])
                 tool_results.append({
                     "type": "tool_result",
                     "call_id": tc["call_id"],
-                    "content": json.dumps({"error": str(e)}),
+                    "tool_name": tc["tool_name"],
+                    "tool_input": tc["tool_input"],
+                    "content": result_json,
+                    "result": result_json,
                     "is_error": True,
                 })
 

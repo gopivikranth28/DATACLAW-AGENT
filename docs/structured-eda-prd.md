@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | In build (rev 4 — status vs branch `23fcdd0`; loop observability + multiplicity discipline added as P4a) |
+| **Status** | In build (rev 5 — status refreshed 2026-07-09; P4a and P5 review-lifecycle core landed) |
 | **Owner** | Nandini Mathan |
 | **Last updated** | 2026-07-09 |
 | **Branch** | `structured-eda` (base: `release3` + cherry-picked structured-EDA skill from `eda-upgrade`) |
@@ -44,7 +44,7 @@ Verified on `structured-eda` (release3 base):
 - **Sub-agent infra exists:** `dataclaw/providers/sub_agent/{provider,registry}.py`, `DefaultSubAgentProvider` (`agent_type="llm"`), definitions CRUD in `dataclaw-projects`; sequential delegation only; no reviewer registered.
 - **Gaps this PRD fills:** no hypothesis or finding persistence; no analytical validation anywhere (artifacts validator is content-security only); no gate enforcement; notebooks tools do not return nbformat `cell_id`; no behavioral eval harness (skill tests are string containment).
 
-**Status update (2026-07-09, commit `23fcdd0`):** P0–P3 and most of P4 are now shipped on this branch — `plugins/dataclaw-eda/` (both ledgers, all 8 tools with floors, evidence anchoring, readiness, router, hooks, tool-level tests), `dataclaw_plans/gates.py` with `accept_gate_risk` and the PlanCompletion guardrail wiring, the notebooks `cell_id` patch, and the hypothesis-driven `structured_eda` + new `insight_validation`/`analysis_review` skills. Still open: FR-34a adjacent-skill touch-ups, P4a (loop observability + multiplicity, added rev 4), P5–P6 (analysis-review plugin), P7 (UI), P8 (evals), and the OpenClaw alias fixture. See the phasing table's Status column.
+**Status update (2026-07-09):** P0–P4a and the P5 review-lifecycle core are now shipped on this branch — `plugins/dataclaw-eda/` (both ledgers, all 8 tools with floors, evidence anchoring, readiness, router, hooks, tool-level tests, loop observability, and multiplicity floors), `plugins/dataclaw-analysis-review/` (append-only review store, deterministic checklist tools/router, rerun auto-resolution, plan-gate sync, auto-checklist hook), `dataclaw_plans/gates.py` with `accept_gate_risk` and the PlanCompletion guardrail wiring, the notebooks `cell_id` patch, the hypothesis-driven `structured_eda` + new `insight_validation`/`analysis_review` skills, and the FR-34a adjacent-skill touch-ups. Still open: P5 checklist expansion, P6 (reviewer sub-agent), P7 (UI), P8 (evals), and the OpenClaw alias fixture. See the phasing table's Status column.
 
 ---
 
@@ -57,7 +57,7 @@ Structured EDA exists as a prose skill and notebooks compute rich exploration, b
 - **Insights are transcript prose.** Observations, caveats, rejected hypotheses, and readiness judgments live in notebook markdown and chat text. "What did we learn?", "did you check missingness?", and "which evidence supports this?" require replaying the whole session.
 - **The insight loop has no ledger.** The skill says "keep an insight log" — there is nowhere structured to keep it, so loops are undocumented and unauditable.
 - **Exploration is not hypothesis-driven.** The agent explores reactively; there is no up-front statement of what it expects to find or check, so coverage is unmeasurable and confirmation bias is invisible.
-- **Validation is unenforced.** Nothing distinguishes a claim the agent recomputed and sanity-checked from one it eyeballed. Plan steps carry `ready_for_validation`/`gates` fields that nothing reads or blocks on.
+- **Validation was unenforced pre-PRD.** Nothing distinguished a claim the agent recomputed and sanity-checked from one it eyeballed. This branch now blocks `ready_for_validation` through plan gates and the review lifecycle core; remaining work expands checklist coverage, UI, and sub-agent review.
 - **Quality is untested.** The golden fixture exists but no harness runs it; skill tests assert markdown strings, not behavior.
 
 Human validation bandwidth is the binding constraint (per the portfolio PRD). The module's job is to shrink the human's validation surface to: the hypotheses, their dispositions, the evidence, and the unresolved risks.
@@ -204,7 +204,7 @@ Human validation bandwidth is the binding constraint (per the portfolio PRD). Th
 
 ## 7. Phasing & Exit Criteria
 
-Status column updated against branch commit `23fcdd0` ("Add structured EDA ledger and gates", 2026-07-09).
+Status column updated against the current structured-EDA branch state on 2026-07-09.
 
 | Phase | Scope | Exit test | Status |
 |---|---|---|---|
@@ -212,9 +212,9 @@ Status column updated against branch commit `23fcdd0` ("Add structured EDA ledge
 | P1 — EDA ledgers | plugin skeleton, both stores + enum constants, 8 tools + floors, AG-UI events, router, context hook | tool-level goldens green; caps + floors enforced; alias fixture passes | **Shipped** (`plugins/dataclaw-eda/`: store/tools/router/hooks + `tests/test_eda_tools.py`); alias fixture still pending |
 | P2 — Evidence | notebooks `cell_id` patch, anchor resolution, evidence stash, stale flags | finding links to producing cell by id+hash; stale path covered | **Shipped** (`dataclaw_eda/evidence.py`, notebooks `cell_id` patch) |
 | P3 — Readiness | purpose/mode policies, hypothesis rollup, deferred-vs-unresolved distinction, artifact sections + living-report events | leakage blocks modeling; budget-deferred hypothesis is caveat not blocker; verdict persists supersedable | **Shipped** (`dataclaw_eda/readiness.py`; sections wiring partially in WIP) |
-| P4 — Skills | `structured_eda` restructure, `insight_validation`, `analysis_review`, `dataclaw` routing, OpenClaw mirrors, skill tests | skill tests assert hypothesis step, loop wiring, reserved-surprise-loop rule, caveat rule | **Mostly shipped** (hypothesis-driven `structured_eda`, new `insight_validation`/`analysis_review`, routing + mirrors); FR-34a touch-ups and P4a below pending |
-| P4a — Loop observability & multiplicity | `loop_index` on ledger records (FR-11b), selection/multiplicity metadata + floors (FR-10a), skill multiplicity step (FR-32a) | loop budget and multiplicity discipline machine-checkable from the ledgers | **Not started** (added rev 4) |
-| P5 — Review checklist | review store/tools/router, context collectors, 13 checks (+`CHK-multiplicity`), gates wiring, auto-checklist hook | checklist golden: flags seeded issues, leaves valid chart alone; gate blocks then clears | **Not started** |
+| P4 — Skills | `structured_eda` restructure, `insight_validation`, `analysis_review`, `dataclaw` routing, OpenClaw mirrors, skill tests | skill tests assert hypothesis step, loop wiring, reserved-surprise-loop rule, caveat rule | **Shipped** (hypothesis-driven `structured_eda`, new `insight_validation`/`analysis_review`, routing + mirrors, FR-34a touch-ups) |
+| P4a — Loop observability & multiplicity | `loop_index` on ledger records (FR-11b), selection/multiplicity metadata + floors (FR-10a), skill multiplicity step (FR-32a) | loop budget and multiplicity discipline machine-checkable from the ledgers | **Shipped** (`loop_index` + `selection` schemas/persistence/floors in `dataclaw_eda`; structured_eda loop paragraph; tests) |
+| P5 — Review checklist | review store/tools/router, context collectors, deterministic checks (+`CHK-multiplicity`), gates wiring, auto-checklist hook | checklist golden: flags seeded issues; gate blocks, clears by resolution, and auto-resolves disappeared checklist findings on rerun | **Core shipped** (`plugins/dataclaw-analysis-review/`: store/checklist/tools/router/hooks + `tests/test_review_tools.py`; remaining expansion: MLflow repro, stale artifact evidence, and fuller artifact/export checks) |
 | P6 — Reviewer sub-agent | definition + rubric rendering, direct-provider run, JSON parsing, degradation labeling | seeded fixture: unsupported claim + ledger-hygiene finding caught; checklist-only never passes required gate | **Not started** (`analysis_review.md` rubric exists) |
 | P7 — UI | hooks, inline cards, Findings tab (EDA + Review views), AG-UI handlers | manual: cards stream, panel groups by hypothesis, readiness pinned, badge not auto-switch | **Not started** |
 | P8 — Evals | `evals/` package, golden case, three tiers, smoke test, live run | smoke green in CI; live run Tiers 1–2 pass at thresholds; judge report generated | **Not started** |
@@ -239,7 +239,7 @@ Deterministic tests land inside each phase, not as a trailing phase. P0/P1 are p
 |---|---|
 | `skill-library/structured_eda.md` | decides modes, hypothesis generation, loop usage, when to record/supersede/summarize |
 | `skill-library/insight_validation.md` | decides how a candidate insight earns `confirmed` (two axes) |
-| `skill-library/analysis_review.md` | reviewer rubric; rendered into the sub-agent system prompt |
+| `skill-library/analysis_review.md` | review lifecycle guidance and reviewer rubric; rendered into the sub-agent system prompt for P6 |
 | `plugins/dataclaw-eda` | persists hypotheses + findings + readiness; enforces floors; emits events |
 | `plugins/dataclaw-plans` (patch) | gate enforcement, audit, escape hatch, resolver registry |
 | `plugins/dataclaw-analysis-review` | checklist + reviewer sub-agent; review cards; writes plan gates |
@@ -474,12 +474,13 @@ tests/test_evals_smoke.py  tests/test_live_eval.py
 ```python
 # ── dataclaw-eda ────────────────────────────────────────────────────────────
 propose_eda_hypotheses(hypotheses, dataset_id=None, version_id=None, **ctx)
-  # hypotheses = [{statement, rationale, source, priority="medium", covers_checks=[]}]
+  # hypotheses = [{statement, rationale, source, priority="medium", covers_checks=[],
+  #                selection={screened_n, selection_rule, correction}?}]
   # caps: len ≤ 7, high-priority ≤ 3; data_signal requires substantive rationale
   # -> {hypothesis_ids, count}
 
 update_eda_hypothesis(hypothesis_id, status, disposition_reason="",
-                      linked_finding_ids=None, priority=None, **ctx)
+                      linked_finding_ids=None, priority=None, loop_index=None, **ctx)
   # -> {hypothesis_id, status, history_len}
 
 list_eda_hypotheses(dataset_id=None, plan_step_id=None, status=None,
@@ -489,9 +490,11 @@ record_eda_finding(title, finding_type, summary, evidence, dataset_id,
                    version_id=None, severity="info", caveat="", next_action="",
                    confidence="medium",
                    hypothesis_id="", hypothesis_status=None,     # atomic link + transition
-                   disposition="unresolved", validation=None, covers_checks=None, **ctx)
+                   disposition="unresolved", validation=None, covers_checks=None,
+                   loop_index=None, selection=None, **ctx)
   # floors: high confidence ⇒ internal validated + evidence_refs;
   #         external unverified ⇒ mandatory caveat + confidence ≤ medium;
+  #         screened validated/high-confidence findings require correction or holdout;
   #         hypothesis_status rejected ⇒ finding_type auto = rejected_hypothesis
   # -> {finding_id, status, anchors, hypothesis_id}
 
@@ -594,7 +597,7 @@ Verified baseline: the LangGraph loop executes a turn's tool calls **sequentiall
 2. **Reviewer data access** — revisit a capped read-only query/preview tool for the reviewer after P6 ships and golden results show what coherence-only review misses. (Deliberately out of scope now, D7.)
 3. **Dataset-scoped findings aggregation** — "what do we know about dataset X across sessions" needs a project-level index or query layer. Deferred (D10); trigger = first real multi-session project use.
 4. **Second eval case** — which mode next: time-series (gaps/seasonality/leakage-by-time) or dashboard/KPI (grain/denominator)? Needed before heavy skill tuning against the churn case.
-5. **MVP cut if capacity forces it** — recommended order preserved: P0–P4 + P8-lite (no judge) ship the methodology with scoring; P5–P7 (review + UI) follow. The phases are cut-compatible by design.
+5. **MVP cut if capacity forces it** — recommended order preserved: P0–P4 plus the P5 review-lifecycle core ship the governed methodology; P5 checklist expansion, P6 sub-agent review, P7 UI, and P8 eval scoring follow. The phases are cut-compatible by design.
 6. **`record_eda_finding` parameter count** — ~15 params; if malformed-call rates show up in practice, collapse `hypothesis_id`/`hypothesis_status` into a nested object and/or split a `validate_eda_finding` tool. Measure first.
 7. **When to build async review** — the background-task runner for non-blocking review (§8) is a small, contained addition; trigger = review latency measurably interrupting analyst flow once P6 is in real use. Reviewer panel and hypothesis workers stay behind the contextvar + kernel prerequisites regardless.
 8. **Gate required-ness detection** — FR-21's keyword-based step-kind policy (modeling/export/external-share from step text) is brittle in the same way the UI's regex workstream bucketing is. A cleaner path is an explicit step `kind` field in the plan schema, set at proposal time. Decide before P0 hardens the policy list.

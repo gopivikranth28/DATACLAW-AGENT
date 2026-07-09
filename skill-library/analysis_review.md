@@ -8,6 +8,10 @@ tags: [analysis, review, validation, artifacts, eda]
 
 Audit coherence between claims, ledger state, and evidence anchors. Do not mutate analysis state. Do not run data queries unless a future scoped read-only reviewer tool explicitly allows it.
 
+## Tool lifecycle
+
+Use `request_analysis_review(scope="plan_step", target_id=plan_step_id)` when a high-risk or EDA-like step is completed and before setting `ready_for_validation: true`. Inspect the gate with `get_review_gate`; resolve checklist findings with `resolve_review_finding` after the underlying issue is fixed, or use `accepted_with_rationale` only when the user explicitly accepts the risk. A checklist-only review may clear ordinary deterministic blockers, but it must remain `unknown` when the request marked the scope as sub-agent-required.
+
 ## Review order
 
 1. Hypothesis ledger hygiene:

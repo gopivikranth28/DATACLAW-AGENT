@@ -78,6 +78,9 @@ Use the richer narrative sections deliberately:
 - `checklist` for readiness, QA, validation, and launch/blocker states.
 - `hypothesis_ledger` for EDA hypotheses, dispositions, and next actions.
 - `evidence_trace` for notebook cells, tables, filters, or checks that support claims.
+- `findings` for published EDA finding lists; each item should carry `finding_id`
+  and, when applicable, `hypothesis_id` so review can trace claims back to the
+  ledgers.
 
 Use consistent section structure as the report evolves. Prefer these optional
 fields whenever they clarify the story: `caption` for the section thesis,
@@ -194,7 +197,7 @@ Skill-generated sections should be representable as typed artifact sections:
   "kind": "chart",
   "title": "Revenue by segment",
   "caption": "Enterprise drove 62% of growth; SMB declined after Q3.",
-  "plan_step_id": "s2",
+  "plan_step_id": "step-a1b2c3d4",
   "data_policy": "aggregate_only",
   "payload": {
     "plotly_json_asset": "sha256:...",

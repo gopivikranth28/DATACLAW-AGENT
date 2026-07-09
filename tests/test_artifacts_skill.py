@@ -28,6 +28,8 @@ def test_artifacts_skill_is_bundled_and_parseable():
     assert "artifact publication is unavailable" in body
     assert "Use `publish_artifact` for a standalone report" in body
     assert "Use `report_note` for interpretation" in body
+    assert "`record_eda_finding` is the living-report entry" in body
+    assert "one note per non-EDA finding" in body
     assert "inline published-artifact card plus the right" in body
     assert "Treat `/app/:sessionId` as a legacy" in body
     assert "reports and dashboards should feel like one" in body
@@ -52,8 +54,13 @@ def test_visual_output_skills_route_publish_to_artifacts_skill():
     assert "`insight_grid`" in visualization
     assert "`hypothesis_ledger`" in visualization
     assert "`evidence_trace`" in visualization
+    assert "`finding_id`" in visualization
+    assert "`hypothesis_id`" in visualization
+    assert '"plan_step_id": "step-a1b2c3d4"' in visualization
     assert "artifact publication is unavailable" in visualization
     assert "Attribute sections and notes by stable plan step id" in dashboarding
+    assert "EDA findings ledger" in dashboarding
+    assert "structured EDA readiness verdict" in dashboarding
     assert "publication is unavailable" in dashboarding
     assert "`/app/:sessionId` is only a compatibility scratch view" in dashboarding
     assert "`/app/:sessionId` route is compatibility only" in visualization

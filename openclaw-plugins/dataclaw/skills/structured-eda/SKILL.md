@@ -153,6 +153,8 @@ Looping rules:
 - Stop looping when new checks no longer change the conclusions, when the remaining questions require user/domain input, or when the agreed scope is complete.
 - Keep an insight log in the notebook/report, but the ledger is authoritative: hypothesis, evidence, follow-up check, decision, caveat, and readiness implication must be persisted through the EDA tools.
 
+At the Decide step, pass `loop_index` as the 1-based insight-loop number on both `record_eda_finding` and any direct `update_eda_hypothesis` call. If the candidate was selected from a screen across many segments, correlations, columns, cohorts, or other candidates, pass `selection` with `screened_n`, `selection_rule`, and `correction`; use `fdr_bh`, `bonferroni`, or `holdout_confirmed` before treating the internal validation as confirmed/high-confidence. A targeted pre-registered hypothesis from the initial ledger does not need a multiplicity correction unless the actual evidence came from an additional screen.
+
 ## Correlation and relationship rules
 
 - Never lead with a correlation matrix unless the user goal is relationship exploration and the variables make sense for correlation.

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 import dataclaw.config.paths as paths
-from dataclaw_eda.store import find_hypothesis, fold_findings
+from dataclaw_eda.store import find_hypothesis, fold_findings, fold_hypotheses
 from dataclaw_eda.tools import (
     propose_eda_hypotheses,
     record_eda_finding,
@@ -62,6 +62,31 @@ async def test_data_signal_requires_rationale():
 
 
 @pytest.mark.asyncio
+async def test_hypothesis_batch_validation_is_atomic():
+    result = await propose_eda_hypotheses(
+        hypotheses=[
+            {
+                "statement": "Valid targeted hypothesis",
+                "rationale": "Asked by the user",
+                "source": "user_goal",
+                "priority": "medium",
+            },
+            {
+                "statement": "Invalid screened hypothesis",
+                "rationale": "Missing screen rule",
+                "source": "data_signal",
+                "selection": {"screened_n": 12, "correction": "none"},
+            },
+        ],
+        dataset_id="ds",
+    )
+
+    assert result["success"] is False
+    assert result["error"]["code"] == "invalid_selection"
+    assert fold_hypotheses() == []
+
+
+@pytest.mark.asyncio
 async def test_high_confidence_requires_internal_validation_evidence():
     result = await record_eda_finding(
         title="Pattern",
@@ -108,6 +133,184 @@ async def test_external_unverified_caps_confidence_and_adds_caveat():
     finding = result["finding"]
     assert finding["confidence"] == "medium"
     assert "unverified against external evidence" in finding["caveat"]
+
+
+@pytest.mark.asyncio
+async def test_loop_index_persisted_on_finding_and_hypothesis_update():
+    proposed = await propose_eda_hypotheses(
+        hypotheses=[
+            {
+                "statement": "A segment difference may exist",
+                "rationale": "Segment sweep is part of the EDA goal",
+                "source": "user_goal",
+                "priority": "medium",
+            }
+        ],
+        dataset_id="ds",
+    )
+    hyp_id = proposed["hypothesis_ids"][0]
+    result = await record_eda_finding(
+        title="Segment difference confirmed",
+        finding_type="segment_difference",
+        summary="Segment A differs from segment B on the target metric",
+        evidence={"kind": "notebook_cell", "cell_id": "c-loop", "source_sha256": "hash-loop"},
+        dataset_id="ds",
+        hypothesis_id=hyp_id,
+        hypothesis_status="confirmed",
+        disposition="confirmed",
+        confidence="high",
+        validation=_validated_internal("c-loop"),
+        loop_index=2,
+    )
+
+    assert result["success"] is True
+    assert result["finding"]["loop_index"] == 2
+    assert find_hypothesis(hyp_id)["loop_index"] == 2
+
+
+@pytest.mark.asyncio
+async def test_invalid_loop_index_rejected():
+    result = await record_eda_finding(
+        title="Pattern",
+        finding_type="distribution",
+        summary="A pattern",
+        evidence={"kind": "notebook_cell", "cell_id": "c-bad-loop", "source_sha256": "hash-bad-loop"},
+        dataset_id="ds",
+        validation=_validated_internal("c-bad-loop"),
+        loop_index=0,
+    )
+
+    assert result["success"] is False
+    assert result["error"]["code"] == "invalid_loop_index"
+
+
+@pytest.mark.asyncio
+async def test_screened_validated_finding_requires_correction_or_holdout():
+    result = await record_eda_finding(
+        title="Best segment lift",
+        finding_type="segment_difference",
+        summary="The largest segment lift came from a broad sweep",
+        evidence={"kind": "notebook_cell", "cell_id": "c-screen", "source_sha256": "hash-screen"},
+        dataset_id="ds",
+        confidence="high",
+        validation=_validated_internal("c-screen"),
+        selection={"screened_n": 12, "selection_rule": "largest absolute segment lift", "correction": "none"},
+    )
+
+    assert result["success"] is False
+    assert result["error"]["code"] == "screened_validation_requires_correction"
+
+
+@pytest.mark.asyncio
+async def test_hypothesis_selection_floor_applies_to_atomic_confirmation():
+    proposed = await propose_eda_hypotheses(
+        hypotheses=[
+            {
+                "statement": "The largest screened segment may have higher churn",
+                "rationale": "It was selected after screening 12 segments",
+                "source": "data_signal",
+                "selection": {
+                    "screened_n": 12,
+                    "selection_rule": "largest churn delta",
+                    "correction": "none",
+                },
+            }
+        ],
+        dataset_id="ds",
+    )
+    hyp_id = proposed["hypothesis_ids"][0]
+
+    result = await record_eda_finding(
+        title="Largest screened segment lift",
+        finding_type="segment_difference",
+        summary="The selected segment has higher churn",
+        evidence={"kind": "notebook_cell", "cell_id": "c-hyp-screen", "source_sha256": "hash-hyp-screen"},
+        dataset_id="ds",
+        hypothesis_id=hyp_id,
+        hypothesis_status="confirmed",
+        disposition="confirmed",
+        validation=_validated_internal("c-hyp-screen"),
+    )
+
+    assert result["success"] is False
+    assert result["error"]["code"] == "screened_validation_requires_correction"
+
+
+@pytest.mark.asyncio
+async def test_hypothesis_selection_floor_applies_to_direct_confirmation_update():
+    proposed = await propose_eda_hypotheses(
+        hypotheses=[
+            {
+                "statement": "A screened cohort may have more missingness",
+                "rationale": "It was selected from a 9-cohort sweep",
+                "source": "data_signal",
+                "selection": {
+                    "screened_n": 9,
+                    "selection_rule": "largest missingness delta",
+                    "correction": "none",
+                },
+            }
+        ],
+        dataset_id="ds",
+    )
+    finding = await record_eda_finding(
+        title="Screened cohort missingness",
+        finding_type="missingness",
+        summary="The selected cohort has more missingness",
+        evidence={"kind": "notebook_cell", "cell_id": "c-direct-screen", "source_sha256": "hash-direct-screen"},
+        dataset_id="ds",
+        validation=_validated_internal("c-direct-screen"),
+    )
+
+    result = await update_eda_hypothesis(
+        hypothesis_id=proposed["hypothesis_ids"][0],
+        status="confirmed",
+        linked_finding_ids=[finding["finding_id"]],
+    )
+
+    assert result["success"] is False
+    assert result["error"]["code"] == "confirmed_requires_validated_finding"
+
+
+@pytest.mark.asyncio
+async def test_corrected_selection_allows_high_confidence_and_persists_metadata():
+    proposed = await propose_eda_hypotheses(
+        hypotheses=[
+            {
+                "statement": "Browsed segments may reveal an anomalous cohort",
+                "rationale": "Cohort C had the largest missingness delta among 12 screened cohorts",
+                "source": "data_signal",
+                "priority": "medium",
+                "selection": {
+                    "screened_n": 12,
+                    "selection_rule": "largest missingness delta",
+                    "correction": "holdout_confirmed",
+                },
+            }
+        ],
+        dataset_id="ds",
+    )
+    hyp_id = proposed["hypothesis_ids"][0]
+    assert find_hypothesis(hyp_id)["selection"]["screened_n"] == 12
+
+    result = await record_eda_finding(
+        title="Cohort missingness holds out",
+        finding_type="missingness",
+        summary="The missingness delta persists on an independent holdout slice",
+        evidence={"kind": "notebook_cell", "cell_id": "c-holdout", "source_sha256": "hash-holdout"},
+        dataset_id="ds",
+        confidence="high",
+        validation=_validated_internal("c-holdout"),
+        selection={
+            "screened_n": 12,
+            "selection_rule": "largest missingness delta",
+            "correction": "holdout_confirmed",
+        },
+    )
+
+    assert result["success"] is True
+    assert result["finding"]["confidence"] == "high"
+    assert result["finding"]["selection"]["correction"] == "holdout_confirmed"
 
 
 @pytest.mark.asyncio
@@ -276,8 +479,10 @@ async def test_modeling_readiness_blocks_on_unresolved_domain_input():
         )
         assert result["success"] is True
 
-    verdict = await summarize_eda_readiness(dataset_id="ds", purpose="modeling", mode="modeling-readiness")
+    verdict = await summarize_eda_readiness(dataset_id="ds", purpose="modeling", mode="modeling-readiness", loop_index=3)
     assert verdict["success"] is True
     assert verdict["status"] == "blocked"
     assert any(blocker["kind"] == "domain_input" for blocker in verdict["blockers"])
-    assert any(f["finding_type"] == "readiness" for f in fold_findings())
+    readiness_findings = [f for f in fold_findings() if f["finding_type"] == "readiness"]
+    assert readiness_findings
+    assert readiness_findings[-1]["loop_index"] == 3

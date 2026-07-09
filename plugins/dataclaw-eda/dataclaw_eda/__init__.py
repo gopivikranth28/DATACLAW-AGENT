@@ -29,6 +29,15 @@ class EdaPlugin:
 
 
 def _tool_defs():
+    selection_schema = {
+        "type": "object",
+        "properties": {
+            "screened_n": {"type": "integer", "minimum": 0},
+            "selection_rule": {"type": "string"},
+            "correction": {"type": "string", "enum": ["none", "fdr_bh", "bonferroni", "holdout_confirmed"], "default": "none"},
+        },
+        "required": ["screened_n", "selection_rule", "correction"],
+    }
     hypothesis_item = {
         "type": "object",
         "properties": {
@@ -40,6 +49,7 @@ def _tool_defs():
             },
             "priority": {"type": "string", "enum": ["high", "medium", "low"], "default": "medium"},
             "covers_checks": {"type": "array", "items": {"type": "string"}, "default": []},
+            "selection": selection_schema,
         },
         "required": ["statement", "rationale", "source"],
     }
@@ -95,6 +105,7 @@ def _tool_defs():
                     "disposition_reason": {"type": "string", "default": ""},
                     "linked_finding_ids": {"type": "array", "items": {"type": "string"}, "default": []},
                     "priority": {"type": "string", "enum": ["high", "medium", "low"]},
+                    "loop_index": {"type": "integer", "minimum": 1},
                 },
                 "required": ["hypothesis_id", "status"],
             },
@@ -136,6 +147,8 @@ def _tool_defs():
                     "disposition": {"type": "string", "enum": ["confirmed", "weakened", "rejected", "unresolved", "blocked"], "default": "unresolved"},
                     "validation": validation_schema,
                     "covers_checks": {"type": "array", "items": {"type": "string"}, "default": []},
+                    "loop_index": {"type": "integer", "minimum": 1},
+                    "selection": selection_schema,
                 },
                 "required": ["title", "finding_type", "summary", "evidence", "dataset_id"],
             },
@@ -188,6 +201,7 @@ def _tool_defs():
                     "purpose": {"type": "string", "enum": ["query", "dashboard", "modeling"], "default": "dashboard"},
                     "required_checks": {"type": "array", "items": {"type": "string"}, "default": []},
                     "mode": {"type": "string"},
+                    "loop_index": {"type": "integer", "minimum": 1},
                 },
                 "required": ["dataset_id"],
             },

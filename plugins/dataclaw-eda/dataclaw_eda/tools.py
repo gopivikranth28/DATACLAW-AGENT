@@ -17,6 +17,7 @@ from dataclaw_eda.store import (
     HYPOTHESIS_SOURCES,
     HYPOTHESIS_STATUSES,
     INTERNAL_VALIDATION_STATUSES,
+    SELECTION_CORRECTIONS,
     SEVERITIES,
     active_findings,
     append_finding,
@@ -82,9 +83,79 @@ def _normalize_validation(validation: dict[str, Any] | None, evidence: list[dict
     }
 
 
-def _finding_is_internal_validated(finding: dict[str, Any]) -> bool:
+def _normalize_loop_index(loop_index: Any) -> tuple[int | None, dict[str, Any] | None]:
+    if loop_index in (None, ""):
+        return None, None
+    try:
+        normalized = int(loop_index)
+    except (TypeError, ValueError):
+        return None, _error("invalid_loop_index", "loop_index must be a positive 1-based integer")
+    if normalized < 1:
+        return None, _error("invalid_loop_index", "loop_index must be a positive 1-based integer")
+    return normalized, None
+
+
+def _normalize_selection(selection: Any) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    if selection in (None, ""):
+        return {}, None
+    if not isinstance(selection, dict):
+        return {}, _error("invalid_selection", "selection must be an object")
+
+    screened_raw = selection.get("screened_n", 0)
+    if screened_raw in (None, ""):
+        screened_n = 0
+    else:
+        try:
+            screened_n = int(screened_raw)
+        except (TypeError, ValueError):
+            return {}, _error("invalid_selection", "selection.screened_n must be a non-negative integer")
+    if screened_n < 0:
+        return {}, _error("invalid_selection", "selection.screened_n must be a non-negative integer")
+
+    correction = str(selection.get("correction") or "none").strip()
+    if correction not in SELECTION_CORRECTIONS:
+        return {}, _error(
+            "invalid_selection_correction",
+            f"Unsupported selection correction: {correction}",
+            allowed=sorted(SELECTION_CORRECTIONS),
+        )
+
+    selection_rule = str(selection.get("selection_rule") or "").strip()
+    if screened_n > 0 and not selection_rule:
+        return {}, _error("invalid_selection", "selection.selection_rule is required when screened_n is provided")
+
+    return {
+        "screened_n": screened_n,
+        "selection_rule": selection_rule,
+        "correction": correction,
+    }, None
+
+
+def _selection_requires_correction(selection: dict[str, Any]) -> bool:
+    try:
+        screened_n = int(selection.get("screened_n") or 0)
+    except (TypeError, ValueError):
+        return False
+    correction = str(selection.get("correction") or "none")
+    return screened_n > 5 and correction == "none"
+
+
+def _finding_is_internal_validated(
+    finding: dict[str, Any],
+    hypothesis: dict[str, Any] | None = None,
+) -> bool:
     internal = (finding.get("validation") or {}).get("internal") or {}
-    return internal.get("status") == "validated" and bool(internal.get("evidence_refs"))
+    selection = finding.get("selection") if isinstance(finding.get("selection"), dict) else {}
+    hypothesis_selection = (
+        hypothesis.get("selection")
+        if isinstance((hypothesis or {}).get("selection"), dict)
+        else {}
+    )
+    return (
+        internal.get("status") == "validated"
+        and bool(internal.get("evidence_refs"))
+        and not _selection_requires_correction(selection or hypothesis_selection or {})
+    )
 
 
 def _append_hypothesis_update(
@@ -97,21 +168,22 @@ def _append_hypothesis_update(
     needs_reevaluation: bool = False,
     session_id: str = "default",
     actor: str = "agent",
+    loop_index: int | None = None,
 ) -> None:
-    append_hypothesis(
-        {
-            "record_type": "hypothesis_update",
-            "hypothesis_id": hypothesis_id,
-            "status": status,
-            "priority": priority,
-            "disposition_reason": disposition_reason,
-            "linked_finding_ids": linked_finding_ids or [],
-            "needs_reevaluation": needs_reevaluation,
-            "actor": actor,
-            "created_at": now_iso(),
-        },
-        session_id,
-    )
+    record = {
+        "record_type": "hypothesis_update",
+        "hypothesis_id": hypothesis_id,
+        "status": status,
+        "priority": priority,
+        "disposition_reason": disposition_reason,
+        "linked_finding_ids": linked_finding_ids or [],
+        "needs_reevaluation": needs_reevaluation,
+        "actor": actor,
+        "created_at": now_iso(),
+    }
+    if loop_index is not None:
+        record["loop_index"] = loop_index
+    append_hypothesis(record, session_id)
 
 
 async def propose_eda_hypotheses(
@@ -130,6 +202,7 @@ async def propose_eda_hypotheses(
     if high_count > 3:
         return _error("too_many_high_priority_hypotheses", "At most 3 hypotheses may be high priority", max_high=3)
 
+    records: list[dict[str, Any]] = []
     ids: list[str] = []
     for raw in hypotheses:
         statement = str(raw.get("statement") or "").strip()
@@ -144,28 +217,34 @@ async def propose_eda_hypotheses(
             return _error("invalid_hypothesis_priority", f"Unsupported priority: {priority}", allowed=sorted(HYPOTHESIS_PRIORITIES))
         if source == "data_signal" and not rationale:
             return _error("data_signal_requires_rationale", "source='data_signal' hypotheses must cite the prompting observation")
+        selection, selection_error = _normalize_selection(raw.get("selection"))
+        if selection_error:
+            return selection_error
         hypothesis_id = new_hypothesis_id()
         ids.append(hypothesis_id)
-        append_hypothesis(
-            {
-                "record_type": "hypothesis",
-                "hypothesis_id": hypothesis_id,
-                "statement": statement,
-                "rationale": rationale,
-                "source": source,
-                "priority": priority,
-                "covers_checks": [str(c) for c in (raw.get("covers_checks") or []) if str(c).strip()],
-                "status": "open",
-                "dataset_id": dataset_id or "",
-                "version_id": version_id or "",
-                "session_id": session_id,
-                "proposal_id": proposal_id,
-                "plan_step_id": plan_step_id,
-                "created_at": now_iso(),
-                "actor": "agent",
-            },
-            session_id,
-        )
+        record = {
+            "record_type": "hypothesis",
+            "hypothesis_id": hypothesis_id,
+            "statement": statement,
+            "rationale": rationale,
+            "source": source,
+            "priority": priority,
+            "covers_checks": [str(c) for c in (raw.get("covers_checks") or []) if str(c).strip()],
+            "status": "open",
+            "dataset_id": dataset_id or "",
+            "version_id": version_id or "",
+            "session_id": session_id,
+            "proposal_id": proposal_id,
+            "plan_step_id": plan_step_id,
+            "created_at": now_iso(),
+            "actor": "agent",
+        }
+        if selection:
+            record["selection"] = selection
+        records.append(record)
+
+    for record in records:
+        append_hypothesis(record, session_id)
 
     open_count = sum(
         1
@@ -186,6 +265,7 @@ async def update_eda_hypothesis(
     disposition_reason: str = "",
     linked_finding_ids: list[str] | None = None,
     priority: str | None = None,
+    loop_index: int | None = None,
     session_id: str = "default",
     **_: Any,
 ) -> dict[str, Any]:
@@ -193,6 +273,9 @@ async def update_eda_hypothesis(
         return _error("invalid_hypothesis_status", f"Unsupported status: {status}", allowed=sorted(HYPOTHESIS_STATUSES))
     if priority and priority not in HYPOTHESIS_PRIORITIES:
         return _error("invalid_hypothesis_priority", f"Unsupported priority: {priority}", allowed=sorted(HYPOTHESIS_PRIORITIES))
+    normalized_loop_index, loop_error = _normalize_loop_index(loop_index)
+    if loop_error:
+        return loop_error
     hypothesis = find_hypothesis(hypothesis_id, session_id)
     if hypothesis is None:
         return _error("unknown_hypothesis", f"Hypothesis not found: {hypothesis_id}")
@@ -200,7 +283,7 @@ async def update_eda_hypothesis(
     linked_finding_ids = linked_finding_ids or []
     linked_findings = [find_finding(fid, session_id) for fid in linked_finding_ids]
     linked_findings = [f for f in linked_findings if f is not None]
-    if status == "confirmed" and not any(_finding_is_internal_validated(f) for f in linked_findings):
+    if status == "confirmed" and not any(_finding_is_internal_validated(f, hypothesis) for f in linked_findings):
         return _error("confirmed_requires_validated_finding", "Confirmed hypotheses require a linked finding with internal validation evidence")
     if status == "rejected" and not linked_findings:
         return _error("rejected_requires_finding", "Rejected hypotheses require linked rejecting evidence")
@@ -216,6 +299,7 @@ async def update_eda_hypothesis(
         linked_finding_ids=linked_finding_ids,
         priority=priority,
         session_id=session_id,
+        loop_index=normalized_loop_index,
     )
     updated = find_hypothesis(hypothesis_id, session_id) or {}
     result = {
@@ -268,6 +352,8 @@ async def record_eda_finding(
     disposition: str = "unresolved",
     validation: dict[str, Any] | None = None,
     covers_checks: list[str] | None = None,
+    loop_index: int | None = None,
+    selection: dict[str, Any] | None = None,
     session_id: str = "default",
     proposal_id: str = "",
     plan_step_id: str = "",
@@ -286,15 +372,33 @@ async def record_eda_finding(
         return _error("invalid_disposition", f"Unsupported disposition: {disposition}", allowed=sorted(FINDING_DISPOSITIONS))
     if hypothesis_status and hypothesis_status not in HYPOTHESIS_STATUSES:
         return _error("invalid_hypothesis_status", f"Unsupported hypothesis_status: {hypothesis_status}", allowed=sorted(HYPOTHESIS_STATUSES))
-    if hypothesis_id and find_hypothesis(hypothesis_id, session_id) is None:
+    hypothesis = find_hypothesis(hypothesis_id, session_id) if hypothesis_id else None
+    if hypothesis_id and hypothesis is None:
         return _error("unknown_hypothesis", f"Hypothesis not found: {hypothesis_id}")
+    normalized_loop_index, loop_error = _normalize_loop_index(loop_index)
+    if loop_error:
+        return loop_error
+    normalized_selection, selection_error = _normalize_selection(selection)
+    if selection_error:
+        return selection_error
 
     anchors = evidence_helpers.normalize_evidence(evidence, session_id=session_id)
     normalized_validation = _normalize_validation(validation, anchors)
     internal = normalized_validation["internal"]
     external = normalized_validation["external"]
+    hypothesis_selection = (
+        hypothesis.get("selection")
+        if isinstance((hypothesis or {}).get("selection"), dict)
+        else {}
+    )
+    effective_selection = normalized_selection or hypothesis_selection or {}
     if internal["status"] == "validated" and not internal["evidence_refs"]:
         return _error("validated_requires_evidence_refs", "Internal validation requires non-empty evidence_refs")
+    if internal["status"] == "validated" and _selection_requires_correction(effective_selection):
+        return _error(
+            "screened_validation_requires_correction",
+            "Screened findings with screened_n > 5 require correction or holdout confirmation before internal validation counts as validated",
+        )
     if confidence == "high" and (internal["status"] != "validated" or not internal["evidence_refs"]):
         return _error("high_confidence_requires_internal_validation", "High confidence requires internal validated status with evidence_refs")
 
@@ -333,6 +437,10 @@ async def record_eda_finding(
         "created_at": now_iso(),
         "actor": "agent",
     }
+    if normalized_loop_index is not None:
+        record["loop_index"] = normalized_loop_index
+    if normalized_selection:
+        record["selection"] = normalized_selection
 
     if hypothesis_status == "confirmed" and (internal["status"] != "validated" or not internal["evidence_refs"]):
         return _error("confirmed_requires_internal_validation", "Confirmed findings require internal validation evidence")
@@ -345,6 +453,7 @@ async def record_eda_finding(
             disposition_reason=summary,
             linked_finding_ids=[finding_id],
             session_id=session_id,
+            loop_index=normalized_loop_index,
         )
     result = {
         "success": True,
@@ -438,11 +547,15 @@ async def summarize_eda_readiness(
     purpose: str = "dashboard",
     required_checks: list[str] | None = None,
     mode: str = "",
+    loop_index: int | None = None,
     session_id: str = "default",
     proposal_id: str = "",
     plan_step_id: str = "",
     **_: Any,
 ) -> dict[str, Any]:
+    normalized_loop_index, loop_error = _normalize_loop_index(loop_index)
+    if loop_error:
+        return loop_error
     verdict = evaluate_readiness(
         dataset_id=dataset_id,
         session_id=session_id,
@@ -469,6 +582,7 @@ async def summarize_eda_readiness(
         disposition="blocked" if verdict["status"] == "blocked" else "confirmed",
         validation=validation,
         covers_checks=["readiness"],
+        loop_index=normalized_loop_index,
         session_id=session_id,
         proposal_id=proposal_id,
         plan_step_id=plan_step_id,

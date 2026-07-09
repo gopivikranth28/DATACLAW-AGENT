@@ -763,6 +763,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "ag-ui-protocol" },
+    { name = "dataclaw-analysis-review" },
     { name = "dataclaw-artifacts" },
     { name = "dataclaw-browser" },
     { name = "dataclaw-codex" },
@@ -800,6 +801,7 @@ rag = [
 [package.metadata]
 requires-dist = [
     { name = "ag-ui-protocol", specifier = ">=0.1" },
+    { name = "dataclaw-analysis-review", editable = "plugins/dataclaw-analysis-review" },
     { name = "dataclaw-artifacts", editable = "plugins/dataclaw-artifacts" },
     { name = "dataclaw-browser", editable = "plugins/dataclaw-browser" },
     { name = "dataclaw-codex", editable = "plugins/dataclaw-codex" },
@@ -969,6 +971,28 @@ dependencies = [
 requires-dist = [
     { name = "dataclaw" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
+]
+provides-extras = ["dev"]
+
+[[package]]
+name = "dataclaw-analysis-review"
+version = "0.1.0"
+source = { editable = "plugins/dataclaw-analysis-review" }
+dependencies = [
+    { name = "dataclaw" },
+    { name = "dataclaw-artifacts" },
+    { name = "dataclaw-eda" },
+    { name = "dataclaw-plans" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dataclaw" },
+    { name = "dataclaw-artifacts" },
+    { name = "dataclaw-eda" },
+    { name = "dataclaw-plans" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
 ]

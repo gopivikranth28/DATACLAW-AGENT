@@ -53,9 +53,10 @@ Pick one primary archetype before building:
 - **Model comparison** - primary metric, baseline row, deltas, reproducibility
   notes, and badging for incomparable evaluation data.
 - **Data quality report** - completeness, duplicates, type/range anomalies,
-  coverage gaps, and readiness verdict.
-- **Exploratory briefing** - ranked findings, evidence chart per finding, and
-  "what to investigate next".
+  coverage gaps, and the structured EDA readiness verdict as the canonical
+  readiness source.
+- **Exploratory briefing** - ranked findings from the EDA findings ledger,
+  evidence chart per finding, and "what to investigate next".
 
 The archetype controls layout and chart count. Do not mix archetypes unless the
 user asks for a broad report.

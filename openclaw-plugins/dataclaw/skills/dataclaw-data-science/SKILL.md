@@ -43,7 +43,7 @@ Be explicit about assumptions, data limitations, and validation checks. Do not s
 ## Plan Workflow Rules
 - **CRITICAL**: You must successfully propose a plan with `dataclaw_propose_plan` and receive an ID before you can use `dataclaw_update_plan`. Do not attempt to update a plan that hasn't been proposed yet.
 - Report progress by calling `dataclaw_update_plan` as you complete each step.
-- Before setting `ready_for_validation: true`, request or inspect analysis review with `dataclaw_request_analysis_review` / `dataclaw_get_review_gate` when available. If a required gate blocks the transition, resolve the finding or ask the user before calling `dataclaw_accept_gate_risk`; never self-accept risk silently.
+- Before setting `ready_for_validation: true`, request or inspect analysis review with `dataclaw_request_analysis_review` / `dataclaw_get_review_gate`. Completed high-risk or EDA-like steps may already have an automatic checklist review; if a required gate blocks the transition, resolve the review finding or ask the user before calling `dataclaw_accept_gate_risk`; never self-accept risk silently.
 - Always include an `explain.md` and a summary of findings in each notebook's final cell.
 - Deliver the final report per the `dashboarding` skill (fetch it before the reporting step) and the `artifacts` skill before publish/revision: headline metric tiles plus Plotly charts assembled into a published artifact or living report, with `explain.md` as the written companion - never a text-only report and never raw media-path links.
 - each plan should generally be organized with its own folder for outputs, artifacts, and a new or copied notebook to keep things organized and retain past work.

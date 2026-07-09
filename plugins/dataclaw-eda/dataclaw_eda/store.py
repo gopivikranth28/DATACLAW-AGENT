@@ -48,6 +48,7 @@ CONFIDENCES = {"low", "medium", "high"}
 INTERNAL_VALIDATION_STATUSES = {"validated", "failed", "not_checked"}
 EXTERNAL_VALIDATION_STATUSES = {"validated", "unverified", "implausible", "not_checked"}
 EXTERNAL_VALIDATION_BASES = {"domain_prior", "reference_lookup", "user_confirmation", "none"}
+SELECTION_CORRECTIONS = {"none", "fdr_bh", "bonferroni", "holdout_confirmed"}
 
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
@@ -180,6 +181,8 @@ def fold_hypotheses(session_id: str | None = "default") -> list[dict[str, Any]]:
         current["linked_finding_ids"] = linked
         if event.get("needs_reevaluation"):
             current["needs_reevaluation"] = True
+        if event.get("loop_index") is not None:
+            current["loop_index"] = event.get("loop_index")
         if event.get("disposition_reason") is not None:
             current["disposition_reason"] = event.get("disposition_reason", "")
         if prior_status and event.get("status") and prior_status != event.get("status"):
