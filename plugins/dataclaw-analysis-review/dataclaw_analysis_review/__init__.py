@@ -16,7 +16,7 @@ from dataclaw_analysis_review.router import router as review_router
 
 class AnalysisReviewPlugin:
     name = "dataclaw-analysis-review"
-    depends_on = ["dataclaw-plans", "dataclaw-eda", "dataclaw-artifacts"]
+    depends_on = ["dataclaw-plans", "dataclaw-eda", "dataclaw-artifacts", "dataclaw-projects"]
 
     def register(self, ctx: PluginContext) -> None:
         ctx.include_api_router(review_router, prefix="/analysis-review", tags=["analysis-review"])
@@ -28,6 +28,17 @@ class AnalysisReviewPlugin:
             from dataclaw_plans.gates import register_gate_resolver
 
             register_gate_resolver("analysis_review", tools.review_gate_resolver)
+        except Exception:
+            pass
+
+        # P6: bind the sub-agent runtime (D12 — direct provider use) and make
+        # sure the reviewer definition exists. Definition registration is
+        # idempotent; the rubric prompt is rendered at request time (FR-28).
+        try:
+            from dataclaw_analysis_review.reviewer import bind_runtime, ensure_reviewer_definition
+
+            bind_runtime(getattr(ctx, "providers", None), ctx.tool_registry)
+            ensure_reviewer_definition()
         except Exception:
             pass
         if ctx.guardrail_registry is not None:

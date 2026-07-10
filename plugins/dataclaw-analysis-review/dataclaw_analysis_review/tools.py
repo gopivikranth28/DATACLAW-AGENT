@@ -8,6 +8,13 @@ from typing import Any
 from dataclaw.guardrails.base import GuardrailVerdict
 from dataclaw.state import AgentState
 from dataclaw_analysis_review.checklist import build_review_context, find_plan_step, run_checklist
+from dataclaw_analysis_review.reviewer import (
+    REVIEWER_DEFINITION_ID,
+    build_reviewer_task,
+    parse_reviewer_findings,
+    reviewer_available,
+    run_reviewer,
+)
 from dataclaw_analysis_review.store import (
     CATEGORIES,
     FINAL_FINDING_STATUSES,
@@ -100,29 +107,46 @@ async def request_analysis_review(
             "review_id": review_id,
             "scope": normalized_scope,
             "target_id": normalized_target,
-            "reviewer_type": "checklist",
+            "reviewer_type": "subagent" if require_subagent else "checklist",
         },
     )
+    effective_plan_step_id = normalized_target if normalized_scope == "plan_step" else plan_step_id
     finding_ids = _persist_checklist_findings(
         review_id=review_id,
         candidates=candidates,
         scope=normalized_scope,
         target_id=normalized_target,
         proposal_id=proposal_id,
-        plan_step_id=normalized_target if normalized_scope == "plan_step" else plan_step_id,
+        plan_step_id=effective_plan_step_id,
         session_id=session_id,
     )
+
+    reviewer_type = "checklist"
+    subagent_meta: dict[str, Any] = {}
+    if require_subagent:
+        reviewer_type, subagent_finding_ids, subagent_meta = await _run_subagent_review(
+            review_id=review_id,
+            context=context,
+            scope=normalized_scope,
+            target_id=normalized_target,
+            proposal_id=proposal_id,
+            plan_step_id=effective_plan_step_id,
+            session_id=session_id,
+            floor=floor,
+        )
+        finding_ids = [*finding_ids, *subagent_finding_ids]
 
     run_record = {
         "review_id": review_id,
         "scope": normalized_scope,
         "target_id": normalized_target,
         "proposal_id": proposal_id,
-        "plan_step_id": normalized_target if normalized_scope == "plan_step" else plan_step_id,
+        "plan_step_id": effective_plan_step_id,
         "session_id": session_id,
         "status": "completed",
-        "reviewer_type": "checklist",
+        "reviewer_type": reviewer_type,
         "require_subagent": bool(require_subagent),
+        **subagent_meta,
         "severity_floor": floor,
         "finding_ids": finding_ids,
         "findings_summary": _findings_summary(
@@ -371,6 +395,114 @@ def _persist_checklist_findings(
     return finding_ids
 
 
+async def _run_subagent_review(
+    *,
+    review_id: str,
+    context: dict[str, Any],
+    scope: str,
+    target_id: str,
+    proposal_id: str,
+    plan_step_id: str,
+    session_id: str,
+    floor: str,
+) -> tuple[str, list[str], dict[str, Any]]:
+    """Run the reviewer sub-agent (FR-28/FR-29). Returns (reviewer_type, finding_ids, meta).
+
+    Degradations are labeled, never silent: no provider → checklist-only with a
+    reason; unparseable output → "mixed" + subagent_parse_error (checklist
+    findings are kept either way).
+    """
+    if not reviewer_available():
+        return "checklist", [], {"degradation": "subagent_unavailable"}
+    task = build_reviewer_task(context)
+    try:
+        outcome = await run_reviewer(task)
+    except Exception as exc:
+        return "checklist", [], {"degradation": f"subagent_error: {exc}"}
+    parsed = parse_reviewer_findings(str(outcome.get("result") or ""))
+    if parsed is None:
+        return "mixed", [], {"subagent_parse_error": True}
+
+    candidates: list[dict[str, Any]] = []
+    for item in parsed:
+        severity = item["severity"] if item["severity"] in SEVERITIES else "warning"
+        category = item["category"] if item["category"] in CATEGORIES else "unsupported_claim"
+        if not severity_at_least(severity, floor):
+            continue
+        candidates.append(
+            {
+                "source": f"subagent:{REVIEWER_DEFINITION_ID}",
+                "severity": severity,
+                "category": category,
+                "claim": item["claim"],
+                "evidence": item["evidence"],
+                "recommendation": item["recommendation"],
+                "status": "open",
+            }
+        )
+    finding_ids = _persist_subagent_findings(
+        review_id=review_id,
+        candidates=candidates,
+        scope=scope,
+        target_id=target_id,
+        proposal_id=proposal_id,
+        plan_step_id=plan_step_id,
+        session_id=session_id,
+    )
+    return "subagent", finding_ids, {"subagent_turns": int(outcome.get("turns_used") or 0)}
+
+
+def _persist_subagent_findings(
+    *,
+    review_id: str,
+    candidates: list[dict[str, Any]],
+    scope: str,
+    target_id: str,
+    proposal_id: str,
+    plan_step_id: str,
+    session_id: str,
+) -> list[str]:
+    # Signature-dedupe against open reviewer findings, but never auto-resolve
+    # ones the reviewer stopped reporting — an LLM rerun is not deterministic
+    # evidence that a problem disappeared (unlike the checklist rerun rule).
+    existing_open = filter_findings(
+        fold_review_findings(session_id),
+        scope=scope,
+        target_id=target_id,
+        status="open",
+    )
+    existing_by_signature = {
+        str(finding.get("signature") or _signature(finding)): finding
+        for finding in existing_open
+        if str(finding.get("source") or "").startswith("subagent:")
+    }
+    finding_ids: list[str] = []
+    for candidate in candidates:
+        signature = _signature(candidate)
+        existing = existing_by_signature.get(signature)
+        if existing:
+            finding_ids.append(str(existing["finding_id"]))
+            continue
+        finding_id = new_finding_id()
+        record = {
+            **candidate,
+            "finding_id": finding_id,
+            "review_id": review_id,
+            "scope": scope,
+            "target_id": target_id,
+            "proposal_id": proposal_id,
+            "plan_step_id": plan_step_id,
+            "session_id": session_id,
+            "signature": signature,
+            "status": "open",
+            "created_at": now_iso(),
+            "actor": REVIEWER_DEFINITION_ID,
+        }
+        append_review_finding(record, session_id)
+        finding_ids.append(finding_id)
+    return finding_ids
+
+
 def _compute_review_gate(*, scope: str, target_id: str, session_id: str = "default") -> dict[str, Any]:
     if scope not in {"plan_step", "artifact", "living_report", "session"}:
         return {
@@ -394,6 +526,9 @@ def _compute_review_gate(*, scope: str, target_id: str, session_id: str = "defau
     elif latest.get("require_subagent") and latest.get("reviewer_type") == "checklist":
         status = "unknown"
         reason = "Checklist-only review cannot pass a sub-agent-required scope"
+    elif latest.get("require_subagent") and latest.get("subagent_parse_error"):
+        status = "unknown"
+        reason = "Reviewer output could not be parsed; a sub-agent-required scope stays unknown"
     else:
         status = "pass"
         reason = "No open required review findings"

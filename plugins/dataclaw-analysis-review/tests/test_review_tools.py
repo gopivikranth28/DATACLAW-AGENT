@@ -596,3 +596,176 @@ async def test_publish_hook_skips_gate_accepted_steps():
     events = read_manifest_events(living_report_id(session_id))
     notes = [e for e in events if "Unresolved review risk" in str((e.get("payload") or {}).get("md", ""))]
     assert notes == []
+
+
+# ── P6: reviewer sub-agent ───────────────────────────────────────────────────
+
+
+class _StubRegistry:
+    def __init__(self, provider):
+        self._provider = provider
+
+    def get(self, agent_type):
+        return self._provider if agent_type == "llm" else None
+
+
+class _StubProvider:
+    agent_type = "llm"
+
+    def __init__(self, reply: str):
+        self.reply = reply
+        self.tasks: list[str] = []
+        self.contexts: list = []
+
+    async def run(self, task, *, context):
+        from dataclaw.providers.sub_agent.provider import SubAgentResult
+
+        self.tasks.append(task)
+        self.contexts.append(context)
+        return SubAgentResult(status="completed", result=self.reply, turns_used=2)
+
+
+def _bind_stub_reviewer(monkeypatch, reply: str) -> _StubProvider:
+    from types import SimpleNamespace
+
+    from dataclaw_analysis_review import reviewer
+
+    provider = _StubProvider(reply)
+    providers = SimpleNamespace(sub_agent_registry=_StubRegistry(provider), sub_agent_hooks=None)
+    monkeypatch.setitem(reviewer._runtime, "providers", providers)
+    monkeypatch.setitem(reviewer._runtime, "tool_registry", SimpleNamespace(_tools={}))
+    return provider
+
+
+REVIEWER_REPLY = """Audit complete.
+
+```json
+[
+  {
+    "category": "unsupported_claim",
+    "severity": "required",
+    "claim": "The churn headline cites no finding id or evidence anchor",
+    "evidence": ["sec-1"],
+    "recommendation": "Cite the EDA finding id behind the headline"
+  },
+  {
+    "category": "hypothesis_hygiene",
+    "severity": "warning",
+    "claim": "Hypothesis hyp-1 is confirmed but its linked finding is internally not_checked",
+    "evidence": ["hyp-1"],
+    "recommendation": "Recompute and validate the linked finding or reopen the hypothesis"
+  }
+]
+```
+"""
+
+
+def test_reviewer_definition_and_prompt_render():
+    from dataclaw_analysis_review.reviewer import (
+        REVIEWER_ALLOWED_TOOLS,
+        REVIEWER_MAX_TURNS,
+        ensure_reviewer_definition,
+        render_reviewer_system_prompt,
+    )
+
+    definition = ensure_reviewer_definition()
+    assert definition["id"] == "analysis-reviewer"
+    assert definition["agent_type"] == "llm"
+    assert definition["allowed_tools"] == REVIEWER_ALLOWED_TOOLS
+    assert definition["config"]["max_turns"] == REVIEWER_MAX_TURNS
+    assert "read_artifact" not in definition["allowed_tools"]
+    # Idempotent re-registration
+    assert ensure_reviewer_definition()["id"] == "analysis-reviewer"
+
+    prompt = render_reviewer_system_prompt()
+    assert "Output contract" in prompt
+    assert "fenced JSON array" in prompt
+
+
+@pytest.mark.asyncio
+async def test_subagent_review_records_reviewer_findings(monkeypatch):
+    provider = _bind_stub_reviewer(monkeypatch, REVIEWER_REPLY)
+    session_id = "sess-sub"
+    proposal_id, step_id = await _high_risk_plan(session_id)
+    await update_plan(
+        proposal_id=proposal_id,
+        step_patches=[{"plan_step_id": step_id, "status": "completed"}],
+        session_id=session_id,
+    )
+
+    review = await request_analysis_review(
+        scope="plan_step",
+        target_id=step_id,
+        proposal_id=proposal_id,
+        session_id=session_id,
+        require_subagent=True,
+    )
+    assert review["success"] is True
+    assert review["reviewer_type"] == "subagent"
+    assert review["gate"]["gate"] == "fail"
+
+    findings = (await list_review_findings(session_id=session_id))["findings"]
+    reviewer_findings = [f for f in findings if str(f.get("source", "")).startswith("subagent:")]
+    categories = {f["category"] for f in reviewer_findings}
+    assert "unsupported_claim" in categories
+    assert "hypothesis_hygiene" in categories
+    # Checklist findings are kept alongside reviewer findings
+    assert any(str(f.get("source", "")).startswith("checklist:") for f in findings)
+    # The reviewer got a structured manifest, never raw artifact HTML
+    assert provider.tasks and "eda_hypotheses" in provider.tasks[0]
+    # The rubric prompt was rendered at request time into the sub-agent config
+    assert "Output contract" in provider.contexts[0].config["system_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_subagent_parse_failure_labels_mixed_and_gate_unknown(monkeypatch):
+    _bind_stub_reviewer(monkeypatch, "Everything looks fine to me, no JSON today.")
+    monkeypatch.setattr(
+        "dataclaw_analysis_review.checklist.session_run_metadata",
+        lambda session_id, **_: [],
+    )
+    session_id = "sess-parse"
+
+    review = await request_analysis_review(
+        scope="session",
+        session_id=session_id,
+        require_subagent=True,
+    )
+    assert review["success"] is True
+    assert review["reviewer_type"] == "mixed"
+    assert review["gate"]["gate"] == "unknown"
+    assert "could not be parsed" in review["gate"]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_subagent_unavailable_degrades_to_checklist_with_label(monkeypatch):
+    from dataclaw_analysis_review import reviewer
+    from dataclaw_analysis_review.tools import list_review_runs
+
+    monkeypatch.setitem(reviewer._runtime, "providers", None)
+    monkeypatch.setattr(
+        "dataclaw_analysis_review.checklist.session_run_metadata",
+        lambda session_id, **_: [],
+    )
+    session_id = "sess-nosub"
+
+    review = await request_analysis_review(
+        scope="session",
+        session_id=session_id,
+        require_subagent=True,
+    )
+    assert review["reviewer_type"] == "checklist"
+    assert review["gate"]["gate"] == "unknown"
+
+    runs = (await list_review_runs(session_id=session_id))["runs"]
+    assert runs[0]["degradation"] == "subagent_unavailable"
+
+
+def test_reviewer_parse_rules():
+    from dataclaw_analysis_review.reviewer import parse_reviewer_findings
+
+    assert parse_reviewer_findings("no json here") is None
+    assert parse_reviewer_findings("```json\n{\"not\": \"a list\"}\n```") is None
+    assert parse_reviewer_findings("```json\n[]\n```") == []
+    bare = parse_reviewer_findings('[{"claim": "x", "severity": "warning"}]')
+    assert bare and bare[0]["claim"] == "x"

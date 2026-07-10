@@ -8,6 +8,7 @@ dependencies = [
     "dataclaw-plans",
     "dataclaw-eda",
     "dataclaw-artifacts",
+    "dataclaw-projects",
 ]
 
 [project.entry-points."dataclaw.plugins"]
