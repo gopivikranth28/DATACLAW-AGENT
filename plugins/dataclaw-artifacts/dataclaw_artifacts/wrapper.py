@@ -48,10 +48,20 @@ TOKEN_STYLE = """
   --dc-muted: #667085 !important;
   --dc-line: #e5e7eb !important;
   --dc-accent: #2563eb !important;
+  --dc-accent-2: #0f766e !important;
+  --dc-accent-3: #c2410c !important;
   --dc-accent-soft: #e8f0ff !important;
   --dc-good: #15803d !important;
   --dc-warn: #b45309 !important;
   --dc-danger: #b91c1c !important;
+  --dc-cat-1: #2563eb !important;
+  --dc-cat-2: #0f766e !important;
+  --dc-cat-3: #c2410c !important;
+  --dc-cat-4: #7c3aed !important;
+  --dc-cat-5: #be185d !important;
+  --dc-cat-6: #4d7c0f !important;
+  --dc-cat-7: #0369a1 !important;
+  --dc-cat-8: #a16207 !important;
   --dc-radius: 8px !important;
   --dc-shadow: 0 1px 2px rgba(16, 24, 40, 0.06) !important;
   --dc-font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
@@ -65,11 +75,21 @@ TOKEN_STYLE = """
   --dc-muted: #a5afbd !important;
   --dc-line: #303846 !important;
   --dc-accent: #7aa7ff !important;
+  --dc-accent-2: #5eead4 !important;
+  --dc-accent-3: #fdba74 !important;
   --dc-accent-soft: #1b2b46 !important;
   --dc-good: #6dd58c !important;
   --dc-warn: #f3bd63 !important;
   --dc-danger: #ff8b8b !important;
   --dc-shadow: none !important;
+  --dc-cat-1: #7aa7ff !important;
+  --dc-cat-2: #5eead4 !important;
+  --dc-cat-3: #fdba74 !important;
+  --dc-cat-4: #c4b5fd !important;
+  --dc-cat-5: #f9a8d4 !important;
+  --dc-cat-6: #bef264 !important;
+  --dc-cat-7: #7dd3fc !important;
+  --dc-cat-8: #fde047 !important;
 }
 html, body {
   margin: 0;

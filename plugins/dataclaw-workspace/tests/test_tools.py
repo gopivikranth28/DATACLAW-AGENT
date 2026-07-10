@@ -1,5 +1,7 @@
 """Tests for workspace tools."""
 
+import json
+
 import pytest
 from pathlib import Path
 
@@ -226,6 +228,65 @@ async def test_report_design_report_storyboards_then_renders_cohesive_html(cfg):
     assert "report_design" in result["type"]
     assert "\"mode\": \"whole_report\"" in storyboard
     assert "section_plan" in storyboard
+
+
+@pytest.mark.asyncio
+async def test_report_design_report_infers_explorers_selectors_and_controls(cfg):
+    result = await report_design_report(
+        cfg=cfg,
+        report_goal="Explain player archetypes with controls for team and role.",
+        title="Inferred Interaction Report",
+        report_path="reports/inferred.html",
+        storyboard_path="reports/inferred-storyboard.json",
+        insights=[
+            {
+                "title": "Creators separate cleanly",
+                "detail": "Archetype and team slices expose the strongest similarity signals.",
+                "finding_id": "find-inferred-controls",
+            }
+        ],
+        analyses=[
+            {
+                "title": "Similarity controls",
+                "caption": "No filters are provided; the designer should infer useful controls.",
+                "records": [
+                    {"team": "A", "archetype": "Creator", "player": "One", "similarity": 0.94},
+                    {"team": "A", "archetype": "Creator", "player": "Three", "similarity": 0.91},
+                    {"team": "B", "archetype": "Finisher", "player": "Two", "similarity": 0.87},
+                    {"team": "B", "archetype": "Finisher", "player": "Four", "similarity": 0.84},
+                ],
+                "chart": {"type": "bar", "x": "player", "y": "similarity", "color": "archetype"},
+                "interpretation": "The inferred controls let the reader inspect the same aggregate evidence.",
+            },
+            {
+                "title": "Archetype selector",
+                "items": [
+                    {"id": "creator", "name": "Creator", "archetype": "Creator", "team": "A", "metrics": {"players": 2}},
+                    {"id": "finisher", "name": "Finisher", "archetype": "Finisher", "team": "B", "metrics": {"players": 2}},
+                ],
+            },
+        ],
+    )
+
+    html = Path(result["html_path"]).read_text()
+    storyboard = json.loads(Path(result["storyboard_path"]).read_text())
+    section_types = [item["section_type"] for item in storyboard["section_plan"]]
+
+    assert "chart_table_explorer" in section_types
+    assert "selector_panel" in section_types
+    assert result["interaction_count"] == 2
+    assert any(
+        control.get("key") == "archetype"
+        for item in storyboard["interaction_plan"]
+        for control in item.get("controls", [])
+    )
+    assert "data-dc-section=\"chart_table_explorer\"" in html
+    assert "data-dc-section=\"selector_panel\"" in html
+    assert "data-dc-selection-detail" in html
+    assert "r-control-reset" in html
+    assert "r-control-summary" in html
+    assert "role=\"button\"" in html
+    assert "aria-pressed=\"false\"" in html
 
 
 @pytest.mark.asyncio
@@ -574,6 +635,13 @@ async def test_report_add_section_builds_live_html_report(cfg):
     assert "initInteractiveTable" in html
     assert "initChartTableExplorer" in html
     assert "initSelectorPanel" in html
+    assert "r-control-reset" in html
+    assert "r-control-summary" in html
+    assert "r-sort-button" in html
+    assert "aria-sort" in html
+    assert "data-dc-selection-detail" in html
+    assert "aria-pressed=\"false\"" in html
+    assert "r-empty-state" in html
     assert "Plotly.newPlot" in html
     assert "Plotly is loaded by the DataClaw artifact runtime" not in html
     assert "DATACLAW_REPORT_SECTIONS_START" in html
@@ -612,6 +680,7 @@ async def test_report_add_section_quality_warns_on_chart_dump(cfg):
             cfg=cfg,
             section_type="chart",
             report_path=report_path,
+            quality_gate="warn",
             data={
                 "title": f"Chart {i}",
                 "figure": {"data": [{"x": [1, 2], "y": [i, i + 1]}]},
@@ -623,6 +692,37 @@ async def test_report_add_section_quality_warns_on_chart_dump(cfg):
     codes = {warning["code"] for warning in last["quality"]["warnings"]}
     assert "consecutive_plain_charts" in codes
     assert "chart_dump" in codes
+    assert "plain_chart_overuse" in codes
+
+
+@pytest.mark.asyncio
+async def test_report_add_section_quality_flags_plain_chart_overuse_even_with_interactive(cfg):
+    report_path = "reports/plain-chart-overuse.html"
+    await report_add_section(
+        cfg=cfg,
+        section_type="interactive_table",
+        report_path=report_path,
+        quality_gate="warn",
+        data={
+            "title": "Lookup table",
+            "caption": "One interactive section should not excuse a chart dump.",
+            "columns": ["team", "score"],
+            "rows": [{"team": "A", "score": 1}],
+        },
+    )
+    last = None
+    for i in range(4):
+        last = await report_add_section(
+            cfg=cfg,
+            section_type="chart",
+            report_path=report_path,
+            quality_gate="warn",
+            data={"title": f"Plain chart {i}", "figure": {"data": [{"x": [1], "y": [i]}]}},
+        )
+
+    assert last is not None
+    codes = {warning["code"] for warning in last["quality"]["warnings"]}
+    assert "plain_chart_overuse" in codes
 
 
 @pytest.mark.asyncio
@@ -633,6 +733,7 @@ async def test_report_add_section_quality_gate_can_fail_before_write(cfg):
             cfg=cfg,
             section_type="chart",
             report_path=report_path,
+            quality_gate="fail",
             data={"title": f"Chart {i}", "figure": {"data": [{"x": [1], "y": [i]}]}},
         )
 

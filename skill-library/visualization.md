@@ -14,9 +14,11 @@ messages are for short narration; the durable surface is the published artifact.
 The `/app/:sessionId` route is compatibility only and should not be used as the
 final report/dashboard handoff.
 
-## Skill triad
+## Skill stack
 - `dashboarding` decides the story: user question, audience, decision, KPI
   sequence, chart order, filters, and revision loop.
+- `report_design` turns completed insights and aggregate assets into the final
+  storyboard, section mix, interaction plan, evidence placement, and quality gate.
 - `visualization` emits the visual evidence: charts, metrics, tables, captions,
   aggregate data islands, and integrity checks.
 - `dataclaw-artifacts` publishes, versions, serves, embeds, secures, themes, and
@@ -25,7 +27,8 @@ Use the shared DataClaw artifact token system for report/dashboard output so
 charts, KPI tiles, tables, and living-report entries look related inside the
 same session or project.
 
-If a task needs a full dashboard/report, fetch and follow `dashboarding` too.
+If a task needs a full dashboard/report, fetch and follow `dashboarding` and
+`report_design` too.
 
 ## Tool names
 Examples use canonical DataClaw tool names: `report_add_section`,
@@ -39,10 +42,11 @@ alias with the same arguments.
 ### 1. Artifact report sections - the primary surface
 Build the user-facing deliverable as artifact sections, not a long chat answer.
 For final comprehensive reports, finish the notebook analysis and EDA findings
-first, then call `report_design_report` with the completed insights, analysis
-assets, aggregate payloads, evidence, methodology, and requirements. The report
-designer should storyboard the full report, choose section layouts and
-interactions, write a storyboard JSON, and render the HTML in one pass.
+first, then fetch and follow the `report_design` skill and call
+`report_design_report` with the completed insights, analysis assets, aggregate
+payloads, evidence, methodology, and requirements. The report designer should
+storyboard the full report, choose section layouts and interactions, write a
+storyboard JSON, and render the HTML in one pass.
 `report_add_section` remains a low-level compatibility helper for manual or
 incremental assembly, but do not rely on appended report cells as the final
 strategy for a cohesive analytical report.
@@ -136,6 +140,9 @@ Use the richer narrative sections deliberately:
 - `selector_panel` for team, player, cohort, model, or scenario selectors that filter adjacent cards.
 - `chart_table_explorer` for chart + interpretation + searchable table over the same aggregate payload. Prefer this over repeated near-duplicate charts.
 - `entity_card_grid` for archetype, player, segment, cohort, or scenario cards with metric summaries.
+  Cards support `count` (badge), `tags` (chips), and metrics as
+  `{"label", "value", "max"?}` or `{"label", "value", "bar_pct"?}` — numeric
+  shares and percentage values render as inline comparison bars.
 - `findings` for published EDA finding lists; each item should carry `finding_id`
   and, when applicable, `hypothesis_id` so review can trace claims back to the
   ledgers.
@@ -231,6 +238,28 @@ report_add_section(section_type="chart_interpretation", report_path="reports/ana
 Plain `chart` remains appropriate for supporting visuals whose interpretation
 is already carried by a nearby narrative or findings section.
 
+### Chart spec grammar for record-driven sections
+
+`filterable_chart`, `chart_table_explorer`, and designer `analyses` entries take a
+small `chart` spec over aggregate `records`:
+
+- `type`: `bar` (default), `hbar` (horizontal bar), `line`, `scatter`, or
+  `heatmap` (`x`, `y`, plus `z`/`value` for cell intensity; diverging data that
+  spans zero automatically gets a diverging colorscale centered at 0).
+- `x`, `y`, `color` (series/group key), `x_label`, `y_label`, `title`.
+- `sort`: bars sort by value descending by default; use `"asc"`, `"label"`, or
+  `"none"` to override. Rely on this instead of pre-sorting for display.
+- `agg`: duplicate x values per series aggregate with `sum` by default; use
+  `"mean"`, `"max"`, `"min"`, or `"count"` when the grain requires it.
+- `reference_lines`: `[{"axis": "y", "value": 50, "label": "baseline"}]` draws
+  dotted cue lines; `annotations`: `[{"x": ..., "y": ..., "text": "..."}]`
+  points at the notable region. Use these for "what to look at" cueing.
+
+Charts are themed at render time: colorway from the `--dc-cat-*` tokens,
+transparent surfaces, shell typography, and automatic re-render on light/dark
+toggle. Do not bake explicit background colors, font colors, or a Plotly
+template into figures or `chart.layout` — they defeat theme sync.
+
 ### 3. Metric tiles - one call per headline KPI
 
 ```python
@@ -238,6 +267,11 @@ display_metric(label="AI Adoption Rate", value="67%",
                delta="+12 pp vs 2022", trend="up")
 display_metric(label="Respondents", value="89,184", unit="developers")
 ```
+
+In report `metric_row` sections, a metric may also carry
+`"spark": [5.1, 5.4, 5.2, 5.9, 6.4]` — a small trend series rendered as an
+inline sparkline under the value. Prefer it whenever a KPI has a natural
+time series behind it.
 
 - `label`: short, uppercase-friendly name
 - `value`: the headline number, pre-formatted as a string

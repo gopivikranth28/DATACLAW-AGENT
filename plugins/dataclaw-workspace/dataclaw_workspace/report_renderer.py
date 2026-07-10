@@ -119,6 +119,14 @@ def report_shell_css() -> str:
   --dc-danger: #b91c1c;
   --dc-shadow: 0 18px 45px rgba(15, 23, 42, 0.10);
   --dc-shadow-soft: 0 7px 22px rgba(15, 23, 42, 0.07);
+  --dc-cat-1: #2563eb;
+  --dc-cat-2: #0f766e;
+  --dc-cat-3: #c2410c;
+  --dc-cat-4: #7c3aed;
+  --dc-cat-5: #be185d;
+  --dc-cat-6: #4d7c0f;
+  --dc-cat-7: #0369a1;
+  --dc-cat-8: #a16207;
   --bg: var(--dc-bg);
   --paper: var(--dc-surface);
   --ink: var(--dc-ink);
@@ -146,6 +154,14 @@ def report_shell_css() -> str:
   --dc-danger: #ff8b8b;
   --dc-shadow: none;
   --dc-shadow-soft: none;
+  --dc-cat-1: #7aa7ff;
+  --dc-cat-2: #5eead4;
+  --dc-cat-3: #fdba74;
+  --dc-cat-4: #c4b5fd;
+  --dc-cat-5: #f9a8d4;
+  --dc-cat-6: #bef264;
+  --dc-cat-7: #7dd3fc;
+  --dc-cat-8: #fde047;
   --good: var(--dc-good);
   --warn: var(--dc-warn);
 }
@@ -175,6 +191,7 @@ body {
   backdrop-filter: blur(12px);
 }
 .r-story-nav.ready { display: flex; }
+.r-story-nav-head { display: none; }
 .r-story-nav a {
   flex: 0 0 auto;
   max-width: 210px;
@@ -195,6 +212,62 @@ body {
   border-color: color-mix(in srgb, var(--dc-accent) 45%, var(--line));
   background: var(--accent-soft);
   transform: translateY(-1px);
+}
+.r-story-nav a .r-nav-num { display: none; }
+@media (min-width: 1240px) {
+  .r-story-nav {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: 224px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 26px 14px 26px 18px;
+    border-bottom: 0;
+    border-right: 1px solid var(--line);
+    background: color-mix(in srgb, var(--dc-surface) 65%, var(--dc-bg));
+    backdrop-filter: none;
+  }
+  .r-story-nav-head {
+    display: block;
+    font-size: 11px;
+    font-weight: 760;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--muted);
+    padding: 0 10px 10px;
+  }
+  .r-story-nav a {
+    max-width: none;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    border: 0;
+    border-left: 2px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    padding: 7px 10px;
+    font-size: 12.5px;
+    line-height: 1.3;
+    white-space: normal;
+  }
+  .r-story-nav a .r-nav-num {
+    display: inline;
+    flex: 0 0 auto;
+    font-size: 10px;
+    font-weight: 760;
+    color: color-mix(in srgb, var(--dc-accent) 60%, var(--muted));
+    font-variant-numeric: tabular-nums;
+  }
+  .r-story-nav a.active, .r-story-nav a:hover {
+    background: var(--accent-soft);
+    border-left-color: var(--dc-accent);
+    color: var(--ink);
+    transform: none;
+  }
+  body.has-rail .r-page { margin: 0 auto 0 max(224px, calc((100vw - 1100px) / 2)); }
 }
 .r-page { max-width: 1100px; margin: 0 auto; padding: 30px 22px 48px; }
 .r-hero {
@@ -362,6 +435,7 @@ main { counter-reset: story-step; }
   border-radius: 12px;
   background: color-mix(in srgb, var(--dc-surface-muted) 78%, var(--dc-surface));
 }
+.r-control-bar:empty { display: none; }
 .r-control { display: grid; gap: 4px; min-width: 150px; }
 .r-control label, .r-table-meta { color: var(--muted); font-size: 11px; font-weight: 720; letter-spacing: 0; text-transform: uppercase; }
 .r-control select, .r-table-tools input {
@@ -373,11 +447,36 @@ main { counter-reset: story-step; }
   color: var(--ink);
   font: inherit;
 }
+.r-control select:focus-visible, .r-table-tools input:focus-visible, .r-pagination button:focus-visible, .r-sort-button:focus-visible, .r-control-reset:focus-visible, .r-entity-card[data-dc-selector-card]:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--dc-accent) 72%, transparent);
+  outline-offset: 2px;
+}
+.r-control-actions { display: flex; gap: 8px; align-items: center; align-self: end; margin-left: auto; flex-wrap: wrap; }
+.r-control-summary { color: var(--muted); font-size: 12px; }
+.r-control-reset {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: var(--dc-surface);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+}
+.r-empty-state {
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  padding: 18px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--dc-surface-muted) 80%, transparent);
+  text-align: center;
+}
 .r-explorer-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 380px); gap: 16px; align-items: start; }
 .r-table-tools { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
 .r-table-tools input { max-width: 260px; }
 .r-interactive-table-wrap { width: 100%; overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--dc-surface); }
 .r-interactive-table th { cursor: pointer; user-select: none; white-space: nowrap; }
+.r-sort-button { all: unset; display: inline-flex; align-items: center; gap: 5px; cursor: pointer; color: inherit; }
+.r-sort-indicator { color: var(--accent); font-size: 10px; min-width: 1em; }
 .r-interactive-table tbody tr:hover { background: color-mix(in srgb, var(--dc-accent-soft) 42%, transparent); }
 .r-pagination { display: flex; gap: 8px; justify-content: flex-end; align-items: center; margin-top: 8px; color: var(--muted); font-size: 12px; }
 .r-pagination button {
@@ -392,14 +491,81 @@ main { counter-reset: story-step; }
 .r-selector-panel { display: grid; gap: 14px; }
 .r-entity-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
 .r-entity-card { border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: var(--dc-surface-raised); }
+.r-entity-card[data-dc-selector-card] { cursor: pointer; transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
+.r-entity-card[data-dc-selector-card]:hover { transform: translateY(-1px); border-color: color-mix(in srgb, var(--dc-accent) 34%, var(--line)); }
+.r-entity-card.is-selected { border-color: color-mix(in srgb, var(--dc-accent) 65%, var(--line)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--dc-accent) 14%, transparent); }
 .r-entity-card h3 { margin: 7px 0 6px; color: var(--ink); }
 .r-entity-metrics { display: grid; gap: 6px; margin-top: 10px; }
 .r-entity-metric { display: flex; justify-content: space-between; gap: 10px; border-top: 1px solid var(--line); padding-top: 6px; color: var(--muted); font-size: 12px; }
 .r-entity-metric strong { color: var(--ink); text-align: right; }
+.r-selection-detail { border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: var(--dc-surface-raised); }
+.r-selection-detail h3 { margin: 0 0 6px; color: var(--ink); }
 .r-caption { color: var(--muted); font-size: 12px; margin: 8px 2px 0; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
 th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0; }
+th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.r-section-kicker {
+  font-size: 11px;
+  font-weight: 760;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--accent);
+  margin: 0 0 6px;
+}
+.r-section.is-hero {
+  padding: 30px 28px;
+  border-color: color-mix(in srgb, var(--dc-accent) 30%, var(--line));
+  background: linear-gradient(160deg, color-mix(in srgb, var(--dc-accent) 7%, var(--dc-surface)), var(--dc-surface) 55%);
+  box-shadow: var(--dc-shadow);
+}
+.r-section.is-hero h2 { font-size: 28px; }
+.r-section.is-hero .r-chart-target { min-height: 470px; }
+.r-section.is-narrow { max-width: 860px; margin-left: auto; margin-right: auto; }
+.r-conclusion {
+  margin: 10px 2px 0;
+  padding-left: 12px;
+  border-left: 3px solid var(--dc-accent);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+.r-evidence-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+.r-evidence-chips-label { font-size: 10px; font-weight: 760; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.r-evidence-chip { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; font-weight: 560; text-decoration: none; }
+a.r-evidence-chip:hover { border-color: color-mix(in srgb, var(--dc-accent) 45%, var(--line)); color: var(--accent); }
+.r-supports-link {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: 12px;
+  font-weight: 660;
+  color: var(--accent);
+  text-decoration: none;
+}
+.r-supports-link:hover { text-decoration: underline; }
+.r-insight-card.good { border-top: 3px solid var(--dc-good); }
+.r-insight-card.warn { border-top: 3px solid var(--dc-warn); }
+.r-insight-card.danger { border-top: 3px solid var(--dc-danger); }
+.r-insight-card.neutral { border-top: 3px solid color-mix(in srgb, var(--dc-accent) 55%, var(--line)); }
+.r-entity-card { border-top: 3px solid var(--card-accent, transparent); position: relative; }
+.r-entity-count {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  font-size: 11px;
+  font-weight: 760;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: var(--dc-surface-muted);
+}
+.r-entity-metric { position: relative; }
+.r-metric-bar { flex: 1 1 auto; align-self: center; height: 5px; margin: 0 10px; border-radius: 999px; background: color-mix(in srgb, var(--line) 55%, transparent); overflow: hidden; }
+.r-metric-bar span { display: block; height: 100%; border-radius: 999px; background: var(--card-accent, var(--dc-accent)); }
+.r-spark { display: block; margin-top: 8px; width: 100%; height: 34px; }
+.r-spark polyline { fill: none; stroke: var(--dc-accent); stroke-width: 2; }
+.r-spark polygon { fill: color-mix(in srgb, var(--dc-accent) 12%, transparent); stroke: none; }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   .r-section, .r-story-nav a, .r-progress span { transition: none; }
@@ -425,6 +591,10 @@ def report_shell_script() -> str:
     return text(value).replace(/[&<>"']/g, function(ch) {
       return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch];
     });
+  }
+  function slugId(value, prefix) {
+    var base = text(value).trim().replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+    return (prefix || 'dc') + '-' + (base || Math.random().toString(36).slice(2, 8));
   }
   function cell(row, key) {
     return row && row[key] !== undefined && row[key] !== null ? row[key] : '';
@@ -475,14 +645,21 @@ def report_shell_script() -> str:
   }
   function buildControls(container, filters, rows, onChange) {
     var normalized = normalizeFilters(filters, rows);
-    if (!container || !normalized.length) return function() { return {}; };
+    if (!container) return function() { return {}; };
+    if (!normalized.length) return function() { return {}; };
     container.innerHTML = '';
+    var selects = [];
     normalized.forEach(function(filter) {
       var wrap = document.createElement('div');
       wrap.className = 'r-control';
       var label = document.createElement('label');
+      var selectId = slugId(filter.key + '-' + Math.random().toString(36).slice(2, 8), 'filter');
+      label.setAttribute('for', selectId);
       label.textContent = filter.label;
       var select = document.createElement('select');
+      select.id = selectId;
+      select.name = filter.key;
+      select.setAttribute('aria-label', filter.label);
       select.setAttribute('data-dc-filter-key', filter.key);
       var all = document.createElement('option');
       all.value = '';
@@ -494,18 +671,46 @@ def report_shell_script() -> str:
         item.textContent = option.label;
         select.appendChild(item);
       });
-      select.addEventListener('change', onChange);
+      select.addEventListener('change', function() {
+        updateSummary();
+        if (typeof onChange === 'function') onChange();
+      });
+      selects.push(select);
       wrap.appendChild(label);
       wrap.appendChild(select);
       container.appendChild(wrap);
     });
-    return function() {
+    var actions = document.createElement('div');
+    actions.className = 'r-control-actions';
+    var summary = document.createElement('span');
+    summary.className = 'r-control-summary';
+    summary.setAttribute('aria-live', 'polite');
+    var reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'r-control-reset';
+    reset.textContent = 'Reset filters';
+    reset.addEventListener('click', function() {
+      selects.forEach(function(select) { select.value = ''; });
+      updateSummary();
+      if (typeof onChange === 'function') onChange();
+    });
+    actions.appendChild(summary);
+    actions.appendChild(reset);
+    container.appendChild(actions);
+    function getValues() {
       var values = {};
-      Array.prototype.slice.call(container.querySelectorAll('select[data-dc-filter-key]')).forEach(function(select) {
+      selects.forEach(function(select) {
         values[select.getAttribute('data-dc-filter-key')] = select.value;
       });
       return values;
-    };
+    }
+    function updateSummary() {
+      var active = selects.filter(function(select) { return select.value; }).length;
+      summary.textContent = active ? active + ' active filter' + (active === 1 ? '' : 's') : 'All records';
+      reset.disabled = active === 0;
+    }
+    updateSummary();
+    return getValues;
   }
   function applyFilters(rows, values) {
     var keys = Object.keys(values || {}).filter(function(key) { return values[key]; });
@@ -519,40 +724,266 @@ def report_shell_script() -> str:
     var haystack = columns.map(function(col) { return text(cell(row, col.key)); }).join(' ').toLowerCase();
     return haystack.indexOf(query.toLowerCase()) !== -1;
   }
+  function cssVar(name, fallback) {
+    var value = getComputedStyle(document.documentElement).getPropertyValue(name);
+    return (value && value.trim()) || fallback || '';
+  }
+  function chartColorway() {
+    var colors = [];
+    for (var i = 1; i <= 8; i++) {
+      var color = cssVar('--dc-cat-' + i);
+      if (color) colors.push(color);
+    }
+    if (!colors.length) {
+      colors = [cssVar('--dc-accent', '#2563eb'), cssVar('--dc-accent-2', '#0f766e'), cssVar('--dc-accent-3', '#c2410c')];
+    }
+    return colors;
+  }
+  var CHART_FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif';
+  function mergeDeep(base, over) {
+    var out = {};
+    Object.keys(base || {}).forEach(function(key) { out[key] = base[key]; });
+    Object.keys(over || {}).forEach(function(key) {
+      var value = over[key];
+      if (value && typeof value === 'object' && !Array.isArray(value) && out[key] && typeof out[key] === 'object' && !Array.isArray(out[key])) {
+        out[key] = mergeDeep(out[key], value);
+      } else {
+        out[key] = value;
+      }
+    });
+    return out;
+  }
+  function themeAxis(axis) {
+    var line = cssVar('--dc-line', '#d9e1ea');
+    var muted = cssVar('--dc-muted', '#667085');
+    axis = axis || {};
+    axis.gridcolor = line;
+    axis.zerolinecolor = line;
+    axis.linecolor = line;
+    axis.tickcolor = line;
+    axis.tickfont = mergeDeep({color: muted}, axis.tickfont || {});
+    axis.tickfont.color = muted;
+    if (axis.automargin === undefined) axis.automargin = true;
+    if (axis.title && typeof axis.title === 'string') axis.title = {text: axis.title};
+    axis.title = mergeDeep({font: {color: muted}}, axis.title || {});
+    axis.title.font = mergeDeep(axis.title.font || {}, {color: muted});
+    return axis;
+  }
+  function applyChartTheme(layout) {
+    layout = layout || {};
+    delete layout.template;
+    var ink = cssVar('--dc-ink', '#111827');
+    layout.colorway = layout.colorway || chartColorway();
+    layout.font = mergeDeep({size: 12.5}, layout.font || {});
+    layout.font.family = CHART_FONT;
+    layout.font.color = ink;
+    layout.paper_bgcolor = 'rgba(0,0,0,0)';
+    layout.plot_bgcolor = 'rgba(0,0,0,0)';
+    Object.keys(layout).forEach(function(key) {
+      if (/^[xy]axis[0-9]*$/.test(key)) layout[key] = themeAxis(layout[key]);
+    });
+    layout.xaxis = themeAxis(layout.xaxis);
+    layout.yaxis = themeAxis(layout.yaxis);
+    layout.legend = mergeDeep({font: {color: ink}, bgcolor: 'rgba(0,0,0,0)'}, layout.legend || {});
+    layout.legend.font = mergeDeep(layout.legend.font || {}, {color: ink});
+    if (layout.title && typeof layout.title === 'string') layout.title = {text: layout.title};
+    if (layout.title) {
+      layout.title = mergeDeep({font: {color: ink, size: 15}}, layout.title);
+      layout.title.font.color = ink;
+    }
+    if (!layout.margin) layout.margin = {l: 52, r: 18, t: layout.title ? 40 : 18, b: 50};
+    layout.hoverlabel = mergeDeep({font: {family: CHART_FONT}}, layout.hoverlabel || {});
+    return layout;
+  }
+  var chartRegistry = [];
+  function registerChartRender(target, render) {
+    for (var i = 0; i < chartRegistry.length; i++) {
+      if (chartRegistry[i].target === target) {
+        chartRegistry[i].render = render;
+        return;
+      }
+    }
+    chartRegistry.push({target: target, render: render});
+  }
+  function rethemeCharts() {
+    chartRegistry.forEach(function(entry) {
+      if (document.body.contains(entry.target)) entry.render();
+    });
+  }
+  if (window.MutationObserver) {
+    new MutationObserver(rethemeCharts).observe(document.documentElement, {attributes: true, attributeFilter: ['data-theme']});
+  }
+  if (window.matchMedia) {
+    try { window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', rethemeCharts); } catch (err) {}
+  }
+  function renderFigure(target, fig) {
+    if (!target) return;
+    if (!window.Plotly) {
+      target.innerHTML = '<div class="r-empty-state">Chart runtime unavailable.</div>';
+      return;
+    }
+    var layout = applyChartTheme(JSON.parse(JSON.stringify((fig && fig.layout) || {})));
+    Plotly.react(target, (fig && fig.data) || [], layout, {responsive: true, displaylogo: false});
+    registerChartRender(target, function() { renderFigure(target, fig); });
+  }
+  function coerceNumber(value) {
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    var n = Number(text(value).replace(/,/g, ''));
+    return Number.isFinite(n) ? n : null;
+  }
+  function aggregateValues(values, how) {
+    var nums = values.map(coerceNumber).filter(function(v) { return v !== null; });
+    if (how === 'count') return values.length;
+    if (!nums.length) return values.length ? values[values.length - 1] : null;
+    var sum = nums.reduce(function(a, b) { return a + b; }, 0);
+    if (how === 'mean') return sum / nums.length;
+    if (how === 'max') return Math.max.apply(null, nums);
+    if (how === 'min') return Math.min.apply(null, nums);
+    return sum;
+  }
+  function referenceShapes(chart) {
+    var shapes = [];
+    var annotations = [];
+    var accent = cssVar('--dc-accent-3', '#c2410c');
+    var muted = cssVar('--dc-muted', '#667085');
+    (Array.isArray(chart.reference_lines) ? chart.reference_lines : []).forEach(function(rl) {
+      if (!rl || rl.value === undefined || rl.value === null) return;
+      var shape = {type: 'line', line: {dash: 'dot', width: 1.6, color: rl.color || accent}};
+      if (rl.axis === 'x') {
+        shape.x0 = rl.value; shape.x1 = rl.value; shape.yref = 'paper'; shape.y0 = 0; shape.y1 = 1;
+        if (rl.label) annotations.push({text: rl.label, x: rl.value, yref: 'paper', y: 1, yanchor: 'bottom', showarrow: false, font: {size: 11, color: muted}});
+      } else {
+        shape.y0 = rl.value; shape.y1 = rl.value; shape.xref = 'paper'; shape.x0 = 0; shape.x1 = 1;
+        if (rl.label) annotations.push({text: rl.label, y: rl.value, xref: 'paper', x: 1, xanchor: 'right', yanchor: 'bottom', showarrow: false, font: {size: 11, color: muted}});
+      }
+      shapes.push(shape);
+    });
+    (Array.isArray(chart.annotations) ? chart.annotations : []).forEach(function(note) {
+      if (!note || note.text === undefined) return;
+      annotations.push({text: text(note.text), x: note.x, y: note.y, showarrow: note.showarrow !== false, arrowhead: 2, arrowsize: 0.8, font: {size: 11}});
+    });
+    return {shapes: shapes, annotations: annotations};
+  }
   function renderChart(target, chart, rows) {
-    if (!target || !window.Plotly) return;
+    if (!target) return;
     chart = chart || {};
     rows = rows || [];
+    if (!window.Plotly) {
+      target.innerHTML = '<div class="r-empty-state">Chart runtime unavailable.</div>';
+      return;
+    }
+    if (!rows.length) {
+      if (Plotly.purge) Plotly.purge(target);
+      target.innerHTML = '<div class="r-empty-state">No records match the current controls.</div>';
+      return;
+    }
+    if (!target._fullLayout && target.firstChild) target.innerHTML = '';
+    var type = chart.type || 'bar';
+    var horizontal = type === 'hbar' || chart.orientation === 'h';
+    if (type === 'hbar') type = 'bar';
     var xKey = chart.x || chart.x_key || 'x';
     var yKey = chart.y || chart.y_key || 'y';
     var colorKey = chart.color || chart.group || chart.series;
-    var type = chart.type || 'bar';
-    var grouped = {};
-    function ensureGroup(name) {
-      if (!grouped[name]) grouped[name] = {x: [], y: [], text: [], name: name, type: type};
-      return grouped[name];
+    var traces = [];
+    var layout = {};
+    if (type === 'heatmap') {
+      var zKey = chart.z || chart.value || chart.z_key || 'value';
+      var xs = [], ys = [], seenX = {}, seenY = {};
+      rows.forEach(function(row) {
+        var xv = text(cell(row, xKey));
+        var yv = text(cell(row, yKey));
+        if (xv && !seenX[xv]) { seenX[xv] = true; xs.push(xv); }
+        if (yv && !seenY[yv]) { seenY[yv] = true; ys.push(yv); }
+      });
+      var z = ys.map(function() { return xs.map(function() { return null; }); });
+      rows.forEach(function(row) {
+        var xi = xs.indexOf(text(cell(row, xKey)));
+        var yi = ys.indexOf(text(cell(row, yKey)));
+        if (xi > -1 && yi > -1) z[yi][xi] = coerceNumber(cell(row, zKey));
+      });
+      var flat = [];
+      z.forEach(function(rowVals) { rowVals.forEach(function(v) { if (v !== null) flat.push(v); }); });
+      var zMin = Math.min.apply(null, flat);
+      var zMax = Math.max.apply(null, flat);
+      var diverging = flat.length > 0 && zMin < 0 && zMax > 0;
+      var scale = chart.colorscale;
+      if (!scale) {
+        scale = diverging
+          ? [[0, cssVar('--dc-accent', '#2563eb')], [0.5, cssVar('--dc-surface-muted', '#f8fafc')], [1, cssVar('--dc-accent-3', '#c2410c')]]
+          : [[0, cssVar('--dc-surface-muted', '#f8fafc')], [1, cssVar('--dc-accent', '#2563eb')]];
+      }
+      var heatTrace = {
+        type: 'heatmap', x: xs, y: ys, z: z, hoverongaps: false,
+        colorscale: scale,
+        colorbar: {outlinewidth: 0, thickness: 12}
+      };
+      if (diverging && !chart.colorscale) heatTrace.zmid = 0;
+      traces = [heatTrace];
+    } else {
+      var grouped = {};
+      var order = [];
+      rows.forEach(function(row) {
+        var name = colorKey ? text(cell(row, colorKey)) || 'Series' : chart.name || 'Series';
+        if (!grouped[name]) { grouped[name] = {}; order.push(name); }
+        var xv = text(cell(row, xKey));
+        if (!grouped[name][xv]) grouped[name][xv] = [];
+        grouped[name][xv].push(cell(row, yKey));
+      });
+      var catTotals = {};
+      var cats = [];
+      order.forEach(function(name) {
+        Object.keys(grouped[name]).forEach(function(xv) {
+          if (catTotals[xv] === undefined) { catTotals[xv] = 0; cats.push(xv); }
+          var agg = aggregateValues(grouped[name][xv], chart.agg || 'sum');
+          var n = coerceNumber(agg);
+          if (n !== null) catTotals[xv] += n;
+        });
+      });
+      var sortMode = chart.sort === undefined ? (type === 'bar' ? 'value' : 'none') : chart.sort;
+      if (sortMode === true) sortMode = 'value';
+      if (sortMode === false) sortMode = 'none';
+      if (sortMode === 'value' || sortMode === 'asc' || sortMode === 'desc') {
+        var dir = sortMode === 'asc' ? 1 : -1;
+        cats.sort(function(a, b) { return (catTotals[a] - catTotals[b]) * dir; });
+      } else if (sortMode === 'label') {
+        cats.sort(function(a, b) { return a.localeCompare(b, undefined, {numeric: true}); });
+      }
+      traces = order.map(function(name) {
+        var xsOut = [], ysOut = [];
+        cats.forEach(function(xv) {
+          if (!grouped[name][xv]) return;
+          xsOut.push(xv);
+          ysOut.push(aggregateValues(grouped[name][xv], chart.agg || 'sum'));
+        });
+        var trace = {name: name, type: type === 'line' ? 'scatter' : type};
+        if (horizontal) {
+          trace.x = ysOut; trace.y = xsOut; trace.orientation = 'h';
+        } else {
+          trace.x = xsOut; trace.y = ysOut;
+        }
+        if (type === 'scatter') trace.mode = chart.mode || 'markers';
+        if (type === 'line') trace.mode = chart.mode || 'lines+markers';
+        return trace;
+      });
+      var catAxis = {categoryorder: 'array', categoryarray: cats};
+      var xTitle = chart.x_label || text(xKey).replace(/_/g, ' ');
+      var yTitle = chart.y_label || text(yKey).replace(/_/g, ' ');
+      if (horizontal) {
+        layout.yaxis = mergeDeep(catAxis, {title: xTitle, autorange: 'reversed'});
+        layout.xaxis = {title: yTitle};
+      } else {
+        layout.xaxis = mergeDeep(catAxis, {title: xTitle});
+        layout.yaxis = {title: yTitle};
+      }
+      if (order.length > 1 && type === 'bar') layout.barmode = chart.barmode || 'group';
     }
-    rows.forEach(function(row) {
-      var name = colorKey ? text(cell(row, colorKey)) || 'Series' : chart.name || 'Series';
-      var trace = ensureGroup(name);
-      trace.x.push(cell(row, xKey));
-      trace.y.push(cell(row, yKey));
-      trace.text.push(text(row && (row.label || row.name) || ''));
-    });
-    var traces = Object.keys(grouped).map(function(key) {
-      var trace = grouped[key];
-      if (type === 'scatter') trace.mode = chart.mode || 'markers';
-      return trace;
-    });
-    var layout = Object.assign({
-      margin: {l: 46, r: 18, t: chart.title ? 34 : 16, b: 46},
-      title: chart.title ? {text: chart.title} : undefined,
-      xaxis: {title: chart.x_label || xKey},
-      yaxis: {title: chart.y_label || yKey},
-      paper_bgcolor: 'rgba(0,0,0,0)',
-      plot_bgcolor: 'rgba(0,0,0,0)'
-    }, chart.layout || {});
-    Plotly.react(target, traces, layout, {responsive: true, displaylogo: false});
+    if (chart.title) layout.title = {text: chart.title};
+    var extras = referenceShapes(chart);
+    if (extras.shapes.length) layout.shapes = (layout.shapes || []).concat(extras.shapes);
+    if (extras.annotations.length) layout.annotations = (layout.annotations || []).concat(extras.annotations);
+    layout = mergeDeep(layout, chart.layout || {});
+    Plotly.react(target, traces, applyChartTheme(layout), {responsive: true, displaylogo: false});
+    registerChartRender(target, function() { renderChart(target, chart, rows); });
   }
   function initTable(root, config, rowsProvider) {
     var baseRows = config.rows || config.records || [];
@@ -566,8 +997,10 @@ def report_shell_script() -> str:
     var pager = root.querySelector('[data-dc-pagination]');
     if (tools && config.search !== false && config.enable_search !== false) {
       var input = document.createElement('input');
+      input.id = slugId('table-search-' + Math.random().toString(36).slice(2, 8), 'search');
       input.type = 'search';
       input.placeholder = config.search_placeholder || 'Search table';
+      input.setAttribute('aria-label', config.search_label || 'Search table');
       input.addEventListener('input', function() { state.search = input.value; state.page = 1; render(); });
       tools.appendChild(input);
     }
@@ -586,6 +1019,17 @@ def report_shell_script() -> str:
       }
       return rows;
     }
+    var numericCols = {};
+    cols.forEach(function(col) {
+      var sample = baseRows.filter(function(row) { return text(cell(row, col.key)) !== ''; });
+      numericCols[col.key] = sample.length > 0 && sample.every(function(row) { return coerceNumber(cell(row, col.key)) !== null; });
+    });
+    function formatCell(value, key) {
+      if (!numericCols[key]) return esc(value);
+      var n = coerceNumber(value);
+      if (n === null) return esc(value);
+      return esc(n.toLocaleString(undefined, {maximumFractionDigits: 2}));
+    }
     function render() {
       if (!target) return;
       var rows = activeRows();
@@ -594,16 +1038,25 @@ def report_shell_script() -> str:
       var start = (state.page - 1) * pageSize;
       var shown = rows.slice(start, start + pageSize);
       var head = '<thead><tr>' + cols.map(function(col) {
-        var marker = state.sortKey === col.key ? (state.sortDir === 1 ? ' asc' : ' desc') : '';
-        return '<th data-key="' + esc(col.key) + '">' + esc(col.label) + marker + '</th>';
+        var sorted = state.sortKey === col.key;
+        var ariaSort = sorted ? (state.sortDir === 1 ? 'ascending' : 'descending') : 'none';
+        var marker = sorted ? (state.sortDir === 1 ? '▲' : '▼') : '';
+        var numClass = numericCols[col.key] ? ' class="num"' : '';
+        return '<th scope="col"' + numClass + ' aria-sort="' + ariaSort + '"><button type="button" class="r-sort-button" data-key="' + esc(col.key) + '" aria-label="Sort by ' + esc(col.label) + '">' + esc(col.label) + '<span class="r-sort-indicator" aria-hidden="true">' + marker + '</span></button></th>';
       }).join('') + '</tr></thead>';
-      var body = '<tbody>' + shown.map(function(row) {
-        return '<tr>' + cols.map(function(col) { return '<td>' + esc(cell(row, col.key)) + '</td>'; }).join('') + '</tr>';
-      }).join('') + '</tbody>';
+      var bodyRows = shown.length
+        ? shown.map(function(row) {
+            return '<tr>' + cols.map(function(col) {
+              var numClass = numericCols[col.key] ? ' class="num"' : '';
+              return '<td' + numClass + '>' + formatCell(cell(row, col.key), col.key) + '</td>';
+            }).join('') + '</tr>';
+          }).join('')
+        : '<tr><td colspan="' + Math.max(1, cols.length) + '"><div class="r-empty-state">No matching rows. Adjust filters or search.</div></td></tr>';
+      var body = '<tbody>' + bodyRows + '</tbody>';
       target.innerHTML = '<table class="r-interactive-table">' + head + body + '</table>';
-      Array.prototype.slice.call(target.querySelectorAll('th[data-key]')).forEach(function(th) {
-        th.addEventListener('click', function() {
-          var key = th.getAttribute('data-key');
+      Array.prototype.slice.call(target.querySelectorAll('.r-sort-button[data-key]')).forEach(function(button) {
+        button.addEventListener('click', function() {
+          var key = button.getAttribute('data-key');
           state.sortDir = state.sortKey === key ? state.sortDir * -1 : 1;
           state.sortKey = key;
           render();
@@ -620,7 +1073,7 @@ def report_shell_script() -> str:
       }
       if (pager) {
         var end = Math.min(rows.length, start + pageSize);
-        pager.innerHTML = '<button type="button" data-prev>Prev</button><span>Showing ' + (rows.length ? start + 1 : 0) + '-' + end + ' of ' + rows.length + '</span><button type="button" data-next>Next</button>';
+        pager.innerHTML = '<button type="button" data-prev aria-label="Previous page">Prev</button><span>Showing ' + (rows.length ? start + 1 : 0) + '-' + end + ' of ' + rows.length + '</span><button type="button" data-next aria-label="Next page">Next</button>';
         var prev = pager.querySelector('[data-prev]');
         var next = pager.querySelector('[data-next]');
         prev.disabled = state.page <= 1;
@@ -633,6 +1086,11 @@ def report_shell_script() -> str:
     return render;
   }
   window.DataClawReport = window.DataClawReport || {};
+  window.DataClawReport.renderFigureById = function(id, config) {
+    var target = document.getElementById(id);
+    if (!target) return;
+    renderFigure(target, (config && config.figure) || {});
+  };
   window.DataClawReport.initInteractiveTable = function(id, config) {
     var root = document.getElementById(id);
     if (root) initTable(root, config || {});
@@ -662,20 +1120,89 @@ def report_shell_script() -> str:
     }
     update();
   };
+  function selectorKey(item, index) {
+    if (item && typeof item === 'object') return text(item.id || item.key || item.name || item.title || index);
+    return text(index);
+  }
+  function itemTitle(item, fallback) {
+    if (item && typeof item === 'object') return text(item.title || item.headline || item.name || item.label || fallback);
+    return text(item || fallback);
+  }
+  function itemDetail(item) {
+    if (!item || typeof item !== 'object') return '';
+    return text(item.summary || item.detail || item.description || item.rationale || item.text || '');
+  }
+  function renderMetricRows(metrics) {
+    var rows = [];
+    if (metrics && typeof metrics === 'object' && !Array.isArray(metrics)) {
+      Object.keys(metrics).forEach(function(key) {
+        rows.push({label: key.replace(/_/g, ' '), value: metrics[key]});
+      });
+    } else if (Array.isArray(metrics)) {
+      metrics.forEach(function(metric) {
+        if (metric && typeof metric === 'object') rows.push({label: text(metric.label || metric.name || metric.key), value: metric.value});
+      });
+    }
+    return rows.filter(function(row) { return row.label || row.value !== undefined; }).map(function(row) {
+      return '<div class="r-entity-metric"><span>' + esc(row.label) + '</span><strong>' + esc(row.value) + '</strong></div>';
+    }).join('');
+  }
+  function renderSelectionDetail(target, item) {
+    if (!target) return;
+    if (!item) {
+      target.innerHTML = '<div class="r-empty-state">No selections match the current controls.</div>';
+      return;
+    }
+    var detail = itemDetail(item);
+    var metrics = item && typeof item === 'object' ? renderMetricRows(item.metrics) : '';
+    target.innerHTML = '<h3>' + esc(itemTitle(item, 'Selected item')) + '</h3>' +
+      (detail ? '<p>' + esc(detail) + '</p>' : '') +
+      (metrics ? '<div class="r-entity-metrics">' + metrics + '</div>' : '');
+  }
   window.DataClawReport.initSelectorPanel = function(id, config) {
     var root = document.getElementById(id);
     if (!root) return;
     var items = config.items || config.options || [];
     var cards = Array.prototype.slice.call(root.querySelectorAll('[data-dc-selector-card]'));
+    var detail = root.querySelector('[data-dc-selection-detail]');
+    var keys = items.map(selectorKey);
+    var selectedKey = keys[0] || '';
     var getFilters = buildControls(root.querySelector('[data-dc-control-bar]'), config.controls || config.filters || [], items, update);
+    cards.forEach(function(card) {
+      var key = card.getAttribute('data-dc-selector-card');
+      card.setAttribute('role', 'button');
+      card.setAttribute('tabindex', '0');
+      card.setAttribute('aria-pressed', key === selectedKey ? 'true' : 'false');
+      card.addEventListener('click', function() {
+        selectedKey = key;
+        update();
+      });
+      card.addEventListener('keydown', function(event) {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          selectedKey = key;
+          update();
+        }
+      });
+    });
     function update() {
       var visible = {};
-      applyFilters(items, getFilters()).forEach(function(item, index) {
-        visible[text(item.id || item.key || item.name || index)] = true;
+      var filtered = applyFilters(items, getFilters());
+      filtered.forEach(function(item) {
+        var index = items.indexOf(item);
+        visible[keys[index]] = true;
       });
+      if (!visible[selectedKey]) selectedKey = filtered.length ? keys[items.indexOf(filtered[0])] : '';
       cards.forEach(function(card) {
-        card.style.display = visible[card.getAttribute('data-dc-selector-card')] ? '' : 'none';
+        var key = card.getAttribute('data-dc-selector-card');
+        var isVisible = !!visible[key];
+        var isSelected = key === selectedKey;
+        card.style.display = isVisible ? '' : 'none';
+        card.classList.toggle('is-selected', isSelected);
+        card.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
       });
+      var selectedIndex = keys.indexOf(selectedKey);
+      renderSelectionDetail(detail, selectedIndex >= 0 ? items[selectedIndex] : null);
     }
     update();
   };
@@ -707,12 +1234,23 @@ def report_shell_script() -> str:
       if (nav && sections.length > 1) {
         var link = document.createElement('a');
         link.href = '#' + section.id;
-        link.textContent = label;
+        var num = document.createElement('span');
+        num.className = 'r-nav-num';
+        num.textContent = (index < 9 ? '0' : '') + (index + 1);
+        link.appendChild(num);
+        link.appendChild(document.createTextNode(label));
         link.dataset.target = section.id;
         nav.appendChild(link);
       }
     });
-    if (nav && nav.children.length > 1) nav.classList.add('ready');
+    if (nav && nav.children.length > 1) {
+      var head = document.createElement('div');
+      head.className = 'r-story-nav-head';
+      head.textContent = 'Contents';
+      nav.insertBefore(head, nav.firstChild);
+      nav.classList.add('ready');
+      document.body.classList.add('has-rail');
+    }
     var navLinks = nav ? Array.prototype.slice.call(nav.querySelectorAll('a')) : [];
     var markActive = function(id) {
       navLinks.forEach(function(link) {
@@ -856,6 +1394,7 @@ def analyze_report_quality(
     kinds = [clean_text(section.get("kind") or "") for section in sections]
     plain_chart_count = kinds.count("chart")
     chart_like_count = sum(1 for kind in kinds if kind in CHART_SECTION_KINDS)
+    interpreted_chart_count = kinds.count("chart_interpretation")
     story_count = sum(1 for kind in kinds if kind in STORY_SECTION_KINDS and kind != "chart")
     interactive_count = sum(1 for kind in kinds if kind in INTERACTIVE_SECTION_KINDS)
     primary_insight_count = 0
@@ -886,6 +1425,17 @@ def analyze_report_quality(
             "Report is dominated by plain charts without interpretation or interactive explorer sections.",
             severity="fail",
             details={"plain_chart_count": plain_chart_count, "interactive_count": interactive_count},
+        )
+    if plain_chart_count >= 4 and plain_chart_count > (interactive_count + interpreted_chart_count):
+        warn(
+            "plain_chart_overuse",
+            "Report still relies on too many plain chart sections; convert supporting charts into interpretation or explorer sections.",
+            severity="fail",
+            details={
+                "plain_chart_count": plain_chart_count,
+                "interactive_count": interactive_count,
+                "chart_interpretation_count": interpreted_chart_count,
+            },
         )
     if len(kinds) >= 4 and story_count == 0:
         warn(
@@ -1017,33 +1567,57 @@ def design_report_storyboard(
     if metrics:
         add("metric_row", "executive_kpis", "Lead with 2-5 numbers that anchor the rest of the report.", {
             "title": requirements.get("metrics_title", "Headline metrics"),
+            "kicker": "At a glance",
             "metrics": metrics[:5],
         })
 
-    readout = _storyboard_readout(clean_goal, normalized_insights)
-    add("narrative_band", "executive_readout", "State the answer before the reader reaches supporting evidence.", {
-        "title": requirements.get("readout_title", "Executive readout"),
-        "summary": readout,
-        "bullets": [clean_text(item.get("title") or item.get("headline") or item.get("finding") or "") for item in normalized_insights[:3] if clean_text(item.get("title") or item.get("headline") or item.get("finding") or "")],
-    })
-
-    if normalized_insights:
-        add("insight_grid", "primary_insights", "Separate the material conclusions from the notebook execution trail.", {
-            "title": requirements.get("insights_title", "Primary insights"),
-            "caption": "Findings promoted from completed analysis with evidence, caveats, and next actions where available.",
-            "items": [_storyboard_insight_item(item, i) for i, item in enumerate(normalized_insights[:7])],
-        })
-
+    # Plan the evidence sections first so insights can anchor to them.
+    planned_analyses: list[dict[str, Any]] = []
+    hero_assigned = False
     for index, analysis in enumerate(normalized_analyses):
         planned = _storyboard_section_from_analysis(analysis, index)
-        if planned:
-            add(planned["section_type"], planned["layout_role"], planned["rationale"], planned["data"])
+        if not planned:
+            continue
+        planned["data"]["section_id"] = f"sec-evidence-{index + 1}"
+        planned["data"].setdefault("kicker", f"Evidence {index + 1:02d}")
+        if not hero_assigned and planned["section_type"] in (CHART_SECTION_KINDS | INTERACTIVE_SECTION_KINDS):
+            planned["data"]["emphasis"] = "hero"
+            hero_assigned = True
+        planned_analyses.append(planned)
+
+    paired_insights = [_storyboard_insight_item(item, i) for i, item in enumerate(normalized_insights[:7])]
+    _pair_insights_with_evidence(paired_insights, planned_analyses)
+
+    readout = _storyboard_readout(clean_goal, normalized_insights)
+    add("narrative_band", "executive_readout", "State the answer before the reader reaches supporting evidence.", {
+        "title": requirements.get("readout_title", "The answer"),
+        "kicker": "Executive readout",
+        "summary": readout,
+        "bullets": [
+            _readout_bullet(item)
+            for item in normalized_insights[1:4]
+            if _readout_bullet(item)
+        ],
+    })
+
+    if paired_insights:
+        add("insight_grid", "primary_insights", "Separate the material conclusions from the notebook execution trail.", {
+            "title": requirements.get("insights_title", "Primary insights"),
+            "kicker": "What changed",
+            "section_id": "sec-primary-insights",
+            "caption": "Findings promoted from completed analysis with evidence, caveats, and next actions where available.",
+            "items": paired_insights,
+        })
+
+    for planned in planned_analyses:
+        add(planned["section_type"], planned["layout_role"], planned["rationale"], planned["data"])
 
     methodology = requirements.get("methodology") or requirements.get("methods") or _collect_named_items(normalized_analyses, "methodology")
     if methodology:
         methods = methodology if isinstance(methodology, list) else [{"title": "Analysis method", "detail": methodology}]
         add("methodology_block", "methodology", "Show grain, denominator, validation, and assumptions after the evidence.", {
             "title": requirements.get("methodology_title", "Methodology"),
+            "kicker": "Method & trust",
             "methods": methods,
             "checks": requirements.get("checks", []),
         })
@@ -1052,6 +1626,7 @@ def design_report_storyboard(
     if isinstance(hypotheses, list) and hypotheses:
         add("hypothesis_ledger", "hypothesis_dispositions", "Show how the analysis moved from open questions to dispositions.", {
             "title": requirements.get("hypothesis_title", "Hypothesis ledger"),
+            "kicker": "Method & trust",
             "hypotheses": hypotheses,
         })
 
@@ -1059,6 +1634,7 @@ def design_report_storyboard(
     if evidence:
         add("evidence_trace", "evidence_trace", "Make report claims traceable back to notebook cells, filters, and artifacts.", {
             "title": requirements.get("evidence_title", "Evidence trace"),
+            "kicker": "Provenance",
             "evidence": evidence,
         })
 
@@ -1092,6 +1668,7 @@ def design_report_storyboard(
                 "stale_installed_skills",
                 "consecutive_plain_charts",
                 "chart_dump",
+                "plain_chart_overuse",
                 "missing_insight_sections",
                 "missing_evidence_ids",
                 "missing_table_caption",
@@ -1165,9 +1742,74 @@ def _storyboard_readout(goal: str, insights: list[dict[str, Any]]) -> str:
         return goal
     lead = _item_title(insights[0], "Primary finding")
     detail = _item_detail(insights[0])
-    if detail:
-        return f"{goal}\n\nPrimary readout: {lead}. {detail}"
-    return f"{goal}\n\nPrimary readout: {lead}."
+    answer = f"{lead}. {detail}" if detail else f"{lead}."
+    statuses = [
+        clean_text(item.get("status") or item.get("disposition") or item.get("severity") or "")
+        for item in insights
+    ]
+    confirmed = sum(1 for s in statuses if _status_class(s) == "good")
+    caution = sum(1 for s in statuses if _status_class(s) in {"warn", "danger"})
+    coverage_bits = [f"{len(insights)} material insight{'s' if len(insights) != 1 else ''}"]
+    if confirmed:
+        coverage_bits.append(f"{confirmed} confirmed")
+    if caution:
+        coverage_bits.append(f"{caution} flagged with caveats")
+    coverage = "The analysis surfaced " + ", ".join(coverage_bits) + "; each is paired with its evidence below."
+    return f"{answer}\n\n{coverage}"
+
+
+def _readout_bullet(item: dict[str, Any]) -> str:
+    title = clean_text(item.get("title") or item.get("headline") or item.get("finding") or "")
+    if not title:
+        return ""
+    status = clean_text(item.get("status") or item.get("disposition") or item.get("severity") or "")
+    return f"{title} ({status})" if status else title
+
+
+def _evidence_ref_keys(source: dict[str, Any]) -> set[str]:
+    keys: set[str] = set()
+    for field in ("finding_id", "hypothesis_id"):
+        value = clean_text(source.get(field) or "")
+        if value:
+            keys.add(value)
+    for entry in _as_list(source.get("evidence") or source.get("evidence_refs")):
+        if isinstance(entry, dict):
+            for field in ("cell_id", "ref", "artifact_id", "finding_id", "hypothesis_id", "path"):
+                value = clean_text(entry.get(field) or "")
+                if value:
+                    keys.add(value)
+        else:
+            value = clean_text(entry)
+            if value:
+                keys.add(value)
+    return keys
+
+
+def _pair_insights_with_evidence(insights: list[dict[str, Any]], planned_analyses: list[dict[str, Any]]) -> None:
+    """Anchor each insight to the evidence section that shares its provenance, and backlink the section."""
+    analysis_refs = []
+    for planned in planned_analyses:
+        data = planned.get("data", {})
+        refs = _evidence_ref_keys(data)
+        source = data.get("data") if isinstance(data.get("data"), dict) else None
+        if source:
+            refs |= _evidence_ref_keys(source)
+        analysis_refs.append(refs)
+    for insight in insights:
+        refs = _evidence_ref_keys(insight)
+        if not refs:
+            continue
+        for planned, planned_refs in zip(planned_analyses, analysis_refs):
+            if refs & planned_refs:
+                anchor = clean_text(planned["data"].get("section_id") or "")
+                if not anchor:
+                    continue
+                insight["evidence_anchor"] = anchor
+                supports = planned["data"].setdefault("supports", [])
+                title = clean_text(insight.get("title") or "")
+                if title and all(entry.get("title") != title for entry in supports if isinstance(entry, dict)):
+                    supports.append({"title": title, "anchor": "sec-primary-insights"})
+                break
 
 
 def _storyboard_insight_item(item: dict[str, Any], index: int) -> dict[str, Any]:
@@ -1196,18 +1838,52 @@ def _storyboard_section_from_analysis(analysis: dict[str, Any], index: int) -> d
     data.setdefault("title", analysis.get("title") or f"Analysis {index + 1}")
     data.setdefault("caption", analysis.get("caption") or analysis.get("summary") or "")
 
-    if explicit in STORY_SECTION_KINDS or explicit in CHART_SECTION_KINDS or explicit in {"table", "callout", "text"}:
+    renderable = (
+        STORY_SECTION_KINDS
+        | CHART_SECTION_KINDS
+        | {"table", "callout", "text", "comparison", "checklist", "explanation", "metric_row"}
+    )
+    if explicit in renderable:
         return {
             "section_type": explicit,
             "layout_role": f"analysis_{index + 1}_{explicit}",
             "rationale": "Use the explicit section type chosen by the report designer.",
             "data": data,
         }
+    if explicit:
+        raise ValueError(
+            f"analyses[{index}] requested unsupported section_type '{explicit}'; "
+            f"supported types: {', '.join(sorted(renderable))}"
+        )
+
+    if isinstance(data.get("groups"), list) and data.get("groups"):
+        return {
+            "section_type": "comparison",
+            "layout_role": f"analysis_{index + 1}_comparison",
+            "rationale": "Side-by-side groups compare cleanly as comparison cards.",
+            "data": data,
+        }
+    if isinstance(data.get("checks"), list) and data.get("checks"):
+        return {
+            "section_type": "checklist",
+            "layout_role": f"analysis_{index + 1}_checklist",
+            "rationale": "Check items render as a readiness checklist.",
+            "data": data,
+        }
+    if isinstance(data.get("events") or data.get("timeline"), list) and (data.get("events") or data.get("timeline")):
+        return {
+            "section_type": "ledger_timeline",
+            "layout_role": f"analysis_{index + 1}_ledger_timeline",
+            "rationale": "Chronological events render as a timeline.",
+            "data": data,
+        }
 
     records = data.get("records", data.get("rows"))
     chart = data.get("chart")
     if isinstance(records, list) and isinstance(chart, dict):
-        filters = data.get("filters", data.get("controls", []))
+        filters = data.get("filters", data.get("controls"))
+        if not filters:
+            filters = _infer_filters(records, chart)
         section_type = "chart_table_explorer" if data.get("columns") or filters or len(records) > 6 else "filterable_chart"
         data.setdefault("filters", filters)
         data.setdefault("columns", data.get("columns") or _columns_from_records(records)[:8])
@@ -1219,6 +1895,7 @@ def _storyboard_section_from_analysis(analysis: dict[str, Any], index: int) -> d
         }
 
     if isinstance(data.get("rows"), list) and isinstance(data.get("columns"), list):
+        data.setdefault("filters", data.get("controls") or _infer_filters(data.get("rows", [])))
         return {
             "section_type": "interactive_table",
             "layout_role": f"analysis_{index + 1}_interactive_table",
@@ -1234,7 +1911,19 @@ def _storyboard_section_from_analysis(analysis: dict[str, Any], index: int) -> d
             "data": data,
         }
 
-    if isinstance(data.get("items"), list) or isinstance(data.get("entities"), list):
+    items = data.get("items", data.get("entities"))
+    if isinstance(items, list):
+        filters = data.get("controls", data.get("filters"))
+        if not filters:
+            filters = _infer_filters(items)
+        if filters and len(items) > 1:
+            data.setdefault("controls", filters)
+            return {
+                "section_type": "selector_panel",
+                "layout_role": f"analysis_{index + 1}_selector_panel",
+                "rationale": "Let the reader choose an entity/archetype and inspect its metrics without scanning every card.",
+                "data": data,
+            }
         return {
             "section_type": "entity_card_grid",
             "layout_role": f"analysis_{index + 1}_entity_cards",
@@ -1242,7 +1931,18 @@ def _storyboard_section_from_analysis(analysis: dict[str, Any], index: int) -> d
             "data": data,
         }
 
-    return None
+    if clean_text(data.get("body") or data.get("text") or ""):
+        return {
+            "section_type": "text",
+            "layout_role": f"analysis_{index + 1}_text",
+            "rationale": "Prose-only analysis renders as a narrative text section.",
+            "data": data,
+        }
+
+    raise ValueError(
+        f"analyses[{index}] ('{clean_text(data.get('title') or '')}') has no renderable shape; "
+        "provide records+chart, rows+columns, figure, items, groups, checks, events, or an explicit section_type"
+    )
 
 
 def _columns_from_records(records: list[Any]) -> list[str]:
@@ -1257,6 +1957,65 @@ def _columns_from_records(records: list[Any]) -> list[str]:
                 seen.add(clean_key)
                 columns.append(clean_key)
     return columns
+
+
+def _infer_filters(records: list[Any], chart: dict[str, Any] | None = None) -> list[dict[str, str]]:
+    if not records:
+        return []
+    chart = chart or {}
+    excluded = {
+        clean_text(chart.get("x") or chart.get("x_key") or ""),
+        clean_text(chart.get("y") or chart.get("y_key") or ""),
+    }
+    preferred = [
+        clean_text(chart.get("color") or chart.get("group") or chart.get("series") or ""),
+        "segment",
+        "cohort",
+        "category",
+        "group",
+        "type",
+        "status",
+        "region",
+        "scenario",
+        "stage",
+    ]
+    rows = [row for row in records if isinstance(row, dict)]
+    candidates: list[tuple[int, str, int]] = []
+    for key in _columns_from_records(rows):
+        if key in excluded:
+            continue
+        values = [row.get(key) for row in rows if row.get(key) not in (None, "")]
+        if not values or all(_is_numberish(value) for value in values):
+            continue
+        unique = {clean_text(value) for value in values if clean_text(value)}
+        if len(unique) < 2:
+            continue
+        key_l = key.lower()
+        priority_index = next((i for i, name in enumerate(preferred) if name and key_l == name.lower()), None)
+        max_options = 32 if priority_index is not None else 16
+        if len(unique) > max_options:
+            continue
+        priority = priority_index if priority_index is not None else 100
+        candidates.append((priority, key, len(unique)))
+    candidates.sort(key=lambda item: (item[0], item[2], item[1]))
+    return [
+        {"key": key, "label": key.replace("_", " ").title()}
+        for _, key, _ in candidates[:3]
+    ]
+
+
+def _is_numberish(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return True
+    if isinstance(value, str):
+        try:
+            float(value.replace(",", ""))
+        except ValueError:
+            return False
+        return True
+    return False
 
 
 def _storyboard_evidence(insights: list[dict[str, Any]], analyses: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1321,8 +2080,27 @@ def _section_meta_script(typed: dict[str, Any]) -> str:
     return artifact_section_meta_script(typed)
 
 
+NARROW_SECTION_KINDS = {"narrative_band", "callout", "text", "explanation"}
+
+
 def render_report_section(section_type: str, data: dict[str, Any], typed: dict[str, Any] | None = None) -> str:
     typed = typed or typed_report_section(section_type, data)
+    st = str(typed.get("kind") or section_type).strip().lower()
+    html = _render_section_body(section_type, data, typed)
+    classes = []
+    if clean_text(data.get("emphasis") or "") == "hero" and st in (CHART_SECTION_KINDS | INTERACTIVE_SECTION_KINDS):
+        classes.append("is-hero")
+    if st in NARROW_SECTION_KINDS:
+        classes.append("is-narrow")
+    if classes:
+        html = html.replace('class="r-section"', f'class="r-section {" ".join(classes)}"', 1)
+    kicker = clean_text(data.get("kicker") or "")
+    if kicker and st != "header":
+        html = re.sub(r"(<h2>)", f'<p class="r-section-kicker">{_esc(kicker)}</p>\\1', html, count=1)
+    return html
+
+
+def _render_section_body(section_type: str, data: dict[str, Any], typed: dict[str, Any]) -> str:
     st = str(typed.get("kind") or section_type).strip().lower()
     attrs = _section_attrs(typed)
     meta = _section_meta_script(typed)
@@ -1344,10 +2122,12 @@ def render_report_section(section_type: str, data: dict[str, Any], typed: dict[s
             if not isinstance(m, dict):
                 continue
             trend = _esc(m.get("trend", ""))
+            spark = _spark_svg(m.get("spark") or m.get("sparkline"))
             cards.append(f"""<div class="r-metric">
         <div class="r-metric-label">{_esc(m.get("label", ""))}</div>
         <div class="r-metric-value">{_esc(m.get("value", ""))}{f'<span style="font-size:13px;color:var(--muted);margin-left:5px">{_esc(m.get("unit", ""))}</span>' if m.get("unit") else ''}</div>
         {f'<div class="r-metric-delta {trend}">{_esc(m.get("delta", ""))}</div>' if m.get("delta") else ''}
+        {spark}
       </div>""")
         return f"""    <section class="r-section" {attrs}>
       {f'<h2>{_esc(data.get("title", ""))}</h2>' if data.get("title") else ''}
@@ -1356,53 +2136,34 @@ def render_report_section(section_type: str, data: dict[str, Any], typed: dict[s
       {meta}
     </section>"""
 
-    if st == "chart":
-        chart_id = f"chart-{uuid.uuid4().hex[:10]}"
+    if st in {"chart", "chart_interpretation"}:
+        chart_id = f"chart-{clean_text(typed.get('section_id') or uuid.uuid4().hex[:10])}"
         figure = data.get("figure")
         if not figure and data.get("figure_json"):
             figure = json.loads(str(data["figure_json"]))
         if not isinstance(figure, dict):
-            raise ValueError("chart section requires 'figure' dict or 'figure_json'")
-        figure_json = json.dumps(figure, default=str).replace("</", "<\\/")
+            raise ValueError(f"{st} section requires 'figure' dict or 'figure_json'")
+        figure_json = _json_for_script({"figure": figure})
         title = _esc(data.get("title", figure.get("layout", {}).get("title", {}).get("text", "Chart") if isinstance(figure.get("layout"), dict) else "Chart"))
         caption = _esc(data.get("caption", ""))
-        return f"""    <section class="r-section" {attrs}>
-      <h2>{title}</h2>
-      {_section_context({k: v for k, v in data.items() if k != "caption"})}
-      <div id="{chart_id}" class="r-chart-target"></div>
-      {f'<p class="r-caption">{caption}</p>' if caption else ''}
-      <script>
-        (function() {{
-          var fig = {figure_json};
-          Plotly.newPlot("{chart_id}", fig.data || [], fig.layout || {{}}, {{responsive: true, displaylogo: false}});
-        }})();
-      </script>
-      {meta}
-    </section>"""
-
-    if st == "chart_interpretation":
-        chart_id = f"chart-{uuid.uuid4().hex[:10]}"
-        figure = data.get("figure")
-        if not figure and data.get("figure_json"):
-            figure = json.loads(str(data["figure_json"]))
-        if not isinstance(figure, dict):
-            raise ValueError("chart_interpretation section requires 'figure' dict or 'figure_json'")
-        figure_json = json.dumps(figure, default=str).replace("</", "<\\/")
-        title = _esc(data.get("title", figure.get("layout", {}).get("title", {}).get("text", "Chart") if isinstance(figure.get("layout"), dict) else "Chart"))
-        caption = _esc(data.get("caption", ""))
-        interpretation = clean_text(data.get("interpretation") or data.get("insight") or data.get("summary") or "")
+        interpretation = clean_text(data.get("interpretation") or data.get("insight") or "")
+        if st == "chart_interpretation":
+            interpretation = interpretation or clean_text(data.get("summary") or "")
+        conclusion = clean_text(data.get("conclusion") or "")
         caveat = clean_text(data.get("caveat") or data.get("limitation") or "")
         next_action = clean_text(data.get("next_action") or data.get("action") or "")
         evidence = data.get("evidence", data.get("evidence_refs", []))
         rail = _render_evidence_rail(evidence, title="Evidence") if isinstance(evidence, list) and evidence else ""
-        return f"""    <section class="r-section" {attrs}>
-      <h2>{title}</h2>
-      {_section_context({k: v for k, v in data.items() if k not in {"caption", "summary", "interpretation", "insight", "evidence", "evidence_refs"}})}
-      <div class="r-chart-story-grid">
-        <div class="r-chart-main">
+        render_script = f'<script>(window.__DataClawReportQueue=window.__DataClawReportQueue||[]).push({{fn:"renderFigureById",id:"{chart_id}",config:{figure_json}}});</script>'
+        chart_main = f"""<div class="r-chart-main">
           <div id="{chart_id}" class="r-chart-target"></div>
           {f'<p class="r-caption">{caption}</p>' if caption else ''}
-        </div>
+          {f'<p class="r-conclusion">{_esc(conclusion)}</p>' if conclusion else ''}
+        </div>"""
+        has_panel = bool(interpretation or caveat or next_action or rail)
+        if has_panel:
+            body = f"""<div class="r-chart-story-grid">
+        {chart_main}
         <aside class="r-interpretation-panel">
           <h3>Interpretation</h3>
           {f'<p>{_esc(interpretation)}</p>' if interpretation else ''}
@@ -1410,13 +2171,15 @@ def render_report_section(section_type: str, data: dict[str, Any], typed: dict[s
           {f'<p class="r-finding-meta"><strong>Next:</strong> {_esc(next_action)}</p>' if next_action else ''}
           {rail}
         </aside>
-      </div>
-      <script>
-        (function() {{
-          var fig = {figure_json};
-          Plotly.newPlot("{chart_id}", fig.data || [], fig.layout || {{}}, {{responsive: true, displaylogo: false}});
-        }})();
-      </script>
+      </div>"""
+        else:
+            body = chart_main
+        context_data = {k: v for k, v in data.items() if k not in {"caption", "summary", "interpretation", "insight", "conclusion", "evidence", "evidence_refs"}}
+        return f"""    <section class="r-section" {attrs}>
+      <h2>{title}</h2>
+      {_section_context(context_data)}
+      {body}
+      {render_script}
       {meta}
     </section>"""
 
@@ -1538,6 +2301,7 @@ def render_report_section(section_type: str, data: dict[str, Any], typed: dict[s
       {_section_context(data)}
       <div id="{shell_id}" class="r-selector-panel">
         <div class="r-control-bar" data-dc-control-bar></div>
+        <div class="r-selection-detail" data-dc-selection-detail aria-live="polite"></div>
         <div class="r-entity-grid">{cards}</div>
       </div>
       <script>(window.__DataClawReportQueue=window.__DataClawReportQueue||[]).push({{fn:"initSelectorPanel",id:"{shell_id}",config:{config}}});</script>
@@ -1583,18 +2347,46 @@ def render_report_section(section_type: str, data: dict[str, Any], typed: dict[s
         rows = data.get("rows", [])
         if not isinstance(columns, list) or not isinstance(rows, list):
             raise ValueError("table section requires list 'columns' and list 'rows'")
-        head = "".join(f"<th>{_esc(str(c))}</th>" for c in columns)
+
+        def _cell_value(row: Any, col_index: int) -> Any:
+            if isinstance(row, dict):
+                return row.get(columns[col_index], "")
+            if isinstance(row, list) and col_index < len(row):
+                return row[col_index]
+            return ""
+
+        numeric_cols = []
+        for ci in range(len(columns)):
+            values = [_cell_value(row, ci) for row in rows]
+            values = [v for v in values if v not in (None, "")]
+            numeric_cols.append(bool(values) and all(_is_numberish(v) for v in values))
+
+        def _fmt(value: Any, ci: int) -> str:
+            if numeric_cols[ci] and _is_numberish(value):
+                try:
+                    number = float(str(value).replace(",", ""))
+                    formatted = f"{number:,.2f}".rstrip("0").rstrip(".")
+                    return _esc(formatted)
+                except ValueError:
+                    pass
+            return _esc(value)
+
+        num_attr = ' class="num"'
+        head = "".join(
+            f'<th{num_attr if numeric_cols[ci] else ""}>{_esc(clean_text(str(c)).replace("_", " "))}</th>'
+            for ci, c in enumerate(columns)
+        )
         body_rows = []
         max_rows = int(data.get("max_rows", 20) or 20)
         max_bytes = int(data.get("max_bytes", TABLE_PREVIEW_MAX_BYTES) or TABLE_PREVIEW_MAX_BYTES)
         used_bytes = 0
         truncated = len(rows) > max_rows
         for row in rows[:max_rows]:
-            if isinstance(row, dict):
-                cells = [_esc(row.get(c, "")) for c in columns]
-            else:
-                cells = [_esc(v) for v in (row if isinstance(row, list) else [])]
-            row_html = "<tr>" + "".join(f"<td>{cell}</td>" for cell in cells) + "</tr>"
+            cells = [
+                f'<td{num_attr if numeric_cols[ci] else ""}>{_fmt(_cell_value(row, ci), ci)}</td>'
+                for ci in range(len(columns))
+            ]
+            row_html = "<tr>" + "".join(cells) + "</tr>"
             row_bytes = len(row_html.encode("utf-8"))
             if used_bytes + row_bytes > max_bytes:
                 truncated = True
@@ -1795,6 +2587,18 @@ def _section_context(data: dict[str, Any]) -> str:
     caption = clean_text(data.get("caption") or "")
     if caption:
         parts.append(f'<p class="r-section-dek">{_esc(caption)}</p>')
+    supports = data.get("supports")
+    if isinstance(supports, list) and supports:
+        links = []
+        for entry in supports[:3]:
+            if not isinstance(entry, dict):
+                continue
+            title = clean_text(entry.get("title") or "")
+            anchor = clean_text(entry.get("anchor") or "")
+            if title and anchor:
+                links.append(f'<a class="r-supports-link" href="#{_esc(anchor)}">Evidence for: {_esc(title)} ↑</a>')
+        if links:
+            parts.append(f'<div class="r-pill-row">{"".join(links)}</div>')
     pills = data.get("pills") or data.get("tags") or data.get("labels")
     if pills:
         parts.append(_render_pill_row(pills))
@@ -1820,7 +2624,7 @@ def _status_class(value: Any) -> str:
     status = clean_text(value).lower()
     if status in {"pass", "passed", "ready", "validated", "confirmed", "active", "complete", "completed"}:
         return "good"
-    if status in {"warning", "warn", "caveat", "unknown", "medium", "unresolved", "needs_review"}:
+    if status in {"warning", "warn", "caution", "caveat", "unknown", "medium", "unresolved", "needs_review", "weakened"}:
         return "warn"
     if status in {"fail", "failed", "blocked", "blocker", "error", "implausible"}:
         return "danger"
@@ -1836,49 +2640,117 @@ def _as_list(value: Any) -> list[Any]:
 
 
 def _selector_key(item: Any, index: int) -> str:
+    # Must mirror the JS selectorKey() fallback chain, or selector cards get
+    # keys the runtime visibility map never matches and every card hides.
     if isinstance(item, dict):
-        return clean_text(item.get("id") or item.get("key") or item.get("name") or index)
+        return clean_text(item.get("id") or item.get("key") or item.get("name") or item.get("title") or index)
     return clean_text(index)
 
 
+def _spark_svg(values: Any) -> str:
+    """Render a small inline sparkline SVG from a list of numbers."""
+    nums: list[float] = []
+    for value in _as_list(values):
+        try:
+            nums.append(float(value))
+        except (TypeError, ValueError):
+            return ""
+    if len(nums) < 2:
+        return ""
+    lo, hi = min(nums), max(nums)
+    span = (hi - lo) or 1.0
+    width, height, pad = 100.0, 30.0, 2.0
+    step = (width - 2 * pad) / (len(nums) - 1)
+    points = [
+        (pad + i * step, pad + (height - 2 * pad) * (1 - (v - lo) / span))
+        for i, v in enumerate(nums)
+    ]
+    line = " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
+    fill = f"{pad:.1f},{height - pad:.1f} {line} {points[-1][0]:.1f},{height - pad:.1f}"
+    return (
+        f'<svg class="r-spark" viewBox="0 0 {width:.0f} {height:.0f}" preserveAspectRatio="none" aria-hidden="true">'
+        f'<polygon points="{fill}"></polygon>'
+        f'<polyline points="{line}"></polyline>'
+        f"</svg>"
+    )
+
+
+def _metric_bar_pct(metric: dict[str, Any] | None, value: Any) -> float | None:
+    """Derive a 0-100 fill percentage for an entity metric bar, if the value supports one."""
+    if isinstance(metric, dict):
+        if metric.get("bar_pct") is not None:
+            try:
+                return max(0.0, min(100.0, float(metric["bar_pct"])))
+            except (TypeError, ValueError):
+                return None
+        if metric.get("max") not in (None, "", 0):
+            try:
+                return max(0.0, min(100.0, float(metric.get("value", 0)) / float(metric["max"]) * 100))
+            except (TypeError, ValueError, ZeroDivisionError):
+                return None
+    text = clean_text(value)
+    if text.endswith("%"):
+        try:
+            return max(0.0, min(100.0, float(text.rstrip("%").replace(",", ""))))
+        except ValueError:
+            return None
+    return None
+
+
 def _render_entity_card(item: Any, index: int, *, selector: bool = False) -> str:
-    selector_attr = f' data-dc-selector-card="{_esc(_selector_key(item, index))}"' if selector else ""
+    selector_attr = (
+        f' data-dc-selector-card="{_esc(_selector_key(item, index))}" role="button" tabindex="0" aria-pressed="false"'
+        if selector
+        else ""
+    )
+    accent_style = f' style="--card-accent: var(--dc-cat-{(index % 8) + 1})"'
     if not isinstance(item, dict):
-        return f'<article class="r-entity-card"{selector_attr}><h3>{_esc(item)}</h3></article>'
+        return f'<article class="r-entity-card"{selector_attr}{accent_style}><h3>{_esc(item)}</h3></article>'
     title = _item_title(item, f"Entity {index + 1}")
     detail = _item_detail(item)
     status = item.get("status") or item.get("state") or item.get("segment") or item.get("archetype")
+    tag_values = [
+        value
+        for value in _as_list(item.get("tags") or item.get("pills") or item.get("meta"))
+        if clean_text(value)
+    ][:3]
     chips = "".join([
         _chip(status, _status_class(status)),
         _chip(item.get("confidence"), "neutral"),
-        _chip(item.get("team"), "neutral"),
-        _chip(item.get("position"), "neutral"),
+        *(_chip(value, "neutral") for value in tag_values),
     ])
+    count = item.get("count") or item.get("n") or item.get("size")
+    count_badge = f'<span class="r-entity-count">{_esc(count)}</span>' if count not in (None, "") else ""
     metrics = item.get("metrics")
-    metric_rows: list[tuple[str, Any]] = []
+    metric_rows: list[tuple[str, Any, dict[str, Any] | None]] = []
     if isinstance(metrics, dict):
-        metric_rows = [(clean_text(key).replace("_", " ").title(), value) for key, value in metrics.items()]
+        metric_rows = [(clean_text(key).replace("_", " ").title(), value, None) for key, value in metrics.items()]
     elif isinstance(metrics, list):
         for metric in metrics:
             if isinstance(metric, dict):
                 label = clean_text(metric.get("label") or metric.get("name") or metric.get("key"))
-                metric_rows.append((label, metric.get("value", "")))
+                metric_rows.append((label, metric.get("value", ""), metric))
     else:
         for key in ("score", "rank", "value", "projection", "similarity"):
             if item.get(key) not in (None, ""):
-                metric_rows.append((key.replace("_", " ").title(), item.get(key)))
-    rendered_metrics = "".join(
-        f'<div class="r-entity-metric"><span>{_esc(label)}</span><strong>{_esc(value)}</strong></div>'
-        for label, value in metric_rows
-        if label or value not in (None, "")
-    )
+                metric_rows.append((key.replace("_", " ").title(), item.get(key), None))
+    rendered_metrics = []
+    for label, value, metric in metric_rows:
+        if not label and value in (None, ""):
+            continue
+        pct = _metric_bar_pct(metric, value)
+        bar = f'<span class="r-metric-bar"><span style="width:{pct:.1f}%"></span></span>' if pct is not None else ""
+        rendered_metrics.append(
+            f'<div class="r-entity-metric"><span>{_esc(label)}</span>{bar}<strong>{_esc(value)}</strong></div>'
+        )
     bullets = _render_bullet_list(item.get("bullets") or item.get("traits") or item.get("points"))
-    return f"""<article class="r-entity-card"{selector_attr}>
+    return f"""<article class="r-entity-card"{selector_attr}{accent_style}>
+      {count_badge}
       <div class="r-meta-row">{chips}</div>
       <h3>{_esc(title)}</h3>
       {f'<p>{_esc(detail)}</p>' if detail else ''}
       {bullets}
-      {f'<div class="r-entity-metrics">{rendered_metrics}</div>' if rendered_metrics else ''}
+      {f'<div class="r-entity-metrics">{"".join(rendered_metrics)}</div>' if rendered_metrics else ''}
     </article>"""
 
 
@@ -1945,30 +2817,71 @@ def _render_timeline_item(item: Any, index: int) -> str:
     </article>"""
 
 
+def _evidence_label(item: Any) -> str:
+    if isinstance(item, dict):
+        kind = clean_text(item.get("kind") or item.get("type") or "")
+        ref = clean_text(
+            item.get("cell_id")
+            or item.get("ref")
+            or item.get("artifact_id")
+            or item.get("finding_id")
+            or item.get("path")
+            or item.get("summary")
+            or ""
+        )
+        if kind and ref:
+            return f"{kind.replace('_', ' ')}: {ref}"
+        return ref or kind
+    return clean_text(item)
+
+
+def _render_evidence_chips(evidence: Any, *, anchor: str = "") -> str:
+    chips = []
+    for item in _as_list(evidence):
+        label = _evidence_label(item)
+        if not label:
+            continue
+        if anchor:
+            chips.append(f'<a class="r-chip neutral r-evidence-chip" href="#{_esc(anchor)}">{_esc(label)}</a>')
+        else:
+            chips.append(f'<span class="r-chip neutral r-evidence-chip">{_esc(label)}</span>')
+    if not chips:
+        return ""
+    return f'<div class="r-evidence-chips"><span class="r-evidence-chips-label">Evidence</span>{"".join(chips)}</div>'
+
+
 def _render_insight_card(item: Any) -> str:
     if not isinstance(item, dict):
         return f'<article class="r-insight-card"><p>{_esc(item)}</p></article>'
     status = item.get("severity") or item.get("disposition") or item.get("status") or item.get("confidence")
+    status_class = _status_class(status)
     chips = [
-        _chip(status, _status_class(status)),
+        _chip(status, status_class),
         _chip(item.get("confidence"), "neutral") if item.get("confidence") and item.get("confidence") != status else "",
         _chip(item.get("finding_id"), "neutral"),
         _chip(item.get("hypothesis_id"), "neutral"),
     ]
     evidence = item.get("evidence")
+    evidence_anchor = clean_text(item.get("evidence_anchor") or "")
     caveat = item.get("caveat") or item.get("limitation")
     next_action = item.get("next_action") or item.get("action")
     bullets = _render_bullet_list(item.get("bullets") or item.get("points") or item.get("supporting_points"))
     method = item.get("method") or item.get("methodology")
-    return f"""<article class="r-insight-card">
+    anchor_link = (
+        f'<a class="r-supports-link" href="#{_esc(evidence_anchor)}">See the evidence ↓</a>'
+        if evidence_anchor
+        else ""
+    )
+    return f"""<article class="r-insight-card {status_class}">
       <div class="r-meta-row">{''.join(chips)}</div>
       <h3>{_esc(_item_title(item))}</h3>
       {f'<p>{_esc(_item_detail(item))}</p>' if _item_detail(item) else ''}
       {bullets}
       {f'<p class="r-finding-meta"><strong>Method:</strong> {_esc(method)}</p>' if method else ''}
-      {f'<p class="r-finding-meta"><strong>Evidence:</strong> {_esc(evidence)}</p>' if evidence else ''}
+      {_render_evidence_chips(evidence, anchor=evidence_anchor)}
       {f'<p class="r-finding-meta"><strong>Caveat:</strong> {_esc(caveat)}</p>' if caveat else ''}
       {f'<p class="r-finding-meta"><strong>Next:</strong> {_esc(next_action)}</p>' if next_action else ''}
+      {anchor_link}
     </article>"""
 
 
@@ -1986,7 +2899,7 @@ def _render_explanation_step(step: Any, index: int) -> str:
       <div>
         <h3>{_esc(title)}</h3>
         {f'<p>{_esc(detail)}</p>' if detail else ''}
-        {f'<p class="r-finding-meta"><strong>Evidence:</strong> {_esc(evidence)}</p>' if evidence else ''}
+        {_render_evidence_chips(evidence)}
       </div>
     </div>"""
 
@@ -2000,7 +2913,7 @@ def _render_comparison_group(group: Any, metrics: list[Any]) -> str:
     group_metrics = group.get("metrics")
     rows = []
     if isinstance(group_metrics, dict):
-        rows = [(str(k), v) for k, v in group_metrics.items()]
+        rows = [(clean_text(str(k)).replace("_", " ").title(), v) for k, v in group_metrics.items()]
     elif isinstance(group_metrics, list):
         for metric in group_metrics:
             if isinstance(metric, dict):
@@ -2115,7 +3028,7 @@ def _render_finding_item(item: Any) -> str:
 
     title_html = f'<div class="r-finding-title">{_esc(title)}</div>' if title else ""
     detail_html = f'<p class="r-finding-detail">{_esc(detail)}</p>' if detail else ""
-    evidence_html = f'<p class="r-finding-meta"><strong>Evidence:</strong> {_esc(evidence)}</p>' if evidence else ""
+    evidence_html = _render_evidence_chips(evidence)
     caveat_html = f'<p class="r-finding-meta"><strong>Caveat:</strong> {_esc(caveat)}</p>' if caveat else ""
     return f'<li class="r-finding">{title_html}{detail_html}{bullets}{evidence_html}{caveat_html}</li>'
 
