@@ -89,6 +89,25 @@ report_design_report(
 )
 ```
 
+## What the designer does with the payload
+
+`report_design_report` builds a report with a left contents rail (scroll-spy,
+numbered sections, anchor deep-links), phase kickers ("At a glance", "What
+changed", "Evidence NN", "Method & trust"), and a hero treatment on the first
+chart-bearing analysis.
+
+Insights and evidence sections are cross-linked automatically: an insight whose
+`finding_id`, `hypothesis_id`, or evidence refs (e.g. notebook `cell_id`)
+overlap with an analysis gets a "See the evidence" anchor into that section,
+and the section gets a backlink chip. **Carry the same `finding_id` /
+`hypothesis_id` / evidence `cell_id` on both the insight and its analysis
+asset** — that shared provenance is what drives the pairing. An insight with no
+overlapping refs renders unlinked, which reads as an unsupported claim.
+
+Statuses color the insight cards: `confirmed`/`validated` green,
+`caution`/`weakened`/`unresolved` amber, `rejected`/`blocked` red. Give every
+insight an honest status.
+
 ## Asset shapes the designer understands
 
 Give the designer typed, aggregate assets. The section choice is driven by the
@@ -161,6 +180,9 @@ failed report shape.
 
 ## Quality gate
 
+The gate loads its criteria from the report rubric (`report_rubric.yaml`,
+currently v1) — the canonical machine-readable definition of a good dataclaw
+report. Every quality result cites the `rubric_version` it was judged by.
 Before calling a report complete, the quality result must not include:
 
 - `consecutive_plain_charts`
@@ -169,7 +191,8 @@ Before calling a report complete, the quality result must not include:
 - `missing_interactive_explorer`
 - `missing_primary_insights`
 - `missing_insight_sections`
-- `missing_evidence_ids`
+- `unsourced_claim` (formerly `missing_evidence_ids`)
+- `chart_interpretation_missing_evidence`
 - `missing_table_caption`
 - `stale_installed_skills`
 - `oversized_report`

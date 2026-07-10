@@ -1,0 +1,383 @@
+# Dataclaw report rubric — the canonical machine-readable definition of what a
+# good dataclaw report is (docs/report-builder-architecture.md, Appendix A).
+#
+# Three consumers read this file:
+#   - the generator/designer (criteria as instructions)
+#   - the self-critique loop (criteria as scores + remediations)
+#   - the quality gate analyze_report_quality (criteria as assertions)
+#
+# status semantics:
+#   live     — enforced by the gate today, at exactly this severity
+#   deferred — target standard; never scored until its mechanism ships
+#              (since_version names the unlock where known)
+# Per A.10, a deferred criterion enters as `warn` for one version before any
+# promotion to `fail`, and rubric_version bumps on any criteria/threshold change.
+
+rubric_version: 1
+
+# Gate thresholds — every value matches the live gate (analyze_report_quality).
+thresholds:
+  max_payload_bytes: 1_500_000        # measured after stripping the Plotly runtime
+  max_consecutive_plain_charts: 2     # a 3rd consecutive plain chart fails
+  plain_chart_dump_min: 4             # >=4 plain charts arms chart_dump / plain_chart_overuse
+  explorer_required_min_sections: 6   # >=6 sections ...
+  explorer_required_min_charts: 3     # ... with >=3 chart-like sections must include an explorer
+  insight_required_min_sections: 4    # >=4 sections must include a story/insight layer
+
+# Generation & loop knobs — NOT gate values; no criterion asserts them.
+designer:
+  min_headline_metrics: 2
+  max_headline_metrics: 5
+critique:
+  max_passes: 2
+
+criteria:
+  # ── Rigor axis ─────────────────────────────────────────────────────────────
+  - id: evidence_unresolved
+    axis: rigor
+    severity: fail
+    status: deferred
+    since_version: 2                  # unlocks when the L2 evidence registry lands
+    scope: section
+    applies_to: [findings, insight_grid, chart_interpretation, hypothesis_ledger, evidence_trace, evidence_rail]
+    signal: >-
+      Every evidence ref on an item dereferences to a registered target that is
+      present in the artifact bundle (or a stable external ref).
+    remediable: false
+    on_fail: block
+    remediation: flag_unsourced
+    rationale: An unsourced claim is exactly what the Scientist won't sign.
+
+  - id: unsourced_claim
+    axis: rigor
+    severity: warn                    # v1 = live severity of missing_evidence_ids; promotes to fail per A.10
+    status: live
+    replaces: missing_evidence_ids
+    scope: section
+    applies_to: [findings, insight_grid, hypothesis_ledger, evidence_trace, evidence_rail]
+    signal: >-
+      Every finding/insight carries at least one evidence ref
+      (finding_id, hypothesis_id, or evidence reference in metadata).
+    remediable: false
+    on_fail: warn
+    remediation: downgrade_to_caveat  # never mint an id
+    rationale: Presence-only precursor to evidence_unresolved; see §6 sequencing.
+
+  - id: missing_methodology
+    axis: rigor
+    severity: fail
+    status: deferred                  # designer plans the block; gate does not assert it yet
+    scope: report
+    applies_to: [methodology_block]
+    signal: A methodology_block states grain, denominator, and validation.
+    remediable: partial
+    on_fail: block
+    remediation: draft_from_intake    # block only if intake has none (§5.5)
+    rationale: A data-scientist reader needs the model, denominator, and validation shown.
+
+  - id: missing_data_quality
+    axis: rigor
+    severity: warn
+    status: deferred
+    scope: report
+    applies_to: [methodology_block, callout]
+    signal: Data-quality / coverage risk is disclosed.
+    remediable: true
+    on_fail: warn
+    remediation: synthesize_from_intake_notes
+    rationale: Undisclosed coverage risk silently biases every downstream read.
+
+  - id: missing_uncertainty
+    axis: rigor
+    severity: warn
+    status: deferred
+    scope: section
+    applies_to: [metric_row, findings, insight_grid, chart_interpretation]
+    signal: Quantitative headline claims show CI / confidence / n where applicable.
+    remediable: partial
+    on_fail: warn
+    remediation: annotate_from_source_stats   # never invent
+    rationale: A headline number without uncertainty overstates what is known.
+
+  - id: chart_interpretation_missing_evidence
+    axis: rigor
+    severity: warn
+    status: live
+    scope: section
+    applies_to: [chart_interpretation]
+    signal: A chart_interpretation with a narrative conclusion has >=1 evidence ref.
+    remediable: false
+    on_fail: warn
+    remediation: request_evidence     # flag if absent
+    rationale: A conclusion beside a chart still needs a trace to its source.
+
+  - id: missing_recipe
+    axis: rigor
+    severity: warn
+    status: deferred
+    scope: report
+    applies_to: [report]
+    signal: Storyboard JSON + regeneration recipe is attached to the artifact.
+    remediable: true
+    on_fail: warn
+    remediation: attach_storyboard
+    rationale: Reproducibility is part of the deliverable (L7).
+
+  # ── Narrative axis ─────────────────────────────────────────────────────────
+  - id: consecutive_plain_charts
+    axis: narrative
+    severity: fail
+    status: live
+    scope: report
+    applies_to: [chart]
+    signal: No more than max_consecutive_plain_charts plain charts in a row.
+    remediable: true
+    on_fail: block
+    remediation: convert_to_chart_interpretation_or_explorer
+    rationale: Consecutive bare charts separate evidence from meaning.
+
+  - id: chart_dump
+    axis: narrative
+    severity: fail
+    status: live
+    scope: report
+    applies_to: [chart]
+    signal: Report is not dominated by plain charts without interpretation or explorer.
+    remediable: true
+    on_fail: block
+    remediation: replan_via_designer
+    rationale: A chart dump is the signature regression this rubric exists to prevent.
+
+  - id: plain_chart_overuse
+    axis: narrative
+    severity: fail
+    status: live
+    scope: report
+    applies_to: [chart]
+    signal: Plain charts <= interactive + interpreted charts.
+    remediable: true
+    on_fail: block
+    remediation: upgrade_supporting_charts
+    rationale: Supporting charts should carry interpretation or interaction.
+
+  - id: missing_interactive_explorer
+    axis: narrative
+    severity: fail
+    status: live
+    scope: report
+    applies_to: [chart, filterable_chart, chart_table_explorer, interactive_table, selector_panel]
+    signal: >-
+      >= explorer_required_min_sections sections with >= explorer_required_min_charts
+      chart-like sections include at least one explorer/selector/filterable/table.
+    remediable: true
+    on_fail: block
+    remediation: add_explorer_over_aggregate_payload
+    rationale: An analytical report should let the reader slice and verify.
+
+  - id: chart_missing_conclusion
+    axis: narrative
+    severity: fail
+    status: deferred
+    scope: section
+    applies_to: [chart, chart_interpretation, filterable_chart]
+    signal: Every chart states what it shows, not just its axes.
+    remediable: true
+    on_fail: block
+    remediation: generate_conclusion_from_data
+    rationale: A chart without a stated conclusion delegates the analysis to the reader.
+
+  - id: missing_narrative_answer
+    axis: narrative
+    severity: warn
+    status: deferred
+    scope: report
+    applies_to: [narrative_band]
+    signal: A narrative_band answers the primary question up front.
+    remediable: true
+    on_fail: warn
+    remediation: synthesize_answer_from_findings
+    rationale: State the answer before the reader reaches supporting evidence.
+
+  - id: bare_bullet_findings
+    axis: narrative
+    severity: warn
+    status: deferred
+    scope: section
+    applies_to: [findings, insight_grid]
+    signal: Findings render as insight cards, not plain bullet lists.
+    remediable: true
+    on_fail: warn
+    remediation: reshape_bullets_into_insight_cards
+    rationale: The insight card is the canonical finding shape (§7).
+
+  - id: missing_section_dek
+    axis: narrative
+    severity: warn
+    status: deferred
+    scope: section
+    applies_to: [section]
+    signal: Each section opens with a one-line dek.
+    remediable: true
+    on_fail: warn
+    remediation: write_dek_from_section_content
+    rationale: Deks carry the narrative arc between headline and body.
+
+  - id: plaintext_where_component_warranted
+    axis: narrative
+    severity: warn
+    status: deferred
+    scope: section
+    applies_to: [section]
+    signal: Categorical/%/entity values use the right component per the component_map.
+    remediable: true
+    on_fail: warn
+    remediation: upgrade_plain_text_per_semantics_map
+    rationale: Bespoke components, not generic blocks (§2).
+
+  - id: missing_table_caption
+    axis: narrative
+    severity: warn
+    status: live
+    scope: section
+    applies_to: [table, interactive_table]
+    signal: Tables have a caption explaining grain, filters, or interpretation.
+    remediable: true
+    on_fail: warn
+    remediation: write_caption_from_columns_and_filters
+    rationale: An uncaptioned table makes the reader reverse-engineer its grain.
+
+  - id: missing_primary_insights
+    axis: narrative
+    severity: fail
+    status: live
+    scope: report
+    applies_to: [findings, insight_grid]
+    signal: >-
+      Reports with >= insight_required_min_sections sections carry at least one
+      findings/insight-grid section with completed insight items.
+    remediable: partial
+    on_fail: block
+    remediation: promote_intake_insights_into_insight_grid   # block only if intake has none (§5.5)
+    rationale: Findings are first-class content, not an afterthought.
+
+  - id: missing_insight_sections
+    axis: narrative
+    severity: fail
+    status: live
+    scope: report
+    applies_to: [findings, insight_grid, narrative_band, methodology_block, hypothesis_ledger, evidence_trace, evidence_rail]
+    signal: >-
+      Reports with >= insight_required_min_sections sections include at least one
+      story layer (findings/insight-grid/narrative/methodology/evidence/explorer).
+    remediable: partial
+    on_fail: block
+    remediation: build_story_layer_from_intake   # block only if intake has none (§5.5)
+    rationale: A report without a story layer is a chart appendix.
+
+  - id: unpaired_insights
+    axis: narrative
+    severity: warn
+    status: deferred                  # pairing mechanism shipped; nothing asserts it yet
+    scope: section
+    applies_to: [findings, insight_grid]
+    signal: >-
+      Insights whose provenance ids match an evidence section carry an evidence_anchor.
+    remediable: partial
+    on_fail: warn
+    remediation: rerun_pairing_or_flag_evidence_orphaned
+    rationale: Insight–evidence anchors are the readable form of the evidence graph.
+
+  # ── Integrity axis ─────────────────────────────────────────────────────────
+  - id: oversized_report
+    axis: integrity
+    severity: fail
+    status: live
+    scope: report
+    applies_to: [report]
+    signal: Payload (excluding the Plotly runtime) <= max_payload_bytes.
+    remediable: partial
+    on_fail: block
+    remediation: drop_raw_datasets_sample_or_aggregate
+    rationale: Embed aggregate, ranked, or sampled payloads only.
+
+  - id: chart_theme_defeated
+    axis: integrity
+    severity: fail
+    status: deferred                  # theming mechanism is live; the gate assertion is not
+    scope: section
+    applies_to: [chart, chart_interpretation, filterable_chart, chart_table_explorer]
+    signal: >-
+      Every chart renders through the themed pipeline; no figure carries a baked
+      template or hard-coded background/font/colorway that defeats token theming
+      and dark-mode re-render.
+    remediable: true
+    on_fail: block
+    remediation: strip_baked_template_from_figure
+    rationale: >-
+      Theming is applied at render, never injected into the stored figure — a baked
+      template freezes the theme at generation time and breaks the toggle.
+
+  - id: runtime_smoke_failed
+    axis: integrity
+    severity: fail
+    status: deferred                  # requires a headless browser; skipped => warn-level disclosure (§9.3)
+    scope: report
+    applies_to: [report]
+    signal: >-
+      Headless render passes behavioral assertions: every chart target mounted a plot;
+      declared filters/controls materialized; selector cards visible; anchors resolve;
+      no unexpected empty states.
+    remediable: partial
+    on_fail: block
+    remediation: rerender_after_upstream_fixes
+    rationale: All seven 2026-07-10 bugs were invisible to metadata checks (§1.4).
+
+  - id: export_fidelity
+    axis: integrity
+    severity: warn
+    status: deferred
+    scope: report
+    applies_to: [report]
+    signal: >-
+      Exports derive from the upgraded report, and every interactive section has a
+      static fallback or the export discloses the omission.
+    remediable: partial
+    on_fail: warn
+    remediation: generate_static_fallbacks_and_disclose
+    rationale: The export pipeline must detect an omission before it can disclose one (§5.2).
+
+  - id: not_self_contained
+    axis: integrity
+    severity: warn
+    status: deferred
+    scope: report
+    applies_to: [report]
+    signal: No external asset the CSP/offline artifact can't load.
+    remediable: true
+    on_fail: warn
+    remediation: inline_or_replace_external_ref
+    rationale: Open-source audience implies self-contained portable artifacts (§3).
+
+  - id: contrast_below_aa
+    axis: integrity
+    severity: warn
+    status: deferred                  # evaluated by the screenshot pass, not the section-model loop
+    scope: report
+    applies_to: [report]
+    signal: Text/mark contrast >= WCAG-AA in both themes.
+    remediable: partial
+    on_fail: warn
+    remediation: adjust_to_passing_token_colors
+    rationale: Accessibility is cross-cutting and essential (§2).
+
+  - id: stale_installed_skills
+    axis: integrity
+    severity: fail
+    status: live
+    scope: report
+    applies_to: [report]
+    signal: Installed library skills match the bundled skill-library instructions.
+    remediable: false
+    on_fail: block
+    remediation: refresh_skills_out_of_band
+    rationale: A report generated by a stale standard is not reproducible against the current one.

@@ -180,6 +180,9 @@ failed report shape.
 
 ## Quality gate
 
+The gate loads its criteria from the report rubric (`report_rubric.yaml`,
+currently v1) — the canonical machine-readable definition of a good dataclaw
+report. Every quality result cites the `rubric_version` it was judged by.
 Before calling a report complete, the quality result must not include:
 
 - `consecutive_plain_charts`
@@ -188,7 +191,8 @@ Before calling a report complete, the quality result must not include:
 - `missing_interactive_explorer`
 - `missing_primary_insights`
 - `missing_insight_sections`
-- `missing_evidence_ids`
+- `unsourced_claim` (formerly `missing_evidence_ids`)
+- `chart_interpretation_missing_evidence`
 - `missing_table_caption`
 - `stale_installed_skills`
 - `oversized_report`

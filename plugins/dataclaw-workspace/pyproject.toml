@@ -7,6 +7,7 @@ dependencies = [
     "dataclaw",
     "dataclaw-artifacts",
     "html-for-docx>=1.0",
+    "pyyaml>=6.0",
 ]
 
 [project.entry-points."dataclaw.plugins"]

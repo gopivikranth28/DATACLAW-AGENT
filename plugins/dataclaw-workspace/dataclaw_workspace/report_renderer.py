@@ -17,6 +17,13 @@ from dataclaw_artifacts.sections import (
 )
 from dataclaw_artifacts.wrapper import plotly_runtime_js
 
+from dataclaw_workspace.report_rubric import (
+    live_criterion_ids,
+    rubric_criteria,
+    rubric_thresholds,
+    rubric_version,
+)
+
 REPORT_SECTION_START = "<!-- DATACLAW_REPORT_SECTIONS_START -->"
 REPORT_SECTION_END = "<!-- DATACLAW_REPORT_SECTIONS_END -->"
 REPORT_SHELL_CSS_ATTR = 'data-dc-report-shell-css'
@@ -64,7 +71,9 @@ STORY_SECTION_KINDS = {
     "chart_table_explorer",
     "entity_card_grid",
 }
-REPORT_QUALITY_MAX_BYTES = 1_500_000
+# The rubric is the single source of truth for gate thresholds; this constant is
+# kept as the public name for the payload cap (docs reference it by name).
+REPORT_QUALITY_MAX_BYTES = rubric_thresholds()["max_payload_bytes"]
 
 
 def report_shell(*, title: str, first_section: str, include_plotly: bool = False) -> str:
@@ -1361,17 +1370,33 @@ def analyze_report_quality(
     stale_skills: list[dict[str, Any]] | None = None,
     max_bytes: int = REPORT_QUALITY_MAX_BYTES,
 ) -> dict[str, Any]:
-    """Inspect the typed section metadata embedded in a workspace report."""
+    """Inspect the typed section metadata embedded in a workspace report.
+
+    Criteria severities, gate thresholds, and live/deferred status come from the
+    report rubric (report_rubric.yaml); every result cites the rubric version it
+    was judged by. Only ``status: live`` criteria are evaluated — the signal
+    checks themselves live here, keyed by criterion id.
+    """
     sections = _extract_section_meta(doc)
     warnings: list[dict[str, Any]] = []
+    criteria = rubric_criteria()
+    thresholds = rubric_thresholds()
 
-    def warn(code: str, message: str, *, severity: str = "warn", details: dict[str, Any] | None = None) -> None:
-        warnings.append({
+    def warn(code: str, message: str, *, details: dict[str, Any] | None = None) -> None:
+        criterion = criteria.get(code)
+        if criterion is None:
+            raise KeyError(f"gate check {code!r} has no criterion in the report rubric")
+        if criterion["status"] != "live":
+            return
+        entry: dict[str, Any] = {
             "code": code,
-            "severity": severity,
+            "severity": criterion["severity"],
             "message": message,
             "details": details or {},
-        })
+        }
+        if criterion.get("replaces"):
+            entry["replaces"] = criterion["replaces"]
+        warnings.append(entry)
 
     total_size = len(doc.encode("utf-8"))
     payload_size = len(PLOTLY_RUNTIME_RE.sub("", doc).encode("utf-8"))
@@ -1379,7 +1404,6 @@ def analyze_report_quality(
         warn(
             "oversized_report",
             f"Report payload HTML is {payload_size} bytes; reduce embedded raw HTML/data before publishing.",
-            severity="fail",
             details={"bytes": payload_size, "total_bytes": total_size, "max_bytes": max_bytes},
         )
 
@@ -1387,7 +1411,6 @@ def analyze_report_quality(
         warn(
             "stale_installed_skills",
             "Installed library skills are stale versus bundled skill-library instructions.",
-            severity="fail",
             details={"skills": stale_skills},
         )
 
@@ -1412,50 +1435,48 @@ def analyze_report_quality(
             longest_run = max(longest_run, run)
         else:
             run = 0
-    if longest_run >= 3:
+    if longest_run > thresholds["max_consecutive_plain_charts"]:
         warn(
             "consecutive_plain_charts",
             "Report contains three or more consecutive plain chart sections; use chart_interpretation or an explorer to keep evidence and meaning together.",
-            severity="fail",
             details={"longest_run": longest_run},
         )
-    if plain_chart_count >= 4 and interactive_count == 0 and "chart_interpretation" not in kinds:
+    if plain_chart_count >= thresholds["plain_chart_dump_min"] and interactive_count == 0 and "chart_interpretation" not in kinds:
         warn(
             "chart_dump",
             "Report is dominated by plain charts without interpretation or interactive explorer sections.",
-            severity="fail",
             details={"plain_chart_count": plain_chart_count, "interactive_count": interactive_count},
         )
-    if plain_chart_count >= 4 and plain_chart_count > (interactive_count + interpreted_chart_count):
+    if plain_chart_count >= thresholds["plain_chart_dump_min"] and plain_chart_count > (interactive_count + interpreted_chart_count):
         warn(
             "plain_chart_overuse",
             "Report still relies on too many plain chart sections; convert supporting charts into interpretation or explorer sections.",
-            severity="fail",
             details={
                 "plain_chart_count": plain_chart_count,
                 "interactive_count": interactive_count,
                 "chart_interpretation_count": interpreted_chart_count,
             },
         )
-    if len(kinds) >= 4 and story_count == 0:
+    if len(kinds) >= thresholds["insight_required_min_sections"] and story_count == 0:
         warn(
             "missing_insight_sections",
             "Report has multiple sections but no findings, insight grid, narrative band, methodology, evidence, or explorer layer.",
-            severity="fail",
             details={"section_count": len(kinds)},
         )
-    if len(kinds) >= 4 and primary_insight_count == 0:
+    if len(kinds) >= thresholds["insight_required_min_sections"] and primary_insight_count == 0:
         warn(
             "missing_primary_insights",
             "Report has multiple sections but no findings or insight grid carrying completed insight items.",
-            severity="fail",
             details={"section_count": len(kinds)},
         )
-    if len(kinds) >= 6 and chart_like_count >= 3 and interactive_count == 0:
+    if (
+        len(kinds) >= thresholds["explorer_required_min_sections"]
+        and chart_like_count >= thresholds["explorer_required_min_charts"]
+        and interactive_count == 0
+    ):
         warn(
             "missing_interactive_explorer",
             "Analytical report has several charts but no interactive table, selector, filterable chart, or chart-table explorer.",
-            severity="fail",
             details={"chart_like_count": chart_like_count},
         )
 
@@ -1472,7 +1493,7 @@ def analyze_report_quality(
             items = payload.get("items", [])
             if isinstance(items, list) and items and not any(_item_has_evidence_id(item) for item in items if isinstance(item, dict)):
                 warn(
-                    "missing_evidence_ids",
+                    "unsourced_claim",
                     "Insight/evidence section has items but no finding_id, hypothesis_id, or evidence reference in metadata.",
                     details={"section_id": section.get("section_id"), "kind": kind},
                 )
@@ -1491,6 +1512,7 @@ def analyze_report_quality(
 
     return {
         "status": status,
+        "rubric_version": rubric_version(),
         "section_count": len(sections),
         "plain_chart_count": plain_chart_count,
         "interactive_count": interactive_count,
@@ -1664,17 +1686,8 @@ def design_report_storyboard(
         },
         "quality_plan": {
             "gate": "run before publish",
-            "checks": [
-                "stale_installed_skills",
-                "consecutive_plain_charts",
-                "chart_dump",
-                "plain_chart_overuse",
-                "missing_insight_sections",
-                "missing_evidence_ids",
-                "missing_table_caption",
-                "oversized_report",
-                "missing_interactive_explorer",
-            ],
+            "rubric_version": rubric_version(),
+            "checks": live_criterion_ids(),
         },
         "section_plan": section_plan,
     }
