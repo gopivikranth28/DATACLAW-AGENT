@@ -6,7 +6,11 @@ from dataclaw.plugins.base import PluginContext, PluginUIManifest
 from dataclaw.providers.tool.implementations.python_tool import PythonTool
 
 from dataclaw_analysis_review import tools
-from dataclaw_analysis_review.hooks import auto_review_completed_steps_hook, review_context_hook
+from dataclaw_analysis_review.hooks import (
+    auto_review_completed_steps_hook,
+    review_context_hook,
+    surface_unreviewed_publish_hook,
+)
 from dataclaw_analysis_review.router import router as review_router
 
 
@@ -18,6 +22,7 @@ class AnalysisReviewPlugin:
         ctx.include_api_router(review_router, prefix="/analysis-review", tags=["analysis-review"])
         ctx.hooks.register("preToolCallHook", review_context_hook)
         ctx.hooks.register("postToolCallHook", auto_review_completed_steps_hook)
+        ctx.hooks.register("postToolCallHook", surface_unreviewed_publish_hook)
 
         try:
             from dataclaw_plans.gates import register_gate_resolver

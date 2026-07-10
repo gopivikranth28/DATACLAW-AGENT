@@ -6,8 +6,10 @@ import json
 import re
 from typing import Any
 
+from dataclaw_analysis_review.store import open_required_findings
 from dataclaw_eda.store import fold_findings, fold_hypotheses
 from dataclaw_plans.gates import step_requires_review_gate
+from dataclaw_plans.mlflow_tools import session_run_metadata
 from dataclaw_plans.store import find_proposal, read_proposals
 
 EDA_STEP_KEYWORDS = (
@@ -18,6 +20,16 @@ EDA_STEP_KEYWORDS = (
     "profiling",
     "readiness",
     "data quality",
+)
+
+MODEL_STEP_KEYWORDS = (
+    "model",
+    "train",
+    "training",
+    "classifier",
+    "regression",
+    "forecast",
+    "mlflow",
 )
 
 
@@ -39,6 +51,11 @@ def _step_text(step: dict[str, Any]) -> str:
 def step_claims_eda(step: dict[str, Any]) -> bool:
     haystack = _step_text(step)
     return any(keyword in haystack for keyword in EDA_STEP_KEYWORDS)
+
+
+def step_claims_model(step: dict[str, Any]) -> bool:
+    haystack = _step_text(step)
+    return any(keyword in haystack for keyword in MODEL_STEP_KEYWORDS)
 
 
 def should_auto_review_step(step: dict[str, Any]) -> bool:
@@ -109,11 +126,14 @@ def build_review_context(
         ]
         context["eda_findings"] = findings
         context["eda_hypotheses"] = hypotheses
+        if step and step_claims_model(step):
+            context["mlflow_runs"] = session_run_metadata(session_id)
         return context
 
     if scope == "session":
         context["eda_findings"] = [f for f in fold_findings(session_id) if f.get("status") == "active"]
         context["eda_hypotheses"] = fold_hypotheses(session_id)
+        context["mlflow_runs"] = session_run_metadata(session_id)
         return context
 
     if scope in {"artifact", "living_report"}:
@@ -136,6 +156,7 @@ def run_checklist(context: dict[str, Any]) -> list[dict[str, Any]]:
     findings.extend(_hypothesis_checks(context))
     findings.extend(_finding_validation_checks(context))
     findings.extend(_artifact_checks(context))
+    findings.extend(_mlflow_checks(context))
     return findings
 
 
@@ -213,6 +234,30 @@ def _plan_step_checks(context: dict[str, Any]) -> list[dict[str, Any]]:
                         recommendation="Resolve, defer with rationale, or mark the hypothesis out of scope",
                     )
                 )
+
+    if step.get("ready_for_validation"):
+        # Exclude this check's own prior findings so it converges once the
+        # underlying findings are resolved, instead of feeding on itself.
+        blockers = [
+            finding
+            for finding in open_required_findings(
+                scope="plan_step",
+                target_id=step_id,
+                session_id=str(context.get("session_id") or "default"),
+            )
+            if str(finding.get("check_id") or "") != "CHK-open-required-on-ready"
+        ]
+        if blockers:
+            results.append(
+                _finding(
+                    check_id="CHK-open-required-on-ready",
+                    severity="required",
+                    category="unsupported_claim",
+                    claim=f"Step {step_id} is marked ready_for_validation with open required review findings",
+                    evidence=[str(f.get("finding_id") or step_id) for f in blockers],
+                    recommendation="Resolve or explicitly accept the open required review findings before validation",
+                )
+            )
     return results
 
 
@@ -316,6 +361,11 @@ def _artifact_checks(context: dict[str, Any]) -> list[dict[str, Any]]:
                 recommendation="Republish after resolving artifact validation errors",
             )
         )
+    eda_findings_by_id = {
+        str(f.get("finding_id") or ""): f
+        for f in fold_findings(str(context.get("session_id") or "default"))
+    }
+    stale_flagged: set[str] = set()
     for section in sections:
         kind = str(section.get("kind") or "")
         section_id = str(section.get("section_id") or artifact_id)
@@ -334,6 +384,26 @@ def _artifact_checks(context: dict[str, Any]) -> list[dict[str, Any]]:
                         )
                     )
                     break
+        if kind == "findings":
+            for item in ((section.get("payload") or {}).get("items") or []):
+                if not isinstance(item, dict):
+                    continue
+                finding_id = str(item.get("finding_id") or "")
+                if not finding_id or finding_id in stale_flagged:
+                    continue
+                cited = eda_findings_by_id.get(finding_id)
+                if cited and _has_stale_evidence(cited):
+                    stale_flagged.add(finding_id)
+                    results.append(
+                        _finding(
+                            check_id="CHK-stale-evidence",
+                            severity="warning",
+                            category="reproducibility_gap",
+                            claim=f"Artifact cites EDA finding {finding_id} whose evidence anchor is stale",
+                            evidence=[finding_id, section_id],
+                            recommendation="Re-run the producing cell and supersede the finding with fresh evidence",
+                        )
+                    )
         if kind == "chart" and (not section.get("title") or not section.get("caption")):
             results.append(
                 _finding(
@@ -343,6 +413,42 @@ def _artifact_checks(context: dict[str, Any]) -> list[dict[str, Any]]:
                     claim="Chart section is missing title or caption metadata",
                     evidence=[section_id],
                     recommendation="Add title and caption metadata that states the measure, grain, and caveat",
+                )
+            )
+    return results
+
+
+def _has_stale_evidence(finding: dict[str, Any]) -> bool:
+    evidence = finding.get("evidence")
+    if not isinstance(evidence, list):
+        return False
+    return any(isinstance(anchor, dict) and anchor.get("stale") for anchor in evidence)
+
+
+def _mlflow_checks(context: dict[str, Any]) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for run in context.get("mlflow_runs") or []:
+        if not isinstance(run, dict):
+            continue
+        run_id = str(run.get("run_id") or "")
+        params = run.get("params") if isinstance(run.get("params"), dict) else {}
+        metrics = run.get("metrics") if isinstance(run.get("metrics"), dict) else {}
+        tags = run.get("tags") if isinstance(run.get("tags"), dict) else {}
+        user_tags = {k: v for k, v in tags.items() if not str(k).startswith("mlflow.")}
+        missing = [
+            name
+            for name, values in (("params", params), ("metrics", metrics), ("tags", user_tags))
+            if not values
+        ]
+        if missing:
+            results.append(
+                _finding(
+                    check_id="CHK-mlflow-repro",
+                    severity="warning",
+                    category="reproducibility_gap",
+                    claim=f"MLflow run {run_id} is missing {', '.join(missing)} needed for reproducibility",
+                    evidence=[run_id],
+                    recommendation="Log params, metrics, and descriptive tags on the run before citing it",
                 )
             )
     return results

@@ -43,6 +43,42 @@ def _serialize(val: Any) -> Any:
     return str(val)
 
 
+def session_run_metadata(session_id: str, *, max_results: int = 50) -> list[dict[str, Any]]:
+    """Synchronous, failure-tolerant run metadata for a session's experiment.
+
+    Returns only what reproducibility checks need (params/metrics/tags — no
+    artifact listing), and returns [] on any failure so deterministic review
+    checks never break when MLflow is unavailable.
+    """
+    if not session_id:
+        return []
+    try:
+        client = _client()
+        exp = client.get_experiment_by_name(f"dataclaw-{session_id}")
+        if not exp:
+            return []
+        from mlflow.entities import ViewType
+
+        runs = client.search_runs(
+            experiment_ids=[exp.experiment_id],
+            order_by=["start_time DESC"],
+            max_results=max_results,
+            run_view_type=ViewType.ACTIVE_ONLY,
+        )
+        return [
+            {
+                "run_id": run.info.run_id,
+                "status": run.info.status,
+                "params": {k: _serialize(v) for k, v in run.data.params.items()},
+                "metrics": {k: _serialize(v) for k, v in run.data.metrics.items()},
+                "tags": dict(run.data.tags),
+            }
+            for run in runs
+        ]
+    except Exception:
+        return []
+
+
 async def query_mlflow_runs(
     *,
     session_id: str = "",

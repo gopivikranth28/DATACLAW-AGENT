@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | In build (rev 5 — status refreshed 2026-07-09; P4a and P5 review-lifecycle core landed) |
+| **Status** | In build (rev 6 — status refreshed 2026-07-10; P5 complete incl. checklist expansion + FR-30a publish surfacing) |
 | **Owner** | Nandini Mathan |
-| **Last updated** | 2026-07-09 |
+| **Last updated** | 2026-07-10 |
 | **Branch** | `structured-eda` (base: `release3` + cherry-picked structured-EDA skill from `eda-upgrade`) |
 | **Ships as** | `plugins/dataclaw-eda/`, `plugins/dataclaw-analysis-review/`, patch to `plugins/dataclaw-plans/`, patch to `plugins/dataclaw-notebooks/`, `skill-library/{structured_eda,insight_validation,analysis_review,dataclaw}.md`, `ui/src` Findings surfaces, `evals/` harness |
 | **Composes with** | `plugins/dataclaw-plans`, `plugins/dataclaw-notebooks`, `plugins/dataclaw-artifacts`, `plugins/dataclaw-projects` (sub-agent registry), MLflow tooling |
@@ -45,6 +45,8 @@ Verified on `structured-eda` (release3 base):
 - **Gaps this PRD fills:** no hypothesis or finding persistence; no analytical validation anywhere (artifacts validator is content-security only); no gate enforcement; notebooks tools do not return nbformat `cell_id`; no behavioral eval harness (skill tests are string containment).
 
 **Status update (2026-07-09):** P0–P4a and the P5 review-lifecycle core are now shipped on this branch — `plugins/dataclaw-eda/` (both ledgers, all 8 tools with floors, evidence anchoring, readiness, router, hooks, tool-level tests, loop observability, and multiplicity floors), `plugins/dataclaw-analysis-review/` (append-only review store, deterministic checklist tools/router, rerun auto-resolution, plan-gate sync, auto-checklist hook), `dataclaw_plans/gates.py` with `accept_gate_risk` and the PlanCompletion guardrail wiring, the notebooks `cell_id` patch, the hypothesis-driven `structured_eda` + new `insight_validation`/`analysis_review` skills, and the FR-34a adjacent-skill touch-ups. Still open: P5 checklist expansion, P6 (reviewer sub-agent), P7 (UI), P8 (evals), and the OpenClaw alias fixture. See the phasing table's Status column.
+
+**Status update (2026-07-10):** P5 is complete. The checklist expansion shipped — `CHK-stale-evidence` (artifact-cited EDA findings with stale evidence anchors), `CHK-mlflow-repro` (model-scope runs missing params/metrics/non-system tags, read via a new sync failure-tolerant `session_run_metadata` helper in `dataclaw_plans/mlflow_tools.py`), and `CHK-open-required-on-ready` (a step marked `ready_for_validation` with open required review findings; excludes its own prior findings so it converges) — plus the FR-30a publish surfacing: a `surface_unreviewed_publish_hook` post-hook appends an "unresolved review risk" living-report event (log page, naming finding ids) when `publish_artifact` runs with open required findings, unless the step's gate risk carries an explicit acceptance. Still open: P6 (reviewer sub-agent), P7 (UI), P8 (evals), and the OpenClaw alias fixture.
 
 ---
 
@@ -214,7 +216,7 @@ Status column updated against the current structured-EDA branch state on 2026-07
 | P3 — Readiness | purpose/mode policies, hypothesis rollup, deferred-vs-unresolved distinction, artifact sections + living-report events | leakage blocks modeling; budget-deferred hypothesis is caveat not blocker; verdict persists supersedable | **Shipped** (`dataclaw_eda/readiness.py`; sections wiring partially in WIP) |
 | P4 — Skills | `structured_eda` restructure, `insight_validation`, `analysis_review`, `dataclaw` routing, OpenClaw mirrors, skill tests | skill tests assert hypothesis step, loop wiring, reserved-surprise-loop rule, caveat rule | **Shipped** (hypothesis-driven `structured_eda`, new `insight_validation`/`analysis_review`, routing + mirrors, FR-34a touch-ups) |
 | P4a — Loop observability & multiplicity | `loop_index` on ledger records (FR-11b), selection/multiplicity metadata + floors (FR-10a), skill multiplicity step (FR-32a) | loop budget and multiplicity discipline machine-checkable from the ledgers | **Shipped** (`loop_index` + `selection` schemas/persistence/floors in `dataclaw_eda`; structured_eda loop paragraph; tests) |
-| P5 — Review checklist | review store/tools/router, context collectors, deterministic checks (+`CHK-multiplicity`), gates wiring, auto-checklist hook | checklist golden: flags seeded issues; gate blocks, clears by resolution, and auto-resolves disappeared checklist findings on rerun | **Core shipped** (`plugins/dataclaw-analysis-review/`: store/checklist/tools/router/hooks + `tests/test_review_tools.py`; remaining expansion: MLflow repro, stale artifact evidence, and fuller artifact/export checks) |
+| P5 — Review checklist | review store/tools/router, context collectors, deterministic checks (+`CHK-multiplicity`), gates wiring, auto-checklist hook, FR-30a publish surfacing | checklist golden: flags seeded issues; gate blocks, clears by resolution, and auto-resolves disappeared checklist findings on rerun; unreviewed publish is labeled | **Shipped** (full FR-27 catalog incl. `CHK-stale-evidence`/`CHK-mlflow-repro`/`CHK-open-required-on-ready`, `surface_unreviewed_publish_hook`, `session_run_metadata` in `dataclaw_plans/mlflow_tools.py`; covered in `tests/test_review_tools.py`) |
 | P6 — Reviewer sub-agent | definition + rubric rendering, direct-provider run, JSON parsing, degradation labeling | seeded fixture: unsupported claim + ledger-hygiene finding caught; checklist-only never passes required gate | **Not started** (`analysis_review.md` rubric exists) |
 | P7 — UI | hooks, inline cards, Findings tab (EDA + Review views), AG-UI handlers | manual: cards stream, panel groups by hypothesis, readiness pinned, badge not auto-switch | **Not started** |
 | P8 — Evals | `evals/` package, golden case, three tiers, smoke test, live run | smoke green in CI; live run Tiers 1–2 pass at thresholds; judge report generated | **Not started** |

@@ -6,7 +6,8 @@ import json
 from typing import Any
 
 from dataclaw.state import AgentState
-from dataclaw_analysis_review.checklist import _step_identity, should_auto_review_step
+from dataclaw_analysis_review.checklist import _step_identity, find_plan_step, should_auto_review_step
+from dataclaw_analysis_review.store import fold_review_findings
 from dataclaw_analysis_review.tools import request_analysis_review
 from dataclaw_plans.store import find_proposal, get_active_plan_id
 
@@ -17,6 +18,8 @@ REVIEW_TOOLS = {
     "resolve_review_finding",
     "get_review_gate",
 }
+
+PUBLISH_TOOLS = {"publish_artifact", "dataclaw_publish_artifact"}
 
 
 async def review_context_hook(state: AgentState) -> AgentState:
@@ -77,6 +80,75 @@ async def auto_review_completed_steps_hook(state: AgentState) -> AgentState:
                 require_subagent=False,
             )
     return state
+
+
+async def surface_unreviewed_publish_hook(state: AgentState) -> AgentState:
+    """FR-30a: label publishes that happen while required review findings are open.
+
+    Appends an "unresolved review risk" living-report event naming the finding
+    ids — unless every open required finding sits on a step whose gate risk was
+    explicitly accepted (accepted_with_rationale resolutions are already closed
+    and never counted). Unreviewed exports are never silently clean.
+    """
+    session_id = str(state.get("session_id") or "default")
+    for tool_result in state.get("tool_results", []) or []:
+        if tool_result.get("is_error") or str(tool_result.get("tool_name") or "") not in PUBLISH_TOOLS:
+            continue
+        result = _parse_payload(tool_result.get("result", tool_result.get("content")))
+        artifact_id = str(result.get("artifact_id") or "")
+        if not artifact_id or result.get("success") is False:
+            continue
+        blockers = _unaccepted_required_findings(session_id)
+        if not blockers:
+            continue
+        finding_ids = [str(f.get("finding_id") or "") for f in blockers]
+        listed = ", ".join(f"`{fid}`" for fid in finding_ids if fid)
+        try:
+            from dataclaw_artifacts.store import append_living_report_event
+
+            append_living_report_event(
+                session_id=session_id,
+                event={
+                    "kind": "note",
+                    "page": "log",
+                    "plan_step_id": str(result.get("plan_step_id") or ""),
+                    "status": "active",
+                    "session_id": session_id,
+                    "payload": {
+                        "md": (
+                            f"**Unresolved review risk:** artifact `{artifact_id}` was published with "
+                            f"{len(finding_ids)} open required review finding(s): {listed}. "
+                            "Resolve them or accept the risk explicitly via the review tools."
+                        )
+                    },
+                },
+            )
+        except Exception:
+            continue
+    return state
+
+
+def _unaccepted_required_findings(session_id: str) -> list[dict[str, Any]]:
+    open_required = [
+        finding
+        for finding in fold_review_findings(session_id)
+        if finding.get("status") == "open" and finding.get("severity") == "required"
+    ]
+    return [
+        finding
+        for finding in open_required
+        if not _gate_risk_accepted(str(finding.get("plan_step_id") or ""), session_id)
+    ]
+
+
+def _gate_risk_accepted(plan_step_id: str, session_id: str) -> bool:
+    if not plan_step_id:
+        return False
+    _proposal, step = find_plan_step(plan_step_id=plan_step_id, session_id=session_id)
+    gate = ((step or {}).get("gates") or {}).get("analysis_review") or {}
+    if not isinstance(gate, dict):
+        return False
+    return bool(gate.get("accepted")) or str(gate.get("status") or "") == "accepted"
 
 
 def _parse_payload(raw: Any) -> dict[str, Any]:

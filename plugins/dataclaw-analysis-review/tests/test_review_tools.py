@@ -336,3 +336,263 @@ async def test_auto_review_hook_accepts_content_payload_shape():
 
     gate = await get_review_gate(scope="plan_step", target_id=step_id, session_id="sess-1")
     assert gate["gate"] == "fail"
+
+
+@pytest.mark.asyncio
+async def test_checklist_flags_artifact_cited_stale_evidence():
+    from dataclaw_analysis_review.checklist import run_checklist
+
+    session_id = "sess-stale"
+    recorded = await record_eda_finding(
+        title="Churn rate by segment",
+        finding_type="segment_difference",
+        summary="Enterprise churn is 2x SMB churn",
+        evidence=[{"kind": "notebook_cell", "cell_id": "cell-1", "source_sha256": "abc123", "stale": True}],
+        dataset_id="ds-1",
+        session_id=session_id,
+    )
+    finding_id = recorded["finding_id"]
+
+    context = {
+        "scope": "artifact",
+        "target_id": "art-1",
+        "session_id": session_id,
+        "plan_step": None,
+        "eda_findings": [],
+        "eda_hypotheses": [],
+        "artifact": {"id": "art-1"},
+        "artifact_sections": [
+            {
+                "kind": "findings",
+                "section_id": "sec-1",
+                "section_schema": 2,
+                "payload": {"items": [{"finding_id": finding_id, "title": "Churn"}]},
+            }
+        ],
+    }
+    codes = {finding["check_id"] for finding in run_checklist(context)}
+    assert "CHK-stale-evidence" in codes
+    assert "CHK-unsupported-claims" not in codes
+
+
+@pytest.mark.asyncio
+async def test_checklist_flags_mlflow_runs_missing_metadata(monkeypatch):
+    proposal_id, step_id = await _high_risk_plan("sess-ml")
+    await update_plan(
+        proposal_id=proposal_id,
+        step_patches=[{"plan_step_id": step_id, "status": "completed"}],
+        session_id="sess-ml",
+    )
+    monkeypatch.setattr(
+        "dataclaw_analysis_review.checklist.session_run_metadata",
+        lambda session_id, **_: [
+            {"run_id": "run-1", "params": {}, "metrics": {"auc": 0.9}, "tags": {"mlflow.runName": "x"}},
+            {"run_id": "run-2", "params": {"n": "5"}, "metrics": {"auc": 0.9}, "tags": {"purpose": "churn"}},
+        ],
+    )
+
+    review = await request_analysis_review(
+        scope="plan_step",
+        target_id=step_id,
+        proposal_id=proposal_id,
+        session_id="sess-ml",
+    )
+    assert review["success"] is True
+    findings = await list_review_findings(session_id="sess-ml")
+    mlflow_findings = [f for f in findings["findings"] if f.get("check_id") == "CHK-mlflow-repro"]
+    assert len(mlflow_findings) == 1
+    assert mlflow_findings[0]["severity"] == "warning"
+    assert "run-1" in mlflow_findings[0]["evidence"]
+
+
+@pytest.mark.asyncio
+async def test_checklist_flags_ready_with_open_required_findings():
+    from dataclaw_analysis_review.checklist import run_checklist
+    from dataclaw_analysis_review.store import append_review_finding, new_finding_id, now_iso
+
+    session_id = "sess-ready"
+    step_id = "step-aaaa1111"
+    append_review_finding(
+        {
+            "finding_id": new_finding_id(),
+            "review_id": "rev-seed",
+            "scope": "plan_step",
+            "target_id": step_id,
+            "plan_step_id": step_id,
+            "session_id": session_id,
+            "source": "checklist:CHK-step-no-findings",
+            "check_id": "CHK-step-no-findings",
+            "severity": "required",
+            "category": "unsupported_claim",
+            "claim": "seeded",
+            "evidence": [step_id],
+            "recommendation": "resolve",
+            "status": "open",
+            "created_at": now_iso(),
+            "actor": "analysis_review",
+        },
+        session_id,
+    )
+    context = {
+        "scope": "plan_step",
+        "target_id": step_id,
+        "session_id": session_id,
+        "plan_step": {
+            "plan_step_id": step_id,
+            "name": "Notes",
+            "description": "write summary notes",
+            "status": "completed",
+            "ready_for_validation": True,
+        },
+        "eda_findings": [],
+        "eda_hypotheses": [],
+    }
+    codes = {finding["check_id"] for finding in run_checklist(context)}
+    assert "CHK-open-required-on-ready" in codes
+
+
+@pytest.mark.asyncio
+async def test_ready_check_does_not_feed_on_itself():
+    from dataclaw_analysis_review.checklist import run_checklist
+    from dataclaw_analysis_review.store import append_review_finding, new_finding_id, now_iso
+
+    session_id = "sess-ready-self"
+    step_id = "step-bbbb2222"
+    append_review_finding(
+        {
+            "finding_id": new_finding_id(),
+            "review_id": "rev-seed",
+            "scope": "plan_step",
+            "target_id": step_id,
+            "plan_step_id": step_id,
+            "session_id": session_id,
+            "source": "checklist:CHK-open-required-on-ready",
+            "check_id": "CHK-open-required-on-ready",
+            "severity": "required",
+            "category": "unsupported_claim",
+            "claim": "seeded prior ready-check finding",
+            "evidence": [step_id],
+            "recommendation": "resolve",
+            "status": "open",
+            "created_at": now_iso(),
+            "actor": "analysis_review",
+        },
+        session_id,
+    )
+    context = {
+        "scope": "plan_step",
+        "target_id": step_id,
+        "session_id": session_id,
+        "plan_step": {
+            "plan_step_id": step_id,
+            "name": "Notes",
+            "description": "write summary notes",
+            "status": "completed",
+            "ready_for_validation": True,
+        },
+        "eda_findings": [],
+        "eda_hypotheses": [],
+    }
+    codes = {finding["check_id"] for finding in run_checklist(context)}
+    assert "CHK-open-required-on-ready" not in codes
+
+
+@pytest.mark.asyncio
+async def test_publish_hook_appends_unresolved_review_risk_event():
+    from dataclaw_analysis_review.hooks import surface_unreviewed_publish_hook
+    from dataclaw_analysis_review.store import append_review_finding, new_finding_id, now_iso
+    from dataclaw_artifacts.store import living_report_id, read_manifest_events
+
+    session_id = "sess-pub"
+    append_review_finding(
+        {
+            "finding_id": new_finding_id(),
+            "review_id": "rev-seed",
+            "scope": "session",
+            "target_id": session_id,
+            "plan_step_id": "",
+            "session_id": session_id,
+            "source": "checklist:CHK-step-no-findings",
+            "check_id": "CHK-step-no-findings",
+            "severity": "required",
+            "category": "unsupported_claim",
+            "claim": "seeded",
+            "evidence": [],
+            "recommendation": "resolve",
+            "status": "open",
+            "created_at": now_iso(),
+            "actor": "analysis_review",
+        },
+        session_id,
+    )
+    state = {
+        "session_id": session_id,
+        "tool_results": [
+            {
+                "tool_name": "publish_artifact",
+                "result": json.dumps({"success": True, "artifact_id": "art-77"}),
+            }
+        ],
+    }
+    await surface_unreviewed_publish_hook(state)
+
+    events = read_manifest_events(living_report_id(session_id))
+    notes = [e for e in events if "Unresolved review risk" in str((e.get("payload") or {}).get("md", ""))]
+    assert len(notes) == 1
+    assert "art-77" in notes[0]["payload"]["md"]
+    assert notes[0]["page"] == "log"
+
+
+@pytest.mark.asyncio
+async def test_publish_hook_skips_gate_accepted_steps():
+    from dataclaw_analysis_review.hooks import surface_unreviewed_publish_hook
+    from dataclaw_analysis_review.store import append_review_finding, new_finding_id, now_iso
+    from dataclaw_artifacts.store import living_report_id, read_manifest_events
+    from dataclaw_plans.gates import set_step_gate
+
+    session_id = "sess-pub2"
+    proposal_id, step_id = await _high_risk_plan(session_id)
+    append_review_finding(
+        {
+            "finding_id": new_finding_id(),
+            "review_id": "rev-seed",
+            "scope": "plan_step",
+            "target_id": step_id,
+            "plan_step_id": step_id,
+            "session_id": session_id,
+            "source": "checklist:CHK-step-no-findings",
+            "check_id": "CHK-step-no-findings",
+            "severity": "required",
+            "category": "unsupported_claim",
+            "claim": "seeded",
+            "evidence": [step_id],
+            "recommendation": "resolve",
+            "status": "open",
+            "created_at": now_iso(),
+            "actor": "analysis_review",
+        },
+        session_id,
+    )
+    set_step_gate(
+        proposal_id=proposal_id,
+        plan_step_id=step_id,
+        gate_name="analysis_review",
+        status="accepted",
+        required=True,
+        reason="user accepted the risk",
+        actor="user",
+    )
+    state = {
+        "session_id": session_id,
+        "tool_results": [
+            {
+                "tool_name": "publish_artifact",
+                "result": json.dumps({"success": True, "artifact_id": "art-88"}),
+            }
+        ],
+    }
+    await surface_unreviewed_publish_hook(state)
+
+    events = read_manifest_events(living_report_id(session_id))
+    notes = [e for e in events if "Unresolved review risk" in str((e.get("payload") or {}).get("md", ""))]
+    assert notes == []
