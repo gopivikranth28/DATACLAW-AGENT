@@ -178,14 +178,18 @@ At the Decide step, pass `loop_index` as the 1-based insight-loop number on both
 
 ## Output and visualization rules
 
-Fetch the `visualization` skill before producing the first final chart or report artifact. Follow its conventions for final visual output: Plotly charts via `fig.show()`, metric tiles for headline checks, and a final report-design pass when producing a polished artifact or living-report entry.
+Fetch the `visualization` skill before producing the first final chart or report
+artifact. Fetch the `report_design` skill before producing a polished EDA report
+or living-report entry. Follow their conventions for final visual output: Plotly
+charts via `fig.show()`, metric tiles for headline checks, and a final
+report-design pass when producing a polished artifact or living-report entry.
 
 Do not treat appended report cells as the final EDA report. First finish the
 notebook analysis, hypothesis dispositions, recorded EDA findings, aggregate
-tables, chart specs, caveats, and evidence ids. Then call `report_design_report`
-so the report designer can look across all completed material, storyboard the
-report, choose layouts and interactive controls, and render the HTML in one
-cohesive pass.
+tables, chart specs, caveats, and evidence ids. Then follow `report_design` and
+call `report_design_report` so the report designer can look across all completed
+material, storyboard the report, choose layouts and interactive controls, and
+render the HTML in one cohesive pass.
 
 Use visuals that match the goal:
 

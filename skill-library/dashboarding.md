@@ -8,8 +8,9 @@ tags: [visualization, dashboarding, reporting, charts, artifacts]
 The user has a dataset and a specific question, and wants a clean, shareable
 visual answer - "build a dashboard", "show me who/what/when", "visualize this",
 "give me a report". Use this skill to decide the story and layout. Use the
-`visualization` skill for the visual evidence. Use artifacts as the final
-published surface.
+`visualization` skill for the visual evidence, and fetch the `report_design`
+skill before final report generation. Use artifacts as the final published
+surface.
 
 Do not leave the final answer as loose charts, App-panel state, or a long chat
 message. The final visual deliverable should be a published artifact or a living
@@ -22,6 +23,8 @@ changes that accumulate during the investigation.
 
 ## Skill triad
 - `dashboarding` scopes the decision and composes the storyboard.
+- `report_design` owns the final report design pass: section mix, controls,
+  evidence placement, methodology layer, storyboard JSON, and quality gate.
 - `visualization` produces the chart/KPI/table/caption sections and runs the
   misleading-viz audit.
 - `dataclaw-artifacts` publishes/revises the artifact, serves it safely, keeps
@@ -81,10 +84,11 @@ user asks for a broad report.
 6. **Visual evidence** - follow `visualization`: Plotly via `fig.show()`, KPIs
    via `display_metric`, captions via `display_cell_output`, and completed
    insights/assets/evidence for the report designer.
-7. **Report design pass** - after the analysis is complete, call
-   `report_design_report` with the final insights, aggregate analysis payloads,
-   methodology, hypotheses, evidence, and interaction requirements. Do not treat
-   appended report cells as the final dashboard/report architecture.
+7. **Report design pass** - after the analysis is complete, fetch and follow the
+   `report_design` skill, then call `report_design_report` with the final
+   insights, aggregate analysis payloads, methodology, hypotheses, evidence,
+   and interaction requirements. Do not treat appended report cells as the final
+   dashboard/report architecture.
 8. **Artifact assembly** - the designer should assemble `header`, `metric_row`, `narrative_band`,
    `chart_interpretation`, `chart_table_explorer`, `filterable_chart`,
    `interactive_table`, `selector_panel`, `entity_card_grid`,

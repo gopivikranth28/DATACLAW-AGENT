@@ -103,6 +103,7 @@
       "dataclaw_display_image",
       "dataclaw_build_report",
       "dataclaw_report_add_section",
+      "dataclaw_report_design_report",
       "dataclaw_list_subagents",
       "dataclaw_delegate_to_subagent",
       "dataclaw_propose_plan",

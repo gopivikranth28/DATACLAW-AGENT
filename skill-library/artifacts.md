@@ -11,6 +11,7 @@ model cards, stakeholder exports, and living-report notes.
 
 This skill owns artifact lifecycle behavior. For content and layout, also fetch:
 - `dashboarding` for dashboard/story composition
+- `report_design` for final report storyboards, interaction plans, and quality gates
 - `visualization` for chart/KPI/table grammar
 - `structured_eda`, `sql_analyst`, or `modeling` when the artifact is evidence from those workflows
 

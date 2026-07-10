@@ -74,6 +74,30 @@ def _parse_skill_file(path: Path) -> dict[str, Any] | None:
     return skill
 
 
+def _library_skill(skill_id: str) -> dict[str, Any] | None:
+    """Return a bundled library skill even when it is not installed locally."""
+    library = read_library_skill(skill_id)
+    if not library:
+        return None
+    body = str(library.get("body") or "")
+    if not body:
+        return None
+    skill = {
+        "id": skill_id,
+        "name": library.get("name", skill_id),
+        "description": library.get("description", ""),
+        "tags": library.get("tags", []),
+        "body": body,
+        "source": "library",
+        "library_id": skill_id,
+        "active_body_source": "bundled_library",
+    }
+    for key in ("installed", "installed_stale", "library_hash", "stale_reason"):
+        if key in library:
+            skill[key] = library[key]
+    return skill
+
+
 class FileSkillProvider:
     """Reads skills from markdown files in a directory."""
 
@@ -198,6 +222,17 @@ class FileSkillProvider:
                         "installed_stale": bool(skill.get("installed_stale")),
                         "stale_reason": skill.get("stale_reason", ""),
                     }
+        library_skill = _library_skill(skill_id)
+        if library_skill:
+            return {
+                "content": _skill_content(library_skill),
+                "id": library_skill["id"],
+                "name": library_skill["name"],
+                "description": library_skill.get("description", ""),
+                "installed_stale": bool(library_skill.get("installed_stale")),
+                "stale_reason": library_skill.get("stale_reason", ""),
+                "from_library": True,
+            }
         return {"content": f"Skill not found: {skill_id}", "is_error": True}
 
     async def list_available_skills(self, **kwargs: Any) -> dict[str, Any]:

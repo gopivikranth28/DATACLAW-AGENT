@@ -28,6 +28,7 @@ def test_structured_eda_skill_is_bundled_and_parseable():
     assert "Insight loop behavior" in body
     assert "Default to at most 3 insight loops" in body
     assert "Fetch the `visualization` skill" in body
+    assert "Fetch the `report_design` skill" in body
     assert "report_design_report" in body
     assert "Do not treat appended report cells as the final EDA report" in body
     assert "`hypothesis_ledger`" in body
@@ -72,6 +73,7 @@ def test_openclaw_dataclaw_skill_routes_eda_to_structured_eda():
     )
 
     assert "fetch the `structured_eda` skill" in bundled_skill
+    assert "`report_design` skills before the reporting step" in bundled_skill
     assert "Use `data_profiling` only for a compact quick profile" in bundled_skill
     assert "dataclaw_request_analysis_review" in bundled_skill
 

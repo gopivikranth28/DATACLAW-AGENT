@@ -75,6 +75,23 @@ async def test_fetch_nonexistent(provider):
 
 
 @pytest.mark.asyncio
+async def test_fetch_uninstalled_library_skill(provider, library_dir):
+    _write_library_skill(
+        library_dir,
+        "report_design",
+        "name: report_design\ndescription: Report design",
+        "Call report_design_report for final reports",
+    )
+
+    await provider.resolve_skills({"session_id": "t", "messages": []})
+    result = await provider.fetch_skill("report_design")
+
+    assert result["id"] == "report_design"
+    assert result["from_library"] is True
+    assert "Call report_design_report" in result["content"]
+
+
+@pytest.mark.asyncio
 async def test_stale_library_skill_is_warned_in_prompt_and_fetch(provider, skill_dir, library_dir):
     _write_library_skill(library_dir, "visualization", "name: visualization", "new instructions")
     _write_skill(

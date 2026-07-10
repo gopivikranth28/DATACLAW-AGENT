@@ -372,7 +372,14 @@ async def test_install_plugin_atomic_happy_path(tmp_path: Path) -> None:
             openclaw_cfg={"token": "tok"},
             argv=["openclaw"],
             also_allow_addition="dataclaw",
-            tools=[{"name": "demo", "description": "d", "parameters": {}}],
+            tools=[
+                {"name": "demo", "description": "d", "parameters": {}},
+                {
+                    "name": "report_design_report",
+                    "description": "Design cohesive analytical reports",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            ],
         ):
             events.append(event)
 
@@ -383,6 +390,7 @@ async def test_install_plugin_atomic_happy_path(tmp_path: Path) -> None:
     assert refreshed.exists()
     body = refreshed.read_text()
     assert 'name: "demo"' in body
+    assert 'name: "report_design_report"' in body
     assert "DATACLAW_TOOL_MANIFEST" in body
 
     # And it should have mirrored the tool list into openclaw.plugin.json's
@@ -392,7 +400,10 @@ async def test_install_plugin_atomic_happy_path(tmp_path: Path) -> None:
     refreshed_manifest = json.loads(
         (plugin_dir / PLUGIN_MANIFEST_FILENAME).read_text()
     )
-    assert refreshed_manifest["contracts"]["tools"] == ["dataclaw_demo"]
+    assert refreshed_manifest["contracts"]["tools"] == [
+        "dataclaw_demo",
+        "dataclaw_report_design_report",
+    ]
 
     # Expected subprocess calls (in order). Channel config writes happen AFTER
     # plugin install: OpenClaw 2026.5's plugin-install commit hard-fails on
