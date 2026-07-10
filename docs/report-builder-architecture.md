@@ -6,8 +6,9 @@ guarantee it. No code changes proposed here — this is the design of record._
 
 _Refreshed 2026-07-10 against the renderer overhaul on this branch: the two L5 gaps named
 in §1.2.B (chart theming, left-rail nav) have since shipped, along with seven runtime bug
-fixes and the component affordances in §1.4. The rubric in Appendix A describes the
-post-overhaul baseline._
+fixes and the component affordances in §1.4. The rubric in Appendix A interleaves the
+post-overhaul baseline with the target standard; every criterion is marked `live`
+(enforced by today's gate) or `deferred` (ships per the A.10 versioning rules)._
 
 ---
 
@@ -213,13 +214,19 @@ It pulls figures, tables, headings, and any author-written interpretation out of
 submission, hands them to the designer, and reconstructs proper `chart_interpretation` /
 explorer / `insight_grid` sections — preserving author titles, order, and interpretation text.
 A chart-dump gets **repaired**, not rejected. (`build_report` today also emits a best-effort
-`.docx` alongside the HTML; that export must flow from the _upgraded_ report, not the raw input.)
+`.docx` alongside the HTML; that export must flow from the _upgraded_ report, not the raw input.
+The conversion currently swallows every failure silently — `except Exception: pass` — so the
+pipeline cannot even _detect_ an omitted export today; `export_fidelity` (A.6) requires
+detecting and disclosing it.)
 
 > **Consequence to respect:** auto-upgrading _arbitrary raw HTML_ is lossy (figures and
 > section metadata recover cleanly; freeform prose layout does not). Design accordingly:
 > make **structured assets the canonical submission**, treat raw HTML as best-effort
 > extraction, and when extraction confidence is low, **preserve the author's HTML and
 > gate-warn** rather than mangle it. This nudges every caller toward the good path.
+> How extraction confidence is _measured_ is deliberately unspecified here — it is the
+> first design question of this entry point when built. Note the A.7 precedence guardrail
+> protects structured sections only; it does not cover raw-HTML extraction.
 
 The preserve-and-warn principle is already live on the structured path: the designer
 raises with a machine-readable message on unrenderable or unknown analyses rather than
@@ -230,6 +237,11 @@ through `report_add_section` at its default non-blocking `warn` gate. `report_ad
 keeps `warn` as the draft path, but the **publish path re-gates at `fail`**: publishing or
 exporting a report that has only ever passed the draft gate re-runs the full rubric first.
 A report cannot reach a reader having been judged only by the draft standard.
+
+Where that re-gate physically lives is an open decision (§9.2) — today's toolset has **no
+publish step to hook**: `build_report` writes the HTML and the `.docx` in one call, and
+`report_add_section` mutates the draft in place. The decision above is the policy; the
+enforcement point still needs a home.
 
 ### 5.3 Self-critique loop (in scope)
 A bounded loop on the **structured section model** (not the HTML), after render and before the gate:
@@ -284,6 +296,10 @@ and _rendered_:
 - **Sequencing.** `evidence_unresolved` cannot fail-closed before the registry exists. Two
   steps, each a rubric version: presence-only checks (today's behavior) → full resolvability
   once L2's registry lands. The version history records which standard each report passed.
+  This is encoded in the rubric itself (A.3): v1 carries the presence-only check as
+  `unsourced_claim` at its **live severity `warn`** (it is today's `missing_evidence_ids`,
+  renamed via `replaces`); `evidence_unresolved` ships `status: deferred` until the registry
+  lands, then enters at `warn` per A.10 before promotion to `fail`.
 
 ---
 
@@ -364,6 +380,18 @@ where a component is warranted" is a scored narrative-axis criterion.
    with detailed per-axis scores living in the storyboard JSON, not on the page. Alternatives:
    fully internal, or a fuller on-page scorecard.
 
+2. **Publish/export boundary.** §5.2 locks the _policy_ ("publish re-gates at `fail`") but no
+   publish step exists in today's toolset — `build_report` writes HTML + `.docx` in one call,
+   `report_add_section` mutates the draft in place. Recommendation: a dedicated
+   `report_publish` (or export) tool hosts the `fail` re-gate, and `build_report`'s `.docx`
+   emission moves behind it. Alternative: re-gate inside every export path individually.
+
+3. **Runtime-smoke environment policy.** `runtime_smoke_failed` (A.6) presumes a headless
+   browser in the gate environment; as specced, an environment without one would block every
+   report. Recommendation: where no browser is available the criterion reports `skipped` as a
+   **warn-level disclosure** — never a silent pass — and the smoke is mandatory only on the
+   publish path (§9.2), which can guarantee the environment.
+
 _Resolved this pass:_
 - **`remediable: partial` behavior** is settled — draft from intake, block only when intake is
   empty (§5.5).
@@ -380,7 +408,9 @@ The **`report_rubric` spec** is the keystone — evidence resolvability, finding
 and the component-semantics map are all just entries in it, read by the generator, the critique
 loop, and the gate alike. It is drafted in **Appendix A** below. Turning it into a versioned
 config file + wiring `analyze_report_quality` to load it is the first code step whenever we
-start building.
+start building. Every criterion in the catalog is marked `live` or `deferred`, so that
+transcription step reproduces today's gate exactly — it cannot silently tighten (or loosen)
+the bar; A.10 governs every promotion after that.
 
 ---
 
@@ -411,8 +441,8 @@ written, critiqued, and judged.
 
 ```yaml
 rubric_version: 1
-# report-level knobs the criteria reference — values match the live gate today
-# (report_renderer.py: analyze_report_quality) so the rubric describes real behavior.
+# Gate thresholds — every value here matches the live gate today
+# (report_renderer.py: analyze_report_quality), so the rubric describes real behavior.
 thresholds:
   max_payload_bytes: 1_500_000        # = REPORT_QUALITY_MAX_BYTES; measured after stripping the Plotly runtime
   max_consecutive_plain_charts: 2     # a 3rd consecutive plain chart fails
@@ -420,14 +450,22 @@ thresholds:
   explorer_required_min_sections: 6   # ≥6 sections …
   explorer_required_min_charts: 3     # … with ≥3 chart-like sections must include an explorer
   insight_required_min_sections: 4    # ≥4 sections must include a story/insight layer
+
+# Generation & loop knobs — NOT gate values; no criterion asserts them today.
+# Headline bounds exist only as designer guidance ("lead with 2-5 numbers");
+# either promote them to a headline_metrics_out_of_range criterion or they stay advisory.
+designer:
   min_headline_metrics: 2
   max_headline_metrics: 5
-  critique_max_passes: 2
+critique:
+  max_passes: 2
 
 criteria:
   - id: evidence_unresolved
     axis: rigor
     severity: fail
+    status: deferred               # live | deferred — deferred = target standard, not yet evaluable
+    since_version: 2               # unlocks when the L2 registry lands (§6 sequencing)
     scope: section                 # report | section
     applies_to: [findings, insight_grid, chart_interpretation,
                  hypothesis_ledger, evidence_trace, evidence_rail]
@@ -440,51 +478,71 @@ criteria:
     rationale: An unsourced claim is exactly what the Scientist won't sign.
 ```
 
-Every criterion carries: `id`, `axis`, `severity` (`fail`|`warn`), `scope`, `applies_to`,
-`signal` (what's evaluated), `remediable` (can the critique loop fix it?), `on_fail`
-(`block`|`warn`), `remediation` (the loop's action), `rationale`.
+Every criterion carries: `id`, `axis`, `severity` (`fail`|`warn`), `status` (`live`|`deferred`;
+`live` = enforced by today's gate at this severity, `deferred` = target standard awaiting
+implementation, with `since_version` naming the unlock), `scope`, `applies_to`, `signal`
+(what's evaluated), `remediable` (can the critique loop fix it?), `on_fail` (`block`|`warn`),
+`remediation` (the loop's action), `rationale`. A criterion that renames a live gate check
+also carries `replaces: <live_id>` so the version history stays coherent across the rename.
 
 ### A.4 Criteria catalog — Rigor axis
 
-| id | sev | remediable | Signal | Critique action |
-|---|---|---|---|---|
-| `evidence_unresolved` | fail | no | every evidence ref resolves to a present, registered target | flag claim as unsourced / caveat |
-| `unsourced_claim` | fail | no | every finding/insight carries ≥1 evidence ref | downgrade to caveat; never mint an id |
-| `missing_methodology` | fail | partial | a `methodology_block` states grain, denominator, validation | reshape intake methodology notes into the block; block only if intake has none |
-| `missing_data_quality` | warn | yes | data-quality / coverage risk is disclosed | synthesize from intake notes |
-| `missing_uncertainty` | warn | partial | quantitative headline claims show CI / confidence / n where applicable | annotate from source stats; never invent |
-| `chart_interpretation_missing_evidence` | warn | no | a `chart_interpretation` with a conclusion has ≥1 evidence ref | request evidence; flag if absent |
-| `missing_recipe` | warn | yes | storyboard JSON + regeneration recipe is attached | attach the storyboard used to render |
+| id | sev | status | remediable | Signal | Critique action |
+|---|---|---|---|---|---|
+| `evidence_unresolved` | fail | deferred (v2) | no | every evidence ref resolves to a present, registered target | flag claim as unsourced / caveat |
+| `unsourced_claim` | warn (v1) → fail | live | no | every finding/insight carries ≥1 evidence ref | downgrade to caveat; never mint an id |
+| `missing_methodology` | fail | deferred | partial | a `methodology_block` states grain, denominator, validation | reshape intake methodology notes into the block; block only if intake has none |
+| `missing_data_quality` | warn | deferred | yes | data-quality / coverage risk is disclosed | synthesize from intake notes |
+| `missing_uncertainty` | warn | deferred | partial | quantitative headline claims show CI / confidence / n where applicable | annotate from source stats; never invent |
+| `chart_interpretation_missing_evidence` | warn | live | no | a `chart_interpretation` with a conclusion has ≥1 evidence ref | request evidence; flag if absent |
+| `missing_recipe` | warn | deferred | yes | storyboard JSON + regeneration recipe is attached | attach the storyboard used to render |
+
+`unsourced_claim` is today's `missing_evidence_ids` renamed (`replaces: missing_evidence_ids`).
+It enters v1 at its **live severity, `warn`** — encoding it at `fail` in v1 would silently
+tighten the gate, exactly what A.10 forbids — and promotes to `fail` in a later version.
+`missing_methodology` is deferred because the designer _plans_ a `methodology_block`
+(`report_renderer.py`) but the gate does not yet assert its presence.
 
 ### A.5 Criteria catalog — Narrative axis
 
-| id | sev | remediable | Signal | Critique action |
-|---|---|---|---|---|
-| `consecutive_plain_charts` | fail | yes | ≤ `max_consecutive_plain_charts` plain charts in a row | convert to `chart_interpretation` / explorer |
-| `chart_dump` | fail | yes | not dominated by plain charts w/o interpretation or explorer | re-plan via designer |
-| `plain_chart_overuse` | fail | yes | plain charts ≤ interactive + interpreted charts | upgrade supporting charts |
-| `missing_interactive_explorer` | fail | yes | ≥3 charts ⇒ ≥1 explorer/selector/filterable/table | add an explorer over an aggregate payload |
-| `chart_missing_conclusion` | fail | yes | every chart states what it _shows_, not just axes | generate a one-line conclusion from the data |
-| `missing_narrative_answer` | warn | yes | a `narrative_band` answers the primary question up front | synthesize the answer from findings |
-| `bare_bullet_findings` | warn | yes | findings render as insight cards, not plain `<ul><li>` | reshape bullets into insight cards |
-| `missing_section_dek` | warn | yes | each section opens with a one-line dek | write a dek from section content |
-| `plaintext_where_component_warranted` | warn | yes | categorical/%/entity values use the right component (§A.7) | upgrade plain text per the semantics map |
-| `missing_table_caption` | warn | yes | tables have a caption explaining grain/filters | write caption from columns/filters |
-| `missing_primary_insights` | fail | partial | ≥1 findings/insight-grid carries completed insight items | promote intake insights into an insight-grid; block only if intake has none |
-| `missing_insight_sections` | fail | partial | ≥4 sections ⇒ ≥1 story layer (findings/insight-grid/narrative/methodology/evidence/explorer) | build a story layer from intake material; block only if intake has none |
-| `unpaired_insights` | warn | partial | insights whose provenance ids match an evidence section carry an `evidence_anchor` | re-run pairing; if no analysis shares the ids, flag the insight as evidence-orphaned |
+| id | sev | status | remediable | Signal | Critique action |
+|---|---|---|---|---|---|
+| `consecutive_plain_charts` | fail | live | yes | ≤ `max_consecutive_plain_charts` plain charts in a row | convert to `chart_interpretation` / explorer |
+| `chart_dump` | fail | live | yes | not dominated by plain charts w/o interpretation or explorer | re-plan via designer |
+| `plain_chart_overuse` | fail | live | yes | plain charts ≤ interactive + interpreted charts | upgrade supporting charts |
+| `missing_interactive_explorer` | fail | live | yes | ≥3 charts ⇒ ≥1 explorer/selector/filterable/table | add an explorer over an aggregate payload |
+| `chart_missing_conclusion` | fail | deferred | yes | every chart states what it _shows_, not just axes | generate a one-line conclusion from the data |
+| `missing_narrative_answer` | warn | deferred | yes | a `narrative_band` answers the primary question up front | synthesize the answer from findings |
+| `bare_bullet_findings` | warn | deferred | yes | findings render as insight cards, not plain `<ul><li>` | reshape bullets into insight cards |
+| `missing_section_dek` | warn | deferred | yes | each section opens with a one-line dek | write a dek from section content |
+| `plaintext_where_component_warranted` | warn | deferred | yes | categorical/%/entity values use the right component (§A.7) | upgrade plain text per the semantics map |
+| `missing_table_caption` | warn | live | yes | tables have a caption explaining grain/filters | write caption from columns/filters |
+| `missing_primary_insights` | fail | live | partial | ≥1 findings/insight-grid carries completed insight items | promote intake insights into an insight-grid; block only if intake has none |
+| `missing_insight_sections` | fail | live | partial | ≥4 sections ⇒ ≥1 story layer (findings/insight-grid/narrative/methodology/evidence/explorer) | build a story layer from intake material; block only if intake has none |
+| `unpaired_insights` | warn | deferred | partial | insights whose provenance ids match an evidence section carry an `evidence_anchor` | re-run pairing; if no analysis shares the ids, flag the insight as evidence-orphaned |
+
+(`unpaired_insights` is deferred as a _gate criterion_ even though the pairing mechanism
+itself shipped — anchors/backlinks render today, but nothing asserts them.)
 
 ### A.6 Criteria catalog — Integrity axis
 
-| id | sev | remediable | Signal | Critique action |
-|---|---|---|---|---|
-| `oversized_report` | fail | partial | payload (excl. Plotly runtime) ≤ `max_payload_bytes` | drop raw/full datasets; sample/aggregate |
-| `chart_theme_defeated` | fail | yes | every chart renders through the themed pipeline; no figure carries a baked template or hard-coded paper/plot background, font color, or colorway that defeats token theming and dark-mode re-render | **strip** the baked template / explicit colors from `fig.layout` — render-time theming supplies them. (Theming is applied at render, never injected into the stored figure: a baked template freezes the theme at generation time and breaks the toggle. Replaces the earlier `charts_untemplated` framing, which prescribed the rejected mechanism.) |
-| `runtime_smoke_failed` | fail | partial | headless render of the artifact passes behavioral assertions: every `.r-chart-target` mounted a plot; sections declaring `filters`/`controls` materialized them; selector cards visible; anchor `href`s resolve; no unexpected `.r-empty-state` | re-render after upstream fixes; block if assertions still fail. _Motivation: all seven 2026-07-10 bugs were invisible to metadata checks and caught only by rendering (§1.4)._ |
-| `export_fidelity` | warn | partial | exports (`.docx`/print) derive from the upgraded report, and every interactive section has a static fallback (sorted table snapshot, chart image, or first-N rows) or the export discloses the omission | generate static fallbacks; disclose what could not be preserved |
-| `not_self_contained` | warn | yes | no external asset the CSP/offline artifact can't load | inline or replace the external ref |
-| `contrast_below_aa` | warn | partial | text/mark contrast ≥ WCAG-AA in both themes | adjust to token colors that pass |
-| `stale_installed_skills` | fail | no | installed library skills match bundled skill-library | block; refresh skills out-of-band |
+| id | sev | status | remediable | Signal | Critique action |
+|---|---|---|---|---|---|
+| `oversized_report` | fail | live | partial | payload (excl. Plotly runtime) ≤ `max_payload_bytes` | drop raw/full datasets; sample/aggregate |
+| `chart_theme_defeated` | fail | deferred | yes | every chart renders through the themed pipeline; no figure carries a baked template or hard-coded paper/plot background, font color, or colorway that defeats token theming and dark-mode re-render | **strip** the baked template / explicit colors from `fig.layout` — render-time theming supplies them. (Theming is applied at render, never injected into the stored figure: a baked template freezes the theme at generation time and breaks the toggle. Replaces the earlier `charts_untemplated` framing, which prescribed the rejected mechanism.) |
+| `runtime_smoke_failed` | fail | deferred | partial | headless render of the artifact passes behavioral assertions: every `.r-chart-target` mounted a plot; sections declaring `filters`/`controls` materialized them; selector cards visible; anchor `href`s resolve; no unexpected `.r-empty-state` | re-render after upstream fixes; block if assertions still fail. _Motivation: all seven 2026-07-10 bugs were invisible to metadata checks and caught only by rendering (§1.4)._ |
+| `export_fidelity` | warn | deferred | partial | exports (`.docx`/print) derive from the upgraded report, and every interactive section has a static fallback (sorted table snapshot, chart image, or first-N rows) or the export discloses the omission | generate static fallbacks; disclose what could not be preserved |
+| `not_self_contained` | warn | deferred | yes | no external asset the CSP/offline artifact can't load | inline or replace the external ref |
+| `contrast_below_aa` | warn | deferred | partial | text/mark contrast ≥ WCAG-AA in both themes | adjust to token colors that pass |
+| `stale_installed_skills` | fail | live | no | installed library skills match bundled skill-library | block; refresh skills out-of-band |
+
+Deferred-status notes: `chart_theme_defeated` — the render-time theming _mechanism_ is live
+(§1.4); what is deferred is the gate assertion that no stored figure defeats it.
+`runtime_smoke_failed` — requires a headless browser in the gate environment; where one is
+unavailable the criterion reports `skipped` as a warn-level disclosure, never a silent pass
+(environment policy: §9.3). `export_fidelity` — today's `.docx` conversion swallows failures
+silently (§5.2), so the export pipeline must first be able to _detect_ an omission before it
+can disclose one.
 
 _Runtime criteria (`runtime_smoke_failed`, `contrast_below_aa`) are evaluated by the smoke
 check / screenshot pass, not the section-model critique loop (§5.3) — the loop cannot see
@@ -561,15 +619,18 @@ evidence:
 
 ### A.9 Scoring & gate semantics
 
-- **Applicable criteria** per axis = those whose `applies_to` matches the sections present.
+- **Applicable criteria** per axis = those whose `applies_to` matches the sections present
+  **and** whose `status` is `live` at the rubric version in force — `deferred` criteria are
+  never scored, so they cannot fail a report before their mechanism exists.
 - **Axis score** = `passed / applicable` (drives the optional footer, §9).
-- **Remediation-first:** the critique loop runs up to `critique_max_passes`, re-scoring after each.
+- **Remediation-first:** the critique loop runs up to `critique.max_passes`, re-scoring after each.
 - **Gate status after the loop:**
   - `fail` — any `severity: fail` criterion still failing (and, for `remediable: false`, it blocks immediately);
   - `warn` — only warnings remain;
   - `pass` — no failures.
 - **Fail-closed only when unfixable without fabrication** — typically `evidence_unresolved` /
-  `unsourced_claim`. That is the correct point to stop and ask the human.
+  `unsourced_claim` once each reaches `fail` severity (in v1 they are `deferred` and `warn`
+  respectively; A.10 governs promotion). That is the correct point to stop and ask the human.
 - Every gate result embeds `rubric_version`, so a report is reproducible against the exact
   standard it was judged by.
 
