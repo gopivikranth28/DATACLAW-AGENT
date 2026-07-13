@@ -55,10 +55,12 @@ source and report that artifact publication is unavailable. Do not claim an
 1. **Prepare the source.** Prefer a workspace `source_path` over inline `html`.
    The source should be self-contained HTML assembled from typed report sections
    or artifact-compliant HTML.
-2. **Validate before publish.** Check for remote assets, iframe/object/embed/base
-   tags, raw datasets, fetch/XHR/WebSocket calls, inline event handlers,
-   `report_add_section` CDN fallbacks, and oversized published/exported payloads.
-   Fix obvious issues before calling the tool.
+2. **Validate before publish.** For a report-builder HTML source, first call
+   `report_publish(report_path=..., storyboard_path=...)` and inspect its
+   receipt, quality, and runtime-smoke result. Then check for remote assets,
+   iframe/object/embed/base tags, raw datasets, fetch/XHR/WebSocket calls, inline
+   event handlers, `report_add_section` CDN fallbacks, and oversized
+   published/exported payloads. Fix obvious issues before calling the tool.
 3. **Publish.** Call:
    `publish_artifact(title, description?, source_path?, html?, artifact_id?, label?, base_version?)`
    with exactly one of `source_path` or `html`.

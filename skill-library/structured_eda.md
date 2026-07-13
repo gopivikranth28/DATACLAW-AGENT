@@ -189,7 +189,14 @@ notebook analysis, hypothesis dispositions, recorded EDA findings, aggregate
 tables, chart specs, caveats, and evidence ids. Then follow `report_design` and
 call `report_design_report` so the report designer can look across all completed
 material, storyboard the report, choose layouts and interactive controls, and
-render the HTML in one cohesive pass.
+render the HTML in one cohesive pass. Then call
+`report_publish(report_path=..., storyboard_path=..., export_docx=False)` unless
+the user requested Word output. Inspect its returned `quality`, `runtime_smoke`,
+and receipt path before calling the report published. Supply
+`requirements.evidence_registry.targets` for notebook cells, artifacts, or
+other non-external evidence references. If `build_report` returns
+`preserved_low_confidence` for legacy HTML, rebuild from typed EDA assets rather
+than publishing the preserved source.
 
 Use visuals that match the goal:
 
@@ -230,9 +237,9 @@ comparison, or a readiness blocker becoming resolved. Use `caption`, `tags` or
 `caveat` consistently so readers can scan the logic without rereading the
 notebook.
 
-Before final publication, run the report quality gate or inspect the returned
-`quality` object from `report_add_section`. Fix chart dumps, missing insight
-sections, missing evidence ids, missing table captions, stale installed skills,
+Before final publication, inspect `report_publish`'s returned `quality` object,
+`runtime_smoke`, and publish receipt. Fix chart dumps, missing insight sections,
+missing or unresolved evidence, missing table captions, stale installed skills,
 oversized HTML, and missing explorers before marking the visual report done.
 
 Every chart must have a title, labelled axes with units, sample size when relevant, and a one-line interpretation plus caveat.

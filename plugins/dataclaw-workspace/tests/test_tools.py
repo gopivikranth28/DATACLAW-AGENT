@@ -8,6 +8,7 @@ from pathlib import Path
 import builtins
 
 from dataclaw_workspace import report_renderer
+import dataclaw_workspace.tools as workspace_tools
 from dataclaw_workspace.config import WorkspaceConfig
 from dataclaw_workspace.tools import (
     ws_list_files,
@@ -16,7 +17,9 @@ from dataclaw_workspace.tools import (
     ws_update_file,
     ws_exec,
     display_image,
+    build_report,
     report_design_report,
+    report_publish,
     report_add_section,
     _BODY_CLOSE_RE,
     _BODY_OPEN_RE,
@@ -228,6 +231,144 @@ async def test_report_design_report_storyboards_then_renders_cohesive_html(cfg):
     assert "report_design" in result["type"]
     assert "\"mode\": \"whole_report\"" in storyboard
     assert "section_plan" in storyboard
+
+
+@pytest.mark.asyncio
+async def test_report_publish_regates_and_writes_receipt(cfg):
+    designed = await report_design_report(
+        cfg=cfg,
+        report_goal="Explain the one decision-changing finding.",
+        report_path="reports/publishable.html",
+        storyboard_path="reports/publishable.storyboard.json",
+        insights=[
+            {
+                "title": "Retention improved",
+                "detail": "The retained cohort rose after the onboarding change.",
+                "finding_id": "finding-retention",
+            }
+        ],
+    )
+
+    published = await report_publish(
+        cfg=cfg,
+        report_path="reports/publishable.html",
+        storyboard_path="reports/publishable.storyboard.json",
+        receipt_path="reports/publishable.receipt.json",
+        export_docx=False,
+    )
+
+    receipt = json.loads(Path(published["receipt_path"]).read_text())
+    assert designed["quality"]["status"] == "pass"
+    assert published["type"] == "report_publish"
+    assert published["published"] is True
+    expected_status = "pass" if published["runtime_smoke"]["status"] == "passed" else "warn"
+    assert published["quality"]["status"] == expected_status
+    assert published["docx_export"] == {"requested": False, "status": "skipped"}
+    assert published["runtime_smoke"]["status"] in {"passed", "skipped"}
+    assert receipt["status"] == "published"
+    assert receipt["quality"]["rubric_version"] == 3
+    assert receipt["runtime_smoke"] == published["runtime_smoke"]
+    assert receipt["storyboard_path"] == published["storyboard_path"]
+
+
+@pytest.mark.asyncio
+async def test_build_report_normalizes_raw_html_for_publish(cfg):
+    built = await build_report(
+        cfg=cfg,
+        html="<html><body><h1>Legacy report</h1></body></html>",
+        output_path="reports/raw.html",
+    )
+
+    published = await report_publish(
+        cfg=cfg,
+        report_path="reports/raw.html",
+        storyboard_path="reports/raw.storyboard.json",
+        export_docx=False,
+    )
+
+    assert built["normalization"]["mode"] == "preserved_low_confidence"
+    assert Path(built["source_html_path"]).read_text() == "<html><body><h1>Legacy report</h1></body></html>"
+    assert Path(built["storyboard_path"]).is_file()
+    assert "data-dc-section-meta" in Path(built["html_path"]).read_text()
+    assert published["published"] is True
+
+
+@pytest.mark.asyncio
+async def test_build_report_extracts_prose_and_tables_into_storyboard(cfg):
+    built = await build_report(
+        cfg=cfg,
+        html="""
+        <html><head><title>Legacy retention</title></head><body>
+          <h1>Retention report</h1><h2>Onboarding improved retention</h2>
+          <p>The retained cohort grew after the onboarding change.</p>
+          <table><tr><th>cohort</th><th>retention</th></tr><tr><td>new</td><td>0.72</td></tr></table>
+        </body></html>
+        """,
+        output_path="reports/extracted.html",
+    )
+
+    storyboard = json.loads(Path(built["storyboard_path"]).read_text())
+    section_types = [section["section_type"] for section in storyboard["section_plan"]]
+    assert built["normalization"]["mode"] == "structured_rebuild"
+    assert "insight_grid" in section_types
+    assert "interactive_table" in section_types
+    assert storyboard["normalization"]["extracted"]["tables"] == 1
+    assert storyboard["critique"]["passes"] <= 2
+
+
+@pytest.mark.asyncio
+async def test_build_report_preserves_existing_typed_report(cfg):
+    designed = await report_design_report(
+        cfg=cfg,
+        report_goal="Explain the existing report.",
+        report_path="reports/original-typed.html",
+        storyboard_path="reports/original-typed.storyboard.json",
+        insights=[{"title": "Existing finding", "detail": "Already structured.", "finding_id": "finding-existing"}],
+    )
+    original_html = Path(designed["html_path"]).read_text()
+
+    rebuilt = await build_report(
+        cfg=cfg,
+        html=original_html,
+        output_path="reports/preserved-typed.html",
+    )
+
+    assert rebuilt["normalization"]["mode"] == "typed_preservation"
+    assert Path(rebuilt["html_path"]).read_text() == original_html
+    assert Path(rebuilt["source_html_path"]).read_text() == original_html
+
+
+@pytest.mark.asyncio
+async def test_report_publish_records_docx_export_failure(cfg, monkeypatch):
+    await report_design_report(
+        cfg=cfg,
+        report_goal="Explain the result.",
+        report_path="reports/docx-failure.html",
+        storyboard_path="reports/docx-failure.storyboard.json",
+        insights=[
+            {
+                "title": "A result",
+                "detail": "The completed finding is available in the report.",
+                "finding_id": "finding-docx",
+            }
+        ],
+    )
+
+    async def fail_docx_export(*_args, **_kwargs):
+        raise OSError("test DOCX failure")
+
+    monkeypatch.setattr(workspace_tools.asyncio, "to_thread", fail_docx_export)
+    published = await report_publish(
+        cfg=cfg,
+        report_path="reports/docx-failure.html",
+        storyboard_path="reports/docx-failure.storyboard.json",
+    )
+
+    receipt = json.loads(Path(published["receipt_path"]).read_text())
+    assert published["published"] is True
+    assert published["docx_export"]["status"] == "failed"
+    assert "test DOCX failure" in published["docx_export"]["error"]
+    assert receipt["docx_export"] == published["docx_export"]
 
 
 @pytest.mark.asyncio

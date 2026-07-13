@@ -58,6 +58,11 @@ def test_report_design_skill_is_bundled_and_parseable():
     assert "report_design_report" in body
     assert "quality_gate=\"fail\"" in body
     assert "storyboard JSON" in body
+    assert "Upgrade an existing HTML report" in body
+    assert "build_report" in body
+    assert "preserved_low_confidence" in body
+    assert "requirements.evidence_registry.targets" in body
+    assert "export_docx=False" in body
     assert "`report_add_section` is a compatibility and draft helper" in body
     assert "`plain_chart_overuse`" in body
     assert "`chart_table_explorer`" in body
@@ -85,6 +90,8 @@ def test_visual_output_skills_route_publish_to_artifacts_skill():
     assert "Report tool contract" in report_design
     assert "Step attribution travels by stable plan step id" in visualization
     assert "report_design_report" in visualization
+    assert "report_publish" in visualization
+    assert "requirements.evidence_registry.targets" in visualization
     assert "storyboard JSON" in visualization
     assert "do not rely on appended report cells" in visualization
     assert "dataclaw_report_add_section" in visualization
@@ -106,6 +113,7 @@ def test_visual_output_skills_route_publish_to_artifacts_skill():
     assert "artifact publication is unavailable" in visualization
     assert "Attribute sections and notes by stable plan step id" in dashboarding
     assert "report_design_report" in dashboarding
+    assert "report_publish" in dashboarding
     assert _has(dashboarding, "appended report cells as the final dashboard/report architecture")
     assert "EDA findings ledger" in dashboarding
     assert "structured EDA readiness verdict" in dashboarding

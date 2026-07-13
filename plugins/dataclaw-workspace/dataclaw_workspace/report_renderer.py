@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import html as html_lib
 import json
 import re
 import uuid
+from html.parser import HTMLParser
 from typing import Any
 
 from dataclaw_artifacts.sections import (
@@ -41,10 +44,13 @@ __all__ = [
     "REPORT_SECTION_END",
     "REPORT_SECTION_START",
     "analyze_report_quality",
+    "build_evidence_registry",
+    "critique_report_storyboard",
     "design_report_storyboard",
     "ensure_plotly_runtime",
     "ensure_report_shell_context",
     "plotly_script_tag",
+    "normalize_raw_html_report",
     "render_report_section",
     "render_report_from_storyboard",
     "report_shell",
@@ -76,11 +82,18 @@ STORY_SECTION_KINDS = {
 REPORT_QUALITY_MAX_BYTES = rubric_thresholds()["max_payload_bytes"]
 
 
-def report_shell(*, title: str, first_section: str, include_plotly: bool = False) -> str:
+def report_shell(
+    *,
+    title: str,
+    first_section: str,
+    include_plotly: bool = False,
+    evidence_registry: dict[str, Any] | None = None,
+) -> str:
     safe_title = html_lib.escape(title)
     plotly_script = plotly_script_tag() if include_plotly else ""
     shell_css = report_shell_css()
     shell_script = report_shell_script()
+    registry_script = _evidence_registry_script(evidence_registry)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -98,6 +111,7 @@ def report_shell(*, title: str, first_section: str, include_plotly: bool = False
   <main class="r-page">
     {REPORT_SECTION_START}
 {first_section}
+    {registry_script}
     {REPORT_SECTION_END}
   </main>
   <script {REPORT_SHELL_SCRIPT_ATTR}>
@@ -1369,6 +1383,7 @@ def analyze_report_quality(
     *,
     stale_skills: list[dict[str, Any]] | None = None,
     max_bytes: int = REPORT_QUALITY_MAX_BYTES,
+    runtime_smoke: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Inspect the typed section metadata embedded in a workspace report.
 
@@ -1397,6 +1412,13 @@ def analyze_report_quality(
         if criterion.get("replaces"):
             entry["replaces"] = criterion["replaces"]
         warnings.append(entry)
+
+    if not sections:
+        warn(
+            "unstructured_report",
+            "Report contains no typed section metadata; publish structured storyboard output or migrate the report before publishing.",
+            details={"required_marker": "data-dc-section-meta"},
+        )
 
     total_size = len(doc.encode("utf-8"))
     payload_size = len(PLOTLY_RUNTIME_RE.sub("", doc).encode("utf-8"))
@@ -1483,7 +1505,7 @@ def analyze_report_quality(
     for section in sections:
         kind = clean_text(section.get("kind") or "")
         payload = section.get("payload") if isinstance(section.get("payload"), dict) else {}
-        if kind in {"table", "interactive_table"} and not clean_text(section.get("caption") or ""):
+        if kind in {"table", "interactive_table"} and not clean_text(section.get("caption") or payload.get("caption") or ""):
             warn(
                 "missing_table_caption",
                 "Table section is missing a caption that explains grain, filters, or interpretation.",
@@ -1504,6 +1526,105 @@ def analyze_report_quality(
                 details={"section_id": section.get("section_id")},
             )
 
+        if kind in {"chart", "chart_interpretation", "filterable_chart"} and not clean_text(
+            payload.get("conclusion") or payload.get("interpretation") or payload.get("insight") or payload.get("summary") or ""
+        ):
+            warn(
+                "chart_missing_conclusion",
+                "Chart section has no stated interpretation or conclusion.",
+                details={"section_id": section.get("section_id"), "kind": kind},
+            )
+        if kind not in {"header", "metric_row"} and not clean_text(section.get("caption") or payload.get("caption") or payload.get("dek") or ""):
+            warn(
+                "missing_section_dek",
+                "Section is missing a short dek/caption that explains why it is in the story.",
+                details={"section_id": section.get("section_id"), "kind": kind},
+            )
+        if kind in {"findings", "insight_grid"}:
+            items = payload.get("items", payload.get("findings", []))
+            if isinstance(items, list) and any(not isinstance(item, dict) for item in items):
+                warn(
+                    "bare_bullet_findings",
+                    "Findings should use typed insight-card items, not bare bullet strings.",
+                    details={"section_id": section.get("section_id"), "kind": kind},
+                )
+            if isinstance(items, list) and any(
+                isinstance(item, dict)
+                and _evidence_refs_from_value(item.get("evidence") or item.get("evidence_refs"))
+                and not clean_text(item.get("evidence_anchor") or "")
+                for item in items
+            ):
+                warn(
+                    "unpaired_insights",
+                    "Insight carries evidence refs but is not paired to an evidence section anchor.",
+                    details={"section_id": section.get("section_id"), "kind": kind},
+                )
+
+    registry_document = _extract_evidence_registry_document(doc)
+    registry = _extract_evidence_registry(doc)
+    registry_references = registry_document.get("references", []) if isinstance(registry_document.get("references", []), list) else []
+    unresolved_refs = _unresolved_evidence_refs(sections, registry, registry_references)
+    if unresolved_refs:
+        warn(
+            "evidence_unresolved",
+            "One or more evidence references do not resolve to a registered target present in the report bundle.",
+            details={"references": unresolved_refs[:20], "count": len(unresolved_refs)},
+        )
+
+    if len(sections) >= 2 and "narrative_band" not in kinds:
+        warn(
+            "missing_narrative_answer",
+            "Report has multiple sections but no narrative band answering the primary question up front.",
+            details={"section_count": len(sections)},
+        )
+
+    theme_failures = _chart_theme_failures(sections)
+    if theme_failures:
+        warn(
+            "chart_theme_defeated",
+            "Stored chart styling can defeat the report's token-driven theme and dark-mode re-render.",
+            details={"sections": theme_failures},
+        )
+
+    external_assets = _external_asset_refs(doc)
+    if external_assets:
+        warn(
+            "not_self_contained",
+            "Report references external assets that will not be available in a self-contained artifact.",
+            details={"assets": external_assets[:20], "count": len(external_assets)},
+        )
+
+    static_smoke_failures = _runtime_smoke_failures(doc, sections)
+    smoke_result = runtime_smoke or {
+        "status": "static",
+        "checks": static_smoke_failures,
+    }
+    smoke_failures = static_smoke_failures
+    if runtime_smoke and runtime_smoke.get("status") == "failed":
+        smoke_failures = [
+            *static_smoke_failures,
+            *[entry for entry in runtime_smoke.get("checks", []) if isinstance(entry, dict)],
+        ]
+    if runtime_smoke and runtime_smoke.get("status") == "skipped":
+        smoke_failures = [
+            *static_smoke_failures,
+            {"check": "browser_smoke", "detail": clean_text(runtime_smoke.get("reason") or "browser smoke was skipped")},
+        ]
+    if smoke_failures:
+        warn(
+            "runtime_smoke_failed",
+            "Structural runtime smoke checks found report wiring that cannot initialize correctly.",
+            details={"checks": smoke_failures},
+        )
+
+    contrast_failures = _contrast_failures(doc)
+    if contrast_failures:
+        warn(
+            "contrast_below_aa",
+            "Report color tokens do not meet the configured WCAG-AA text contrast checks.",
+            details={"pairs": contrast_failures},
+        )
+
     status = "pass"
     if any(w["severity"] == "fail" for w in warnings):
         status = "fail"
@@ -1517,6 +1638,7 @@ def analyze_report_quality(
         "plain_chart_count": plain_chart_count,
         "interactive_count": interactive_count,
         "story_count": story_count,
+        "runtime_smoke": smoke_result,
         "warnings": warnings,
     }
 
@@ -1531,6 +1653,497 @@ def _extract_section_meta(doc: str) -> list[dict[str, Any]]:
         if isinstance(parsed, dict):
             sections.append(parsed)
     return sections
+
+
+def _evidence_registry_script(registry: dict[str, Any] | None) -> str:
+    if not registry:
+        return ""
+    payload = _json_for_script(registry)
+    return f'<script type="application/json" data-dc-evidence-registry>{payload}</script>'
+
+
+def _extract_evidence_registry(doc: str) -> dict[str, dict[str, Any]]:
+    parsed = _extract_evidence_registry_document(doc)
+    targets = parsed.get("targets", []) if isinstance(parsed, dict) else []
+    if not isinstance(targets, list):
+        return {}
+    registry: dict[str, dict[str, Any]] = {}
+    for target in targets:
+        if not isinstance(target, dict):
+            continue
+        ref = clean_text(target.get("id") or target.get("ref") or "")
+        if ref:
+            registry[ref] = target
+    return registry
+
+
+def _extract_evidence_registry_document(doc: str) -> dict[str, Any]:
+    match = re.search(
+        r"<script[^>]*data-dc-evidence-registry[^>]*>(.*?)</script>",
+        doc,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return {}
+    try:
+        parsed = json.loads(match.group(1))
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _evidence_refs_from_value(value: Any) -> list[dict[str, str]]:
+    refs: list[dict[str, str]] = []
+    for entry in _as_list(value):
+        if isinstance(entry, dict):
+            kind = clean_text(entry.get("kind") or entry.get("type") or "unknown")
+            ref = clean_text(
+                entry.get("ref")
+                or entry.get("cell_id")
+                or entry.get("artifact_id")
+                or entry.get("finding_id")
+                or entry.get("hypothesis_id")
+                or entry.get("path")
+                or ""
+            )
+        else:
+            kind = "unknown"
+            ref = clean_text(entry)
+        if ref:
+            refs.append({"kind": kind, "ref": ref})
+    return refs
+
+
+def _unresolved_evidence_refs(
+    sections: list[dict[str, Any]],
+    registry: dict[str, dict[str, Any]],
+    registered_references: list[dict[str, str]] | None = None,
+) -> list[dict[str, str]]:
+    unresolved: list[dict[str, str]] = []
+    references = registered_references or []
+    if not references:
+        for section in sections:
+            payload = section.get("payload") if isinstance(section.get("payload"), dict) else {}
+            for key in ("evidence", "evidence_refs"):
+                references.extend({"section_id": clean_text(section.get("section_id") or ""), **reference} for reference in _evidence_refs_from_value(payload.get(key)))
+    for reference in references:
+        target = registry.get(reference["ref"])
+        target_kind = clean_text(target.get("kind") or target.get("type") or "") if target else ""
+        is_external = bool(target and clean_text(target.get("external_url") or target.get("url") or ""))
+        is_present = bool(target and target.get("present", True))
+        kind_matches = not target_kind or target_kind == reference["kind"] or reference["kind"] == "unknown"
+        if not target or not is_present or (not is_external and not kind_matches):
+            unresolved.append(dict(reference))
+    return unresolved
+
+
+def build_evidence_registry(storyboard: dict[str, Any]) -> dict[str, Any]:
+    """Normalize explicit evidence targets and registered in-report finding targets.
+
+    Only supplied targets and identifiers already present in the report are
+    registered. The function never invents a provenance id merely to satisfy a
+    quality check.
+    """
+    supplied = storyboard.get("evidence_registry", {})
+    raw_targets = supplied.get("targets", []) if isinstance(supplied, dict) else supplied
+    targets: dict[str, dict[str, Any]] = {}
+    references: list[dict[str, str]] = []
+    for raw in _as_list(raw_targets):
+        if not isinstance(raw, dict):
+            continue
+        ref = clean_text(raw.get("id") or raw.get("ref") or "")
+        kind = clean_text(raw.get("kind") or raw.get("type") or "")
+        if not ref or not kind:
+            continue
+        target = dict(raw)
+        target["id"] = ref
+        target["kind"] = kind
+        target.setdefault("present", True)
+        targets[ref] = target
+
+    section_plan = storyboard.get("section_plan", [])
+    if isinstance(section_plan, list):
+        for planned in section_plan:
+            data = planned.get("data") if isinstance(planned, dict) and isinstance(planned.get("data"), dict) else {}
+            section_id = clean_text(data.get("section_id") or planned.get("layout_role") or "")
+            for source in [data, *_as_list(data.get("items")), *_as_list(data.get("findings")), *_as_list(data.get("hypotheses"))]:
+                if not isinstance(source, dict):
+                    continue
+                for key in ("evidence", "evidence_refs"):
+                    references.extend({"section_id": section_id, **reference} for reference in _evidence_refs_from_value(source.get(key)))
+            item_groups = [data.get("items"), data.get("findings"), data.get("hypotheses")]
+            for group in item_groups:
+                for item in _as_list(group):
+                    if not isinstance(item, dict):
+                        continue
+                    for key in ("finding_id", "hypothesis_id"):
+                        ref = clean_text(item.get(key) or "")
+                        if ref and ref not in targets:
+                            targets[ref] = {
+                                "id": ref,
+                                "kind": "finding",
+                                "present": True,
+                                "source": "report_section",
+                            }
+
+    return {
+        "evidence_registry_schema": 1,
+        "targets": list(targets.values()),
+        "references": references,
+    }
+
+
+class _RawReportIntakeParser(HTMLParser):
+    """Small, dependency-free extractor for normalizing ordinary authored HTML."""
+
+    _TEXT_TAGS = {"title", "h1", "h2", "h3", "p", "li"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.blocks: list[tuple[str, str]] = []
+        self.tables: list[list[list[str]]] = []
+        self.unsupported: set[str] = set()
+        self._active_tag = ""
+        self._text_parts: list[str] = []
+        self._table: list[list[str]] | None = None
+        self._row: list[str] | None = None
+        self._cell_parts: list[str] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        if tag in {"script", "canvas", "svg", "iframe", "video", "object"}:
+            self.unsupported.add(tag)
+        if tag in self._TEXT_TAGS:
+            self._flush_text()
+            self._active_tag = tag
+        if tag == "table":
+            self._table = []
+        elif tag == "tr" and self._table is not None:
+            self._row = []
+        elif tag in {"th", "td"} and self._row is not None:
+            self._cell_parts = []
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag == self._active_tag:
+            self._flush_text()
+        if tag in {"th", "td"} and self._cell_parts is not None and self._row is not None:
+            self._row.append(clean_text(" ".join(self._cell_parts)))
+            self._cell_parts = None
+        elif tag == "tr" and self._row is not None and self._table is not None:
+            if any(self._row):
+                self._table.append(self._row)
+            self._row = None
+        elif tag == "table" and self._table is not None:
+            if self._table:
+                self.tables.append(self._table)
+            self._table = None
+
+    def handle_data(self, data: str) -> None:
+        if self._cell_parts is not None:
+            self._cell_parts.append(data)
+        elif self._active_tag:
+            self._text_parts.append(data)
+
+    def _flush_text(self) -> None:
+        text = clean_text(" ".join(self._text_parts))
+        if text:
+            self.blocks.append((self._active_tag, text))
+        self._active_tag = ""
+        self._text_parts = []
+
+
+def _raw_html_storyboard(
+    raw_html: str,
+    *,
+    title: str,
+    report_goal: str,
+    audience: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    parser = _RawReportIntakeParser()
+    parser.feed(raw_html)
+    parser.close()
+    parser._flush_text()
+
+    page_title = next((text for tag, text in parser.blocks if tag == "title"), "")
+    heading = next((text for tag, text in parser.blocks if tag == "h1"), "")
+    effective_title = clean_text(title or heading or page_title or "Normalized report")
+    content = [(tag, text) for tag, text in parser.blocks if tag not in {"title", "h1"}]
+    insights: list[dict[str, Any]] = []
+    pending_heading = ""
+    for tag, text in content:
+        if tag in {"h2", "h3"}:
+            pending_heading = text
+            continue
+        if tag not in {"p", "li"}:
+            continue
+        insights.append({
+            "title": pending_heading or text[:90].rstrip(". ") or "Source observation",
+            "detail": text,
+            "status": "unverified",
+            "caveat": "Extracted from legacy HTML; attach an evidence reference before treating this as a validated claim.",
+        })
+        pending_heading = ""
+        if len(insights) >= 7:
+            break
+    if not insights:
+        insights.append({
+            "title": effective_title,
+            "detail": "The source document was preserved, but its prose could not be reliably extracted into detailed findings.",
+            "status": "unverified",
+            "caveat": "Review the preserved source HTML and supply typed insights or evidence before publication.",
+        })
+
+    analyses: list[dict[str, Any]] = []
+    for index, table in enumerate(parser.tables[:5]):
+        if len(table) < 2:
+            continue
+        headers = [cell or f"Column {position + 1}" for position, cell in enumerate(table[0])]
+        rows = [
+            {headers[position]: row[position] if position < len(row) else "" for position in range(len(headers))}
+            for row in table[1:101]
+        ]
+        analyses.append({
+            "section_type": "interactive_table",
+            "title": f"Extracted table {index + 1}",
+            "caption": "Table extracted from the preserved source HTML; verify grain and filters against the original.",
+            "columns": headers,
+            "rows": rows,
+        })
+
+    total_signal = len(content) + len(parser.tables) * 2
+    confidence = min(1.0, 0.25 + 0.12 * total_signal - 0.12 * len(parser.unsupported))
+    mode = "structured_rebuild" if confidence >= 0.55 else "preserved_low_confidence"
+    storyboard = design_report_storyboard(
+        report_goal=clean_text(report_goal or heading or page_title or effective_title),
+        insights=insights,
+        analyses=analyses,
+        audience=audience,
+        title=effective_title,
+        requirements={
+            "kicker": "Normalized legacy report",
+            "checks": [{
+                "title": "Source preservation",
+                "status": "warning" if mode == "preserved_low_confidence" else "pass",
+                "detail": "Original HTML is stored beside this rebuilt report.",
+            }],
+        },
+    )
+    normalization = {
+        "normalization_schema": 1,
+        "mode": mode,
+        "confidence": round(confidence, 2),
+        "source_sha256": hashlib.sha256(raw_html.encode("utf-8")).hexdigest(),
+        "extracted": {
+            "text_blocks": len(content),
+            "tables": len(analyses),
+            "unsupported_elements": sorted(parser.unsupported),
+        },
+    }
+    storyboard["normalization"] = normalization
+    return storyboard, normalization
+
+
+def normalize_raw_html_report(
+    raw_html: str,
+    *,
+    title: str = "",
+    report_goal: str = "",
+    audience: str = "",
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Turn raw HTML into a typed storyboard without discarding the source artifact."""
+    sections = _extract_section_meta(raw_html)
+    if not sections:
+        return _raw_html_storyboard(raw_html, title=title, report_goal=report_goal, audience=audience)
+
+    title_match = re.search(r"<title[^>]*>(.*?)</title>", raw_html, re.IGNORECASE | re.DOTALL)
+    effective_title = clean_text(title or (title_match.group(1) if title_match else "Structured report"))
+    plan: list[dict[str, Any]] = []
+    for index, section in enumerate(sections):
+        section_type = clean_text(section.get("kind") or "text")
+        data = section.get("payload") if isinstance(section.get("payload"), dict) else {}
+        data = dict(data)
+        data.setdefault("section_id", clean_text(section.get("section_id") or f"section-{index + 1}"))
+        plan.append({
+            "section_type": section_type,
+            "layout_role": f"preserved_{index + 1}_{section_type}",
+            "rationale": "Preserve an existing typed section while refreshing the report shell.",
+            "data": data,
+        })
+    storyboard = {
+        "storyboard_schema": 1,
+        "title": effective_title,
+        "report_goal": clean_text(report_goal or effective_title),
+        "audience": clean_text(audience or "decision-maker"),
+        "designer": {"mode": "typed_preservation", "note": "Re-render existing typed report sections."},
+        "section_plan": plan,
+        "normalization": {
+            "normalization_schema": 1,
+            "mode": "typed_preservation",
+            "confidence": 1.0,
+            "render_from_source": True,
+            "source_sha256": hashlib.sha256(raw_html.encode("utf-8")).hexdigest(),
+        },
+    }
+    return storyboard, storyboard["normalization"]
+
+
+def critique_report_storyboard(
+    storyboard: dict[str, Any],
+    *,
+    max_passes: int = 2,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Apply bounded, non-fabricating improvements to a structured storyboard."""
+    working = copy.deepcopy(storyboard)
+    section_plan = working.get("section_plan")
+    if not isinstance(section_plan, list):
+        raise ValueError("storyboard requires a section_plan for critique")
+
+    applied: list[dict[str, Any]] = []
+    passes = 0
+    converged = False
+    for pass_number in range(1, max(1, max_passes) + 1):
+        changed = False
+        passes = pass_number
+        for index, planned in enumerate(section_plan):
+            if not isinstance(planned, dict):
+                continue
+            section_type = clean_text(planned.get("section_type") or planned.get("kind") or "")
+            data = planned.get("data") if isinstance(planned.get("data"), dict) else {}
+            if not data:
+                continue
+            title = clean_text(data.get("title") or section_type.replace("_", " ").title() or "this section")
+            if section_type not in {"header", "metric_row"} and not clean_text(data.get("caption") or data.get("dek") or ""):
+                data["caption"] = f"Context and evidence for {title}."
+                planned["data"] = data
+                planned["rationale"] = clean_text(planned.get("rationale") or "") + " Added a concise section dek."
+                applied.append({"pass": pass_number, "section": index, "action": "add_section_dek"})
+                changed = True
+            if section_type in {"table", "interactive_table"} and not clean_text(data.get("caption") or ""):
+                columns = data.get("columns", [])
+                labels = ", ".join(clean_text(column.get("label") or column.get("key") or "") if isinstance(column, dict) else clean_text(column) for column in _as_list(columns)[:4])
+                data["caption"] = f"Extracted values by {labels or 'available fields'}; verify grain and filters before interpretation."
+                planned["data"] = data
+                applied.append({"pass": pass_number, "section": index, "action": "add_table_caption"})
+                changed = True
+            if section_type in {"findings", "insight_grid"}:
+                items = data.get("items", data.get("findings", []))
+                if isinstance(items, list):
+                    for item in items:
+                        if isinstance(item, dict) and not _item_has_evidence_id(item) and not clean_text(item.get("caveat") or ""):
+                            item["status"] = item.get("status") or "unverified"
+                            item["caveat"] = "Evidence reference was not supplied in the source material."
+                            applied.append({"pass": pass_number, "section": index, "action": "flag_missing_evidence"})
+                            changed = True
+        if not changed:
+            converged = True
+            break
+
+    registry = build_evidence_registry(working)
+    working["evidence_registry"] = registry
+    critique = {
+        "critique_schema": 1,
+        "max_passes": max(1, max_passes),
+        "passes": passes,
+        "converged": converged,
+        "applied": applied,
+        "guardrail": "No evidence identifiers, citations, numbers, or claims were invented during critique.",
+    }
+    working["critique"] = critique
+    return working, critique
+
+
+def _chart_theme_failures(sections: list[dict[str, Any]]) -> list[dict[str, str]]:
+    failures: list[dict[str, str]] = []
+    for section in sections:
+        payload = section.get("payload") if isinstance(section.get("payload"), dict) else {}
+        figure = payload.get("figure")
+        if not isinstance(figure, dict):
+            continue
+        layout = figure.get("layout") if isinstance(figure.get("layout"), dict) else {}
+        styled_keys = [key for key in ("template", "paper_bgcolor", "plot_bgcolor", "colorway") if layout.get(key)]
+        font = layout.get("font") if isinstance(layout.get("font"), dict) else {}
+        if font.get("color"):
+            styled_keys.append("font.color")
+        if styled_keys:
+            failures.append({
+                "section_id": clean_text(section.get("section_id") or ""),
+                "keys": ", ".join(styled_keys),
+            })
+    return failures
+
+
+def _external_asset_refs(doc: str) -> list[str]:
+    refs: list[str] = []
+    patterns = (
+        r"<script[^>]+\bsrc=[\"']([^\"']+)",
+        r"<link[^>]+\bhref=[\"']([^\"']+)",
+        r"<(?:img|iframe|video|audio|object)[^>]+\bsrc=[\"']([^\"']+)",
+    )
+    for pattern in patterns:
+        refs.extend(match.group(1) for match in re.finditer(pattern, doc, re.IGNORECASE))
+    return [ref for ref in refs if re.match(r"(?:https?:)?//", ref)]
+
+
+def _runtime_smoke_failures(doc: str, sections: list[dict[str, Any]]) -> list[dict[str, str]]:
+    failures: list[dict[str, str]] = []
+    if REPORT_SHELL_SCRIPT_ATTR not in doc:
+        failures.append({"check": "report_shell_script", "detail": "missing report runtime script"})
+
+    target_ids = set(re.findall(r"\bid=[\"']([^\"']+)[\"']", doc, re.IGNORECASE))
+    target_ids.update(re.findall(r"\bdata-dc-section-id=[\"']([^\"']+)[\"']", doc, re.IGNORECASE))
+    for anchor in re.findall(r"<a\b[^>]*\bhref=[\"']#([^\"']+)[\"']", doc, re.IGNORECASE):
+        if anchor not in target_ids:
+            failures.append({"check": "anchor_target", "detail": f"missing target #{anchor}"})
+
+    for section in sections:
+        kind = clean_text(section.get("kind") or "")
+        section_id = clean_text(section.get("section_id") or "")
+        if kind in CHART_SECTION_KINDS and "r-chart-target" not in doc:
+            failures.append({"check": "chart_target", "detail": f"{section_id or kind} has no chart mount"})
+        if kind in INTERACTIVE_SECTION_KINDS and "data-dc-control-bar" not in doc:
+            failures.append({"check": "interactive_controls", "detail": f"{section_id or kind} has no control mount"})
+    return failures
+
+
+def _contrast_failures(doc: str) -> list[dict[str, Any]]:
+    """Check the shell's primary light/dark foreground pairs without a browser."""
+    styles = "\n".join(re.findall(r"<style[^>]*>(.*?)</style>", doc, re.IGNORECASE | re.DOTALL))
+    if not styles:
+        return [{"pair": "shell", "detail": "no inline report token stylesheet"}]
+
+    scopes = [styles]
+    dark_match = re.search(r":root\[data-theme=[\"']dark[\"']\]\s*\{(.*?)\}", styles, re.DOTALL)
+    if dark_match:
+        scopes.append(dark_match.group(1))
+    failures: list[dict[str, Any]] = []
+    for index, scope in enumerate(scopes):
+        ink = _css_hex_token(scope, "dc-ink") or _css_hex_token(styles, "dc-ink")
+        surface = _css_hex_token(scope, "dc-surface") or _css_hex_token(styles, "dc-surface")
+        muted = _css_hex_token(scope, "dc-muted") or _css_hex_token(styles, "dc-muted")
+        if not ink or not surface or not muted:
+            failures.append({"pair": "tokens", "detail": "missing dc-ink, dc-muted, or dc-surface color token"})
+            continue
+        for label, foreground, required in (("ink/surface", ink, 4.5), ("muted/surface", muted, 4.5)):
+            ratio = _contrast_ratio(foreground, surface)
+            if ratio < required:
+                failures.append({"theme": "dark" if index else "light", "pair": label, "ratio": round(ratio, 2), "required": required})
+    return failures
+
+
+def _css_hex_token(css: str, token: str) -> str:
+    match = re.search(rf"--{re.escape(token)}\s*:\s*(#[0-9a-fA-F]{{6}})", css)
+    return match.group(1) if match else ""
+
+
+def _contrast_ratio(first: str, second: str) -> float:
+    def luminance(value: str) -> float:
+        channels = [int(value[index:index + 2], 16) / 255 for index in (1, 3, 5)]
+        adjusted = [channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4 for channel in channels]
+        return 0.2126 * adjusted[0] + 0.7152 * adjusted[1] + 0.0722 * adjusted[2]
+
+    high, low = sorted((luminance(first), luminance(second)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
 
 
 def _item_has_evidence_id(item: dict[str, Any]) -> bool:
@@ -1684,6 +2297,11 @@ def design_report_storyboard(
             "policy": "Embed aggregate, ranked, or sampled payloads only. Do not fetch live data or embed raw full datasets.",
             "interactive_section_kinds": sorted(INTERACTIVE_SECTION_KINDS),
         },
+        "intake": {
+            "methodology": requirements.get("methodology") or requirements.get("methods") or [],
+            "checks": requirements.get("checks") or [],
+        },
+        "evidence_registry": requirements.get("evidence_registry", requirements.get("evidence_targets", [])),
         "quality_plan": {
             "gate": "run before publish",
             "rubric_version": rubric_version(),
@@ -1714,10 +2332,12 @@ def render_report_from_storyboard(storyboard: dict[str, Any], *, title: str | No
         include_plotly = include_plotly or typed.get("kind") in CHART_SECTION_KINDS
         html_sections.append(render_report_section(section_type, data, typed))
 
+    registry = build_evidence_registry(storyboard)
     return report_shell(
         title=title or clean_text(storyboard.get("title") or "Analysis Report"),
         first_section="\n".join(html_sections),
         include_plotly=include_plotly,
+        evidence_registry=registry,
     )
 
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import difflib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -25,9 +26,11 @@ from dataclaw_workspace.report_renderer import (
     REPORT_SHELL_CSS_ATTR as _REPORT_SHELL_CSS_ATTR,
     REPORT_SHELL_SCRIPT_ATTR as _REPORT_SHELL_SCRIPT_ATTR,
     analyze_report_quality as _analyze_report_quality,
+    critique_report_storyboard as _critique_report_storyboard,
     design_report_storyboard as _design_report_storyboard,
     ensure_plotly_runtime as _ensure_plotly_runtime,
     ensure_report_shell_context as _ensure_report_shell_context,
+    normalize_raw_html_report as _normalize_raw_html_report,
     plotly_script_tag as _plotly_script_tag,
     render_report_section as _render_report_section,
     render_report_from_storyboard as _render_report_from_storyboard,
@@ -74,6 +77,90 @@ def _resolve_path(workspace_id: str, path: str) -> Path:
     except ValueError as exc:
         raise ValueError(f"Path must be inside workspace directory: {base}") from exc
     return resolved
+
+
+async def _run_report_runtime_smoke(report_path: Path) -> dict[str, Any]:
+    """Attempt browser-level report smoke checks through the UI's Playwright install.
+
+    The workspace plugin intentionally has no browser dependency. When the UI
+    package or a Playwright browser is absent, publication records a transparent
+    ``skipped`` result rather than treating that as a passing browser check.
+    """
+    repository_root = Path(__file__).resolve().parents[3]
+    playwright_module = repository_root / "ui" / "node_modules" / "playwright"
+    if not playwright_module.exists():
+        return {"status": "skipped", "reason": "Playwright is not installed with the UI package."}
+
+    script = """
+const { pathToFileURL } = require('url');
+const { chromium } = require(process.argv[2]);
+const target = process.argv[1];
+(async () => {
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true });
+  } catch (error) {
+    console.log(JSON.stringify({status: 'skipped', reason: 'Chromium launch unavailable: ' + error.message.split('\\n')[0]}));
+    return;
+  }
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const pageErrors = [];
+  page.on('pageerror', error => pageErrors.push('pageerror: ' + error.message));
+  page.on('console', message => { if (message.type() === 'error') pageErrors.push('console: ' + message.text()); });
+  try {
+    await page.goto(pathToFileURL(target).href, { waitUntil: 'load' });
+    await page.waitForTimeout(350);
+    const checks = await page.evaluate(() => {
+      const failures = [];
+      document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+        const id = anchor.getAttribute('href').slice(1);
+        if (id && !document.getElementById(id)) failures.push({check: 'anchor_target', detail: 'missing target #' + id});
+      });
+      document.querySelectorAll('.r-chart-target').forEach((target, index) => {
+        if (window.Plotly && !target.querySelector('.js-plotly-plot')) failures.push({check: 'chart_mount', detail: 'chart target ' + index + ' did not mount'});
+      });
+      document.querySelectorAll('[data-dc-section="filterable_chart"], [data-dc-section="interactive_table"], [data-dc-section="selector_panel"], [data-dc-section="chart_table_explorer"]').forEach(section => {
+        if (!section.querySelector('[data-dc-control-bar]')) failures.push({check: 'interactive_controls', detail: 'interactive section missing controls'});
+      });
+      document.querySelectorAll('.r-empty-state').forEach(node => failures.push({check: 'empty_state', detail: node.textContent.trim()}));
+      return failures;
+    });
+    checks.push(...pageErrors.map(detail => ({check: 'browser_error', detail})));
+    console.log(JSON.stringify({status: checks.length ? 'failed' : 'passed', checks}));
+  } catch (error) {
+    console.log(JSON.stringify({status: 'failed', checks: [{check: 'page_load', detail: error.message.split('\\n')[0]}]}));
+  } finally {
+    await browser.close();
+  }
+})();
+"""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "node",
+            "-e",
+            script,
+            str(report_path),
+            str(playwright_module),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError as exc:
+        return {"status": "skipped", "reason": f"Node runtime unavailable: {exc}"}
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=20)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.communicate()
+        return {"status": "skipped", "reason": "Browser smoke exceeded the 20-second publish budget."}
+    lines = [line for line in stdout.decode("utf-8", errors="replace").splitlines() if line.strip()]
+    if proc.returncode or not lines:
+        detail = stderr.decode("utf-8", errors="replace").strip().splitlines()
+        return {"status": "skipped", "reason": detail[-1] if detail else "Browser smoke did not return a result."}
+    try:
+        result = json.loads(lines[-1])
+    except json.JSONDecodeError:
+        return {"status": "skipped", "reason": "Browser smoke returned an unreadable result."}
+    return result if isinstance(result, dict) else {"status": "skipped", "reason": "Browser smoke returned an invalid result."}
 
 
 # ── Tools ───────────────────────────────────────────────────────────────────
@@ -271,10 +358,20 @@ async def build_report(
     html: str | None = None,
     html_path: str | None = None,
     output_path: str = "report.html",
+    storyboard_path: str | None = None,
+    report_goal: str = "",
+    title: str = "",
+    audience: str = "",
+    quality_gate: str = "warn",
     workspace_id: str = "default",
     **_: Any,
 ) -> dict[str, Any]:
-    """Build an HTML report and save it to the workspace with a Word (.docx) export."""
+    """Normalize HTML into a typed report, preserving its source beside the rebuild.
+
+    The generated DOCX behavior is intentionally left as the legacy best-effort
+    export. The report itself, however, always flows through the storyboard and
+    critique pipeline so it can pass the structured publish boundary.
+    """
     if not html and not html_path:
         raise ValueError("Provide either 'html' (raw HTML string) or 'html_path' (path to HTML file)")
     if html and html_path:
@@ -285,14 +382,47 @@ async def build_report(
         if not resolved_input.is_file():
             raise ValueError(f"HTML file not found: {html_path}")
         html = resolved_input.read_text(encoding="utf-8")
+    assert html is not None
+    if quality_gate not in {"warn", "fail", "off"}:
+        raise ValueError("quality_gate must be one of: warn, fail, off")
 
     # Ensure output ends with .html
     if not output_path.endswith(".html"):
         output_path = output_path.rsplit(".", 1)[0] + ".html"
+    if storyboard_path is None:
+        storyboard_path = output_path.rsplit(".", 1)[0] + ".storyboard.json"
+    elif not storyboard_path.endswith(".json"):
+        storyboard_path = storyboard_path.rsplit(".", 1)[0] + ".json"
 
     resolved_html = _resolve_path(workspace_id, output_path)
     resolved_html.parent.mkdir(parents=True, exist_ok=True)
-    resolved_html.write_text(html, encoding="utf-8")
+    source_path = output_path.rsplit(".", 1)[0] + ".source.html"
+    resolved_source = _resolve_path(workspace_id, source_path)
+    resolved_source.parent.mkdir(parents=True, exist_ok=True)
+    resolved_source.write_text(html, encoding="utf-8")
+
+    storyboard, normalization = _normalize_raw_html_report(
+        html,
+        title=title,
+        report_goal=report_goal,
+        audience=audience,
+    )
+    storyboard, critique = _critique_report_storyboard(storyboard)
+    rendered_html = html if normalization.get("render_from_source") else _render_report_from_storyboard(storyboard, title=title or None)
+    stale_skills = [] if quality_gate == "off" else stale_installed_library_skills()
+    quality = _analyze_report_quality(rendered_html, stale_skills=stale_skills) if quality_gate != "off" else {"status": "off", "warnings": []}
+    if quality_gate == "fail" and quality.get("status") == "fail":
+        codes = ", ".join(w.get("code", "unknown") for w in quality.get("warnings", []) if w.get("severity") == "fail")
+        raise ValueError(f"Report quality gate failed: {codes}")
+
+    normalization["source_html_path"] = str(resolved_source)
+    storyboard["normalization"] = normalization
+    storyboard["critique"] = critique
+    storyboard["quality"] = quality
+    resolved_html.write_text(rendered_html, encoding="utf-8")
+    resolved_storyboard = _resolve_path(workspace_id, storyboard_path)
+    resolved_storyboard.parent.mkdir(parents=True, exist_ok=True)
+    resolved_storyboard.write_text(json.dumps(storyboard, indent=2, default=str), encoding="utf-8")
 
     # Generate .docx alongside
     docx_path = output_path.rsplit(".", 1)[0] + ".docx"
@@ -301,7 +431,7 @@ async def build_report(
     def _convert_docx() -> None:
         from html4docx import HtmlToDocx
         parser = HtmlToDocx()
-        parser.parse_html_string(html)
+        parser.parse_html_string(rendered_html)
         parser.doc.save(str(resolved_docx))
 
     try:
@@ -311,13 +441,141 @@ async def build_report(
         pass
 
     result: dict[str, Any] = {
+        "type": "report_build",
         "html_path": str(resolved_html),
+        "storyboard_path": str(resolved_storyboard),
+        "source_html_path": str(resolved_source),
+        "normalization": normalization,
+        "critique": critique,
+        "quality": quality,
         "size": resolved_html.stat().st_size,
         "created": True,
     }
     if resolved_docx.exists():
         result["docx_path"] = str(resolved_docx)
 
+    return result
+
+
+async def report_publish(
+    *,
+    cfg: WorkspaceConfig,
+    report_path: str,
+    storyboard_path: str,
+    receipt_path: str | None = None,
+    export_docx: bool = True,
+    workspace_id: str = "default",
+    **_: Any,
+) -> dict[str, Any]:
+    """Publish a storyboard-backed report after re-running the fail-closed gate.
+
+    Publishing remains workspace-local: the resulting receipt is the durable record
+    that a specific report, storyboard, and current rubric result were approved
+    together.  DOCX conversion is best-effort, but its outcome is always recorded
+    instead of being silently discarded.
+    """
+    if not report_path.endswith(".html"):
+        report_path = report_path.rsplit(".", 1)[0] + ".html"
+    if not storyboard_path.endswith(".json"):
+        storyboard_path = storyboard_path.rsplit(".", 1)[0] + ".json"
+
+    resolved_html = _resolve_path(workspace_id, report_path)
+    if not resolved_html.is_file():
+        raise ValueError(f"Report file not found: {report_path}")
+
+    doc = resolved_html.read_text(encoding="utf-8", errors="replace")
+    runtime_smoke = await _run_report_runtime_smoke(resolved_html)
+    quality = _analyze_report_quality(
+        doc,
+        stale_skills=stale_installed_library_skills(),
+        runtime_smoke=runtime_smoke,
+    )
+    if quality.get("status") == "fail":
+        codes = ", ".join(
+            warning.get("code", "unknown")
+            for warning in quality.get("warnings", [])
+            if warning.get("severity") == "fail"
+        )
+        raise ValueError(f"Report publish gate failed: {codes}")
+
+    resolved_storyboard = _resolve_path(workspace_id, storyboard_path)
+    if not resolved_storyboard.is_file():
+        raise ValueError(f"Storyboard file not found: {storyboard_path}")
+    try:
+        storyboard = json.loads(resolved_storyboard.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Storyboard is not valid JSON: {storyboard_path}") from exc
+    if not isinstance(storyboard, dict) or not isinstance(storyboard.get("section_plan"), list):
+        raise ValueError(
+            "Storyboard must be a report-design JSON object with a section_plan; "
+            "recreate it with report_design_report or build_report before publishing."
+        )
+
+    if receipt_path is None:
+        receipt_path = report_path.rsplit(".", 1)[0] + ".publish.json"
+    if not receipt_path.endswith(".json"):
+        receipt_path = receipt_path.rsplit(".", 1)[0] + ".json"
+
+    docx_export: dict[str, Any]
+    docx_path: str | None = None
+    if export_docx:
+        proposed_docx_path = report_path.rsplit(".", 1)[0] + ".docx"
+        resolved_docx = _resolve_path(workspace_id, proposed_docx_path)
+
+        def _convert_docx() -> None:
+            from html4docx import HtmlToDocx
+
+            parser = HtmlToDocx()
+            parser.parse_html_string(doc)
+            parser.doc.save(str(resolved_docx))
+
+        try:
+            await asyncio.to_thread(_convert_docx)
+        except Exception as exc:
+            docx_export = {
+                "requested": True,
+                "status": "failed",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        else:
+            docx_path = str(resolved_docx)
+            docx_export = {
+                "requested": True,
+                "status": "created",
+                "path": docx_path,
+                "size": resolved_docx.stat().st_size,
+            }
+    else:
+        docx_export = {"requested": False, "status": "skipped"}
+
+    receipt = {
+        "publish_receipt_schema": 1,
+        "published_at": datetime.now(timezone.utc).isoformat(),
+        "status": "published",
+        "html_path": str(resolved_html),
+        "storyboard_path": str(resolved_storyboard),
+        "storyboard_schema": storyboard.get("storyboard_schema"),
+        "quality": quality,
+        "runtime_smoke": runtime_smoke,
+        "docx_export": docx_export,
+    }
+    resolved_receipt = _resolve_path(workspace_id, receipt_path)
+    resolved_receipt.parent.mkdir(parents=True, exist_ok=True)
+    resolved_receipt.write_text(json.dumps(receipt, indent=2, default=str), encoding="utf-8")
+
+    result: dict[str, Any] = {
+        "type": "report_publish",
+        "published": True,
+        "html_path": str(resolved_html),
+        "storyboard_path": str(resolved_storyboard),
+        "receipt_path": str(resolved_receipt),
+        "quality": quality,
+        "runtime_smoke": runtime_smoke,
+        "docx_export": docx_export,
+        "size": resolved_html.stat().st_size,
+    }
+    if docx_path:
+        result["docx_path"] = docx_path
     return result
 
 
@@ -367,6 +625,7 @@ async def report_design_report(
         title=title,
         requirements=requirements or {},
     )
+    storyboard, critique = _critique_report_storyboard(storyboard)
     doc = _render_report_from_storyboard(storyboard, title=title)
     stale_skills = [] if quality_gate == "off" else stale_installed_library_skills()
     quality = _analyze_report_quality(doc, stale_skills=stale_skills) if quality_gate != "off" else {"status": "off", "warnings": []}
@@ -392,6 +651,7 @@ async def report_design_report(
         "section_count": len(storyboard.get("section_plan", [])),
         "interaction_count": len(storyboard.get("interaction_plan", [])),
         "quality": quality,
+        "critique": critique,
         "size": resolved_html.stat().st_size,
         "updated": True,
     }

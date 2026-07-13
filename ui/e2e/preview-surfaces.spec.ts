@@ -139,3 +139,119 @@ test('renders the chat artifact sidebar living report preview', async ({ page })
   expect(artifactUrl.pathname).toBe('/api/artifacts/live-session-artifact/living')
   expect(artifactUrl.searchParams.get('session_id')).toBe(threadId)
 })
+
+test('renders a published report tool result in chat', async ({ page }) => {
+  const documentRequests: string[] = []
+  const runId = 'run-report-publish'
+  const threadId = 'session-report-publish'
+  const reportPath = 'reports/customer-retention.html'
+  const publishedReport = {
+    type: 'report_publish',
+    html_path: reportPath,
+    storyboard_path: 'reports/customer-retention.storyboard.json',
+    quality: { status: 'pass', rubric_version: 3 },
+    runtime_smoke: { status: 'passed' },
+    size: 2048,
+  }
+  const snapshot = {
+    type: 'MESSAGES_SNAPSHOT',
+    messages: [
+      {
+        id: 'assistant-report-publish',
+        role: 'assistant',
+        content: 'The report is ready.',
+        toolCalls: [{
+          id: 'call-report-publish',
+          type: 'function',
+          function: { name: 'report_publish', arguments: JSON.stringify({ html_path: reportPath, export_docx: false }) },
+        }],
+      },
+      {
+        id: 'tool-report-publish',
+        role: 'tool',
+        toolCallId: 'call-report-publish',
+        content: JSON.stringify(publishedReport),
+      },
+    ],
+  }
+  const sse = [
+    { type: 'RUN_STARTED', threadId, runId },
+    snapshot,
+    { type: 'RUN_FINISHED', threadId, runId },
+  ].map(event => `data: ${JSON.stringify(event)}\n\n`).join('')
+
+  await page.route('**/api/plugins', async route => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify([{ id: 'artifacts', name: 'Artifacts', label: 'Artifacts', icon: '', pages: [], config_schema: null }]),
+    })
+  })
+  await page.route('**/api/chat/sessions?*', async route => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify([{ id: threadId, title: 'Published report', createdAt: '2026-07-13T00:00:00Z' }]),
+    })
+  })
+  await page.route('**/api/chat/sessions', async route => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify([{ id: threadId, title: 'Published report', createdAt: '2026-07-13T00:00:00Z' }]),
+    })
+  })
+  await page.route(`**/api/chat/sessions/${threadId}`, async route => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        id: threadId,
+        title: 'Published report',
+        createdAt: '2026-07-13T00:00:00Z',
+        messages: [],
+        visualArtifacts: [],
+      }),
+    })
+  })
+  await page.route('**/api/agent', async route => {
+    await route.fulfill({ contentType: 'text/event-stream', body: sse })
+  })
+  await page.route('**/api/guardrails/config/session/**', async route => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ disabled: [] }) })
+  })
+  await page.route('**/api/guardrails', async route => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ guardrails: [] }) })
+  })
+  await page.route('**/api/tools', async route => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ tools: [] }) })
+  })
+  await page.route('**/api/skills', async route => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify([]) })
+  })
+  await page.route('**/api/subagents/', async route => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify([]) })
+  })
+  await page.route('**/api/artifacts?**', async route => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ artifacts: [] }) })
+  })
+  await page.route('**/api/workspace/preview/document?**', async route => {
+    documentRequests.push(route.request().url())
+    await route.fulfill({
+      contentType: 'text/html',
+      body: '<!doctype html><html><body><main>Published report preview</main></body></html>',
+    })
+  })
+
+  await page.goto(`/chat?session=${threadId}`)
+
+  await expect(page.getByText('Publish report')).toBeVisible()
+  await expect(page.getByText('Report: customer-retention.html')).toBeVisible()
+  await expect(page.getByText('(2.0KB)')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'View' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Print' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'New Tab' })).toBeVisible()
+  await expect(page.frameLocator('iframe').getByText('Published report preview')).toBeVisible()
+  await expect.poll(() => documentRequests.length).toBe(1)
+
+  const documentUrl = new URL(documentRequests[0])
+  expect(documentUrl.pathname).toBe('/api/workspace/preview/document')
+  expect(documentUrl.searchParams.get('path')).toBe(reportPath)
+  expect(documentUrl.searchParams.get('v')).toBe('2048')
+})

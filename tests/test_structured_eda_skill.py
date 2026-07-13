@@ -30,6 +30,9 @@ def test_structured_eda_skill_is_bundled_and_parseable():
     assert "Fetch the `visualization` skill" in body
     assert "Fetch the `report_design` skill" in body
     assert "report_design_report" in body
+    assert "report_publish" in body
+    assert "requirements.evidence_registry.targets" in body
+    assert "preserved_low_confidence" in body
     assert "Do not treat appended report cells as the final EDA report" in body
     assert "`hypothesis_ledger`" in body
     assert "`ledger_timeline`" in body
@@ -76,6 +79,8 @@ def test_openclaw_dataclaw_skill_routes_eda_to_structured_eda():
     assert "`report_design` skills before the reporting step" in bundled_skill
     assert "Use `data_profiling` only for a compact quick profile" in bundled_skill
     assert "dataclaw_request_analysis_review" in bundled_skill
+    assert "report_publish" in bundled_skill
+    assert bundled_skill == _read(SKILL_LIBRARY / "dataclaw.md")
 
 
 def test_openclaw_bundles_structured_eda_skill():

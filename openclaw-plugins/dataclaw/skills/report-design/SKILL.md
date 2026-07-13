@@ -1,6 +1,6 @@
 ---
 name: report_design
-description: Design polished analytical reports from completed insights, aggregate assets, evidence, methodology, and interaction requirements. Use before final report generation so the agent storyboards layout, sections, controls, and quality gates instead of appending chart dumps.
+description: Design polished analytical reports and upgrade legacy HTML from completed insights, aggregate assets, evidence, methodology, and interaction requirements. Use before final report generation so the agent creates a storyboard-backed, publishable report instead of appending chart dumps.
 tags: [reporting, report-design, dashboarding, visualization, artifacts]
 ---
 
@@ -35,8 +35,37 @@ not the final-report path.
    calls.
 5. Keep `quality_gate="fail"` for final reports. Fix failures before presenting
    the report as complete.
-6. Keep the report recipe in the notebook or a source script so the artifact can
+6. Call `report_publish(report_path=..., storyboard_path=...)` after the designed
+   report passes. It re-runs the current fail gate, writes a publish receipt, and
+   records runtime-smoke and DOCX export outcomes. Pass `export_docx=False` when
+   no Word export was requested.
+7. Keep the report recipe in the notebook or a source script so the artifact can
    be regenerated.
+
+## Upgrade an existing HTML report
+
+Use `build_report` for existing HTML rather than rewriting it or appending draft
+sections. It preserves the original as a sibling `.source.html`, creates a
+storyboard, runs the bounded critique, and returns `normalization`, `critique`,
+and `quality` records.
+
+```python
+build_report(
+    html_path="legacy/customer-retention.html",
+    output_path="reports/customer-retention.html",
+    storyboard_path="reports/customer-retention.storyboard.json",
+    report_goal="Explain which customer cohorts need retention action.",
+    audience="Retention leadership",
+    quality_gate="warn",
+)
+```
+
+Publish only a `normalization.mode == "structured_rebuild"` or
+`"typed_preservation"` result, with its returned HTML and storyboard paths.
+`"preserved_low_confidence"` deliberately keeps unsupported source elements in
+the source file; recreate that report from typed insights and aggregate assets
+with `report_design_report` before publication. Never treat source preservation
+as proof that a legacy report passed the structured publish gate.
 
 ## Report tool contract
 
@@ -85,6 +114,12 @@ report_design_report(
             {"title": "Validation", "detail": "Goal totals reconcile across match, event, and player tables."},
         ],
         "checks": [{"title": "No raw full dataset embedded", "status": "pass"}],
+        "evidence_registry": {
+            "targets": [
+                {"id": "cell-team-table", "kind": "notebook_cell", "present": True},
+                {"id": "cell-team-summary", "kind": "notebook_cell", "present": True},
+            ],
+        },
     },
 )
 ```
@@ -123,6 +158,13 @@ shape of each `analyses` item:
 
 Prefer aggregate, ranked, or sampled records. Do not embed raw full datasets,
 connection strings, secrets, or large unbounded row sets.
+
+When an insight or analysis cites evidence, provide an explicit registry in
+`requirements.evidence_registry.targets`, for example
+`{"id": "cell-team-summary", "kind": "notebook_cell", "present": true}`.
+Every `evidence`/`evidence_refs` entry must use the same `kind` and `ref` (or
+`cell_id`/`artifact_id`) so the report can resolve it. Do not invent ids to
+satisfy the gate.
 
 ## Section choices
 
@@ -181,7 +223,7 @@ failed report shape.
 ## Quality gate
 
 The gate loads its criteria from the report rubric (`report_rubric.yaml`,
-currently v1) — the canonical machine-readable definition of a good dataclaw
+currently v3) — the canonical machine-readable definition of a good dataclaw
 report. Every quality result cites the `rubric_version` it was judged by.
 Before calling a report complete, the quality result must not include:
 
@@ -196,9 +238,16 @@ Before calling a report complete, the quality result must not include:
 - `missing_table_caption`
 - `stale_installed_skills`
 - `oversized_report`
+- `unstructured_report`
 
 If any of these appear, revise the storyboard or analysis payloads. Do not
 present a failed report as complete.
+
+The live v3 rubric also reports warning-level remediation for unresolved evidence
+targets, evidence-free chart conclusions, missing narrative/deks/table captions,
+unpaired insights, baked chart themes, inaccessible token contrast, external
+assets, and failed or skipped runtime smoke. Treat those as work to resolve or
+disclose; their compatible warning severity is not permission to ignore them.
 
 ## Anti-patterns
 
@@ -211,4 +260,4 @@ present a failed report as complete.
 
 `report_add_section` is a compatibility and draft helper. Use
 `quality_gate="warn"` for scratch sections; the polished final report path is
-`report_design_report` plus the returned storyboard JSON.
+`report_design_report`, its returned storyboard JSON, and `report_publish`.

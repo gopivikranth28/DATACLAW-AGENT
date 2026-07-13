@@ -24,6 +24,7 @@ from dataclaw_workspace.tools import (
     display_image,
     build_report,
     report_design_report,
+    report_publish,
     report_add_section,
     set_project_dir,
 )
@@ -60,7 +61,7 @@ class WorkspacePlugin:
 
         ctx.hooks.register("preToolCallHook", _inject_project_dir)
 
-        # Register 7 tools
+        # Register workspace tools.
         ctx.tool_registry.register_tool(PythonTool(
             name="ws_list_files",
             description="List files and directories in the workspace",
@@ -151,7 +152,7 @@ class WorkspacePlugin:
 
         ctx.tool_registry.register_tool(PythonTool(
             name="build_report",
-            description="Build an HTML report and save it to the workspace. The report is displayed inline with options to print or export as Word (.docx). Provide either raw HTML or a path to an HTML file.",
+            description="Normalize raw HTML into a typed, storyboard-backed report while preserving the source HTML beside it. The output includes a storyboard, critique record, and quality result; provide either raw HTML or a workspace HTML path.",
             fn=lambda **kw: build_report(cfg=cfg, **kw),
             parameters={
                 "type": "object",
@@ -159,6 +160,11 @@ class WorkspacePlugin:
                     "html": {"type": "string", "description": "Raw HTML string for the report"},
                     "html_path": {"type": "string", "description": "Path to an HTML file in workspace"},
                     "output_path": {"type": "string", "description": "Output filename (relative to workspace)", "default": "report.html"},
+                    "storyboard_path": {"type": "string", "description": "Output storyboard JSON path (defaults beside the report)"},
+                    "report_goal": {"type": "string", "description": "Decision question to preserve while rebuilding the source"},
+                    "title": {"type": "string", "description": "Optional report title override"},
+                    "audience": {"type": "string", "description": "Target reader/audience"},
+                    "quality_gate": {"type": "string", "description": "Report-quality behavior after normalization", "enum": ["warn", "fail", "off"], "default": "warn"},
                 },
             },
         ))
@@ -185,6 +191,27 @@ class WorkspacePlugin:
                     "quality_gate": {"type": "string", "description": "Report-quality behavior: warn and write, fail on required quality regressions, or off", "enum": ["warn", "fail", "off"], "default": "fail"},
                 },
                 "required": ["report_goal", "insights"],
+            },
+        ))
+
+        ctx.tool_registry.register_tool(PythonTool(
+            name="report_publish",
+            description=(
+                "Publish a storyboard-backed report after re-running the current report rubric at "
+                "fail severity. Writes a durable publish receipt and records the DOCX export result. "
+                "Use after report_design_report or a structured build_report result; "
+                "low-confidence preserved source must be redesigned before publishing."
+            ),
+            fn=lambda **kw: report_publish(cfg=cfg, **kw),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "report_path": {"type": "string", "description": "Structured report HTML path"},
+                    "storyboard_path": {"type": "string", "description": "Storyboard JSON created for the report"},
+                    "receipt_path": {"type": "string", "description": "Publish receipt JSON path (defaults beside the report)"},
+                    "export_docx": {"type": "boolean", "description": "Attempt DOCX export and record its outcome", "default": True},
+                },
+                "required": ["report_path", "storyboard_path"],
             },
         ))
 

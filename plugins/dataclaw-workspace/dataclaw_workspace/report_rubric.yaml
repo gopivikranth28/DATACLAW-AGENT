@@ -11,9 +11,10 @@
 #   deferred — target standard; never scored until its mechanism ships
 #              (since_version names the unlock where known)
 # Per A.10, a deferred criterion enters as `warn` for one version before any
-# promotion to `fail`, and rubric_version bumps on any criteria/threshold change.
+# promotion to `fail`, except a versioned criterion that closes a material
+# publish-gate bypass. rubric_version bumps on any criteria/threshold change.
 
-rubric_version: 1
+rubric_version: 3
 
 # Gate thresholds — every value matches the live gate (analyze_report_quality).
 thresholds:
@@ -35,16 +36,16 @@ criteria:
   # ── Rigor axis ─────────────────────────────────────────────────────────────
   - id: evidence_unresolved
     axis: rigor
-    severity: fail
-    status: deferred
-    since_version: 2                  # unlocks when the L2 evidence registry lands
+    severity: warn                    # v3 registry launch; promotes only after a compatibility window
+    status: live
+    since_version: 3
     scope: section
     applies_to: [findings, insight_grid, chart_interpretation, hypothesis_ledger, evidence_trace, evidence_rail]
     signal: >-
       Every evidence ref on an item dereferences to a registered target that is
       present in the artifact bundle (or a stable external ref).
     remediable: false
-    on_fail: block
+    on_fail: warn
     remediation: flag_unsourced
     rationale: An unsourced claim is exactly what the Scientist won't sign.
 
@@ -176,20 +177,20 @@ criteria:
 
   - id: chart_missing_conclusion
     axis: narrative
-    severity: fail
-    status: deferred
+    severity: warn                    # v3 evaluator launch; promotes per A.10
+    status: live
     scope: section
     applies_to: [chart, chart_interpretation, filterable_chart]
     signal: Every chart states what it shows, not just its axes.
     remediable: true
-    on_fail: block
+    on_fail: warn
     remediation: generate_conclusion_from_data
     rationale: A chart without a stated conclusion delegates the analysis to the reader.
 
   - id: missing_narrative_answer
     axis: narrative
     severity: warn
-    status: deferred
+    status: live
     scope: report
     applies_to: [narrative_band]
     signal: A narrative_band answers the primary question up front.
@@ -201,7 +202,7 @@ criteria:
   - id: bare_bullet_findings
     axis: narrative
     severity: warn
-    status: deferred
+    status: live
     scope: section
     applies_to: [findings, insight_grid]
     signal: Findings render as insight cards, not plain bullet lists.
@@ -213,7 +214,7 @@ criteria:
   - id: missing_section_dek
     axis: narrative
     severity: warn
-    status: deferred
+    status: live
     scope: section
     applies_to: [section]
     signal: Each section opens with a one-line dek.
@@ -277,7 +278,7 @@ criteria:
   - id: unpaired_insights
     axis: narrative
     severity: warn
-    status: deferred                  # pairing mechanism shipped; nothing asserts it yet
+    status: live
     scope: section
     applies_to: [findings, insight_grid]
     signal: >-
@@ -288,6 +289,18 @@ criteria:
     rationale: Insight–evidence anchors are the readable form of the evidence graph.
 
   # ── Integrity axis ─────────────────────────────────────────────────────────
+  - id: unstructured_report
+    axis: integrity
+    severity: fail
+    status: live
+    scope: report
+    applies_to: [report]
+    signal: Report contains at least one typed DataClaw section metadata block.
+    remediable: true
+    on_fail: block
+    remediation: migrate_to_structured_storyboard
+    rationale: A publish gate cannot assess a raw document with no typed section metadata.
+
   - id: oversized_report
     axis: integrity
     severity: fail
@@ -302,8 +315,8 @@ criteria:
 
   - id: chart_theme_defeated
     axis: integrity
-    severity: fail
-    status: deferred                  # theming mechanism is live; the gate assertion is not
+    severity: warn                    # v3 evaluator launch; promotes per A.10
+    status: live
     scope: section
     applies_to: [chart, chart_interpretation, filterable_chart, chart_table_explorer]
     signal: >-
@@ -311,7 +324,7 @@ criteria:
       template or hard-coded background/font/colorway that defeats token theming
       and dark-mode re-render.
     remediable: true
-    on_fail: block
+    on_fail: warn
     remediation: strip_baked_template_from_figure
     rationale: >-
       Theming is applied at render, never injected into the stored figure — a baked
@@ -319,8 +332,8 @@ criteria:
 
   - id: runtime_smoke_failed
     axis: integrity
-    severity: fail
-    status: deferred                  # requires a headless browser; skipped => warn-level disclosure (§9.3)
+    severity: warn                    # v3 structural smoke; browser smoke can promote this later
+    status: live
     scope: report
     applies_to: [report]
     signal: >-
@@ -328,7 +341,7 @@ criteria:
       declared filters/controls materialized; selector cards visible; anchors resolve;
       no unexpected empty states.
     remediable: partial
-    on_fail: block
+    on_fail: warn
     remediation: rerender_after_upstream_fixes
     rationale: All seven 2026-07-10 bugs were invisible to metadata checks (§1.4).
 
@@ -349,7 +362,7 @@ criteria:
   - id: not_self_contained
     axis: integrity
     severity: warn
-    status: deferred
+    status: live
     scope: report
     applies_to: [report]
     signal: No external asset the CSP/offline artifact can't load.
@@ -361,7 +374,7 @@ criteria:
   - id: contrast_below_aa
     axis: integrity
     severity: warn
-    status: deferred                  # evaluated by the screenshot pass, not the section-model loop
+    status: live                      # v3 token-pair audit; screenshot audit remains future work
     scope: report
     applies_to: [report]
     signal: Text/mark contrast >= WCAG-AA in both themes.

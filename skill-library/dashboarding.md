@@ -88,7 +88,9 @@ user asks for a broad report.
    `report_design` skill, then call `report_design_report` with the final
    insights, aggregate analysis payloads, methodology, hypotheses, evidence,
    and interaction requirements. Do not treat appended report cells as the final
-   dashboard/report architecture.
+   dashboard/report architecture. Then call `report_publish` with the returned
+   HTML and storyboard paths (use `export_docx=False` unless Word output was
+   requested) before artifact publication.
 8. **Artifact assembly** - the designer should assemble `header`, `metric_row`, `narrative_band`,
    `chart_interpretation`, `chart_table_explorer`, `filterable_chart`,
    `interactive_table`, `selector_panel`, `entity_card_grid`,
@@ -96,11 +98,11 @@ user asks for a broad report.
    `findings`, `callout`, and `text` sections into a report HTML source. Keep
    report assembly calls in the notebook or a source script so the dashboard can
    be regenerated.
-9. **Publish or revise** - fetch and follow the `artifacts` skill, then call
-   `publish_artifact(source_path=..., title=...)`. For edits, read/revise the
-   canonical source and publish with the same `artifact_id` and `base_version`.
-   If artifact tools are unavailable, keep the canonical source in the workspace
-   and say publication is unavailable; do not invent an id, version, or URL.
+9. **Publish or revise** - inspect the `report_publish` receipt, then fetch and follow the `artifacts` skill and call `publish_artifact(source_path=..., title=...)`.
+   For edits, read/revise the canonical source, re-run the report publish gate,
+   and publish with the same `artifact_id` and `base_version`. If artifact tools
+   are unavailable, keep the canonical source in the workspace and say
+   publication is unavailable; do not invent an id, version, or URL.
 10. **Audit and self-check** - run the pitfalls checklist. When browser tooling is
    available, screenshot the artifact in light and dark mode before closing the
    plan step. Run the report-quality gate and address stale skills, chart dumps,

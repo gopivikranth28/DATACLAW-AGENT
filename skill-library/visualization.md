@@ -47,6 +47,9 @@ first, then fetch and follow the `report_design` skill and call
 payloads, evidence, methodology, and requirements. The report designer should
 storyboard the full report, choose section layouts and interactions, write a
 storyboard JSON, and render the HTML in one pass.
+Register non-external evidence in `requirements.evidence_registry.targets`, then
+call `report_publish` with the returned HTML and storyboard paths before calling
+`publish_artifact` (set `export_docx=False` unless Word output was requested).
 `report_add_section` remains a low-level compatibility helper for manual or
 incremental assembly, but do not rely on appended report cells as the final
 strategy for a cohesive analytical report.
@@ -77,7 +80,10 @@ report_design_report(
             "interpretation": "The selector changes both the visual evidence and the lookup table.",
         }
     ],
-    requirements={"methodology": [{"title": "Aggregate first", "detail": "Embed only precomputed aggregate records."}]},
+    requirements={
+        "methodology": [{"title": "Aggregate first", "detail": "Embed only precomputed aggregate records."}],
+        "evidence_registry": {"targets": [{"id": "cell-sim", "kind": "notebook_cell", "present": True}]},
+    },
 )
 ```
 

@@ -21,6 +21,8 @@ def test_openclaw_manifest_carries_canonical_tools_with_identical_schemas(tmp_pa
     with TestClient(create_app()) as client:
         listing = client.get("/api/tools").json()
     assert listing["tools"], "live registry returned no tools"
+    by_name = {tool["name"]: tool for tool in listing["tools"]}
+    assert "structured build_report result" in by_name["report_publish"]["description"]
     assert_openclaw_tool_aliases(listing["tools"], tmp_path / "openclaw-plugin")
 
 

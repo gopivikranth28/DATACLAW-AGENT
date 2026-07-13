@@ -15,6 +15,7 @@ const AUTO_EXPAND_TOOLS = new Set([
   'open_notebook',
   'ws_write_file', 'ws_read_file',
   'build_report',
+  'report_publish',
   'publish_artifact',
   'insert_cell', 'edit_cell', 'edit_cell_source',
 ])
@@ -88,6 +89,7 @@ export default function ToolResultRenderer({ toolName, result, args, status, onF
     case 'ws_read_file':
       return <FileReadDisplay data={parsed} onFileClick={onFileClick} />
     case 'build_report':
+    case 'report_publish':
       return <ReportDisplay data={parsed} onFileClick={onFileClick} />
     case 'report_add_section':
       return <ReportUpdateNotice data={parsed} onFileClick={onFileClick} />

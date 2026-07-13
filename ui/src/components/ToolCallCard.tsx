@@ -128,6 +128,7 @@ function toolLabel(toolName: string): string {
   const labels: Record<string, string> = {
     report_add_section: 'Report update',
     build_report: 'Report',
+    report_publish: 'Publish report',
     propose_plan: 'Plan proposal',
     update_plan: 'Plan update',
   }
