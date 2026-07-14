@@ -797,6 +797,50 @@ const target = process.argv[1];
             }
           }
         });
+        if (name === 'desktop') {
+          const page = document.querySelector('.r-page');
+          const pageRect = page && page.getBoundingClientRect();
+          const topLevelSections = Array.from(document.querySelectorAll('.r-section, .r-hero')).filter(section => !section.closest('.r-diagnostic-pair'));
+          if (pageRect) {
+            topLevelSections.forEach((section, index) => {
+              const composition = section.getAttribute('data-dc-composition') || '';
+              const rect = section.getBoundingClientRect();
+              if (['guided_visual', 'interactive_explorer', 'comparison'].includes(composition) && rect.width < pageRect.width * .84) {
+                failures.push({check: 'desktop_composition_width', detail: name + ' ' + composition + ' section ' + index + ' is unexpectedly narrow (' + Math.round(rect.width) + 'px)'});
+              }
+              if (['reader_readout', 'editorial_findings', 'supporting', 'trust_close'].includes(composition) && rect.width > pageRect.width * .94) {
+                failures.push({check: 'desktop_composition_measure', detail: name + ' ' + composition + ' section ' + index + ' uses the full page measure instead of a readable column'});
+              }
+            });
+          }
+          for (let index = 0; index < topLevelSections.length - 1; index += 1) {
+            const current = topLevelSections[index];
+            const next = topLevelSections[index + 1];
+            const currentRect = current.getBoundingClientRect();
+            const nextRect = next.getBoundingClientRect();
+            const gap = nextRect.top - currentRect.bottom;
+            const currentComposition = current.getAttribute('data-dc-composition') || '';
+            const nextComposition = next.getAttribute('data-dc-composition') || '';
+            if (gap > 118 && currentComposition !== 'opening' && nextComposition !== 'headline_metrics') {
+              failures.push({check: 'desktop_section_spacing', detail: name + ' sections ' + index + ' and ' + (index + 1) + ' are separated by ' + Math.round(gap) + 'px'});
+            }
+          }
+          document.querySelectorAll('.r-insight-grid.is-editorial-list .r-insight-card').forEach((card, index) => {
+            const rect = card.getBoundingClientRect();
+            if (rect.height > 460) {
+              failures.push({check: 'insight_card_density', detail: name + ' editorial insight ' + index + ' is ' + Math.round(rect.height) + 'px tall; split or condense the supplied detail'});
+            }
+          });
+          document.querySelectorAll('.r-chart-story-grid, .r-explorer-grid').forEach((grid, index) => {
+            const gridRect = grid.getBoundingClientRect();
+            const aside = grid.querySelector('.r-interpretation-panel, .r-evidence-rail');
+            if (!aside || gridRect.width < 700) return;
+            const asideRect = aside.getBoundingClientRect();
+            if (asideRect.width < 250 || asideRect.width > gridRect.width * .44) {
+              failures.push({check: 'interpretation_rail_balance', detail: name + ' interpretation rail ' + index + ' is ' + Math.round(asideRect.width) + 'px wide for a ' + Math.round(gridRect.width) + 'px visual frame'});
+            }
+          });
+        }
         return failures;
       }, { name });
       const screenshot = await page.screenshot({ type: 'png', fullPage: true });

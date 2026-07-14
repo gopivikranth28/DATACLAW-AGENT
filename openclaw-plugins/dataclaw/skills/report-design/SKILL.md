@@ -57,6 +57,15 @@ Do not use this skill for a quick scratch chart or a single draft section. For t
    intended story order: set `editorial_role="hero"` (or a lower
    `story_priority`) on the central visual, and the same `diagnostic_group` or
    `comparison_group` on charts that belong in a two-column diagnostic pair.
+   The compiler also assigns every rendered section one desktop composition:
+   `opening`, `headline_metrics`, `reader_readout`, `editorial_findings`,
+   `guided_visual`, `interactive_explorer`, `comparison`, `trust_close`,
+   `story_arc`, or `supporting`. These are layout frames, not a new rigid
+   storyboard template: they make visual/evidence sections use the report
+   width, keep long-form conclusions and disclosures at a readable measure,
+   and prevent arbitrary narrow or floating panels. Override only a genuine
+   exception with `desktop_composition` on that analysis/section; do not use
+   pixel offsets or a custom CSS width to compensate for a weak story order.
 5. Keep `quality_gate="fail"` for final reports. Fix failures before presenting
    the report as complete.
 6. For a final release, set `requirements.publication.require_visual_review=true`, inspect screenshots, then call `report_review_visuals(report_path=..., storyboard_path=..., reviewer=..., decision="approved", notes=...)`. It writes a named, hash-bound review only when browser evidence and automated semantic review pass; browser-unavailable cannot create approval, and changed HTML or screenshots require a new review.

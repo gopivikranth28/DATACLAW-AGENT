@@ -1,6 +1,8 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+const apiTarget = process.env.DATACLAW_API_URL || 'http://localhost:8000'
+
 export default defineConfig({
   plugins: [react()],
   build: {
@@ -26,7 +28,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target: apiTarget,
         ws: true,
       },
     },

@@ -768,6 +768,43 @@ def test_storyboard_uses_explicit_width_roles_instead_of_type_driven_narrow_sect
     assert "r-section is-narrow" not in rendered
 
 
+def test_storyboard_compiles_a_bounded_desktop_composition_contract():
+    storyboard = report_renderer.design_report_storyboard(
+        report_goal="Explain the completed relationship.",
+        insights=[{
+            "title": "The supplied relationship is positive",
+            "detail": "The completed aggregate increases across the supplied comparison groups.",
+            "evidence": [{"kind": "notebook_cell", "ref": "cell-relationship"}],
+        }],
+        analyses=[{
+            "title": "Relationship view",
+            "caption": "Compare the supplied groups on the completed aggregate.",
+            "figure": {"data": [{"type": "bar", "x": ["A", "B"], "y": [1, 2]}]},
+            "interpretation": "The supplied comparison rises from A to B.",
+            "evidence": [{"kind": "notebook_cell", "ref": "cell-relationship"}],
+        }],
+        requirements={"data_quality": "Coverage is complete for the supplied rows."},
+    )
+    by_role = {item["layout_role"]: item["data"] for item in storyboard["section_plan"]}
+    assert by_role["opening_context"]["desktop_composition"] == "opening"
+    assert by_role["executive_readout"]["desktop_composition"] == "reader_readout"
+    assert by_role["primary_insights"]["desktop_composition"] == "editorial_findings"
+    assert by_role["analysis_1_chart_interpretation"]["desktop_composition"] == "guided_visual"
+    assert by_role["data_quality"]["desktop_composition"] == "trust_close"
+    assert by_role["analysis_1_chart_interpretation"]["layout_width"] == "full"
+    assert any(
+        entry["desktop_composition"] == "guided_visual"
+        for entry in storyboard["layout_plan"]
+        if entry["section"] == "analysis_1_chart_interpretation"
+    )
+
+    rendered = report_renderer.render_report_from_storyboard(storyboard)
+    assert 'data-dc-composition="guided_visual"' in rendered
+    assert "is-composition-guided-visual" in rendered
+    assert "is-composition-trust-close" in rendered
+    assert report_renderer.review_storyboard_design(storyboard)["status"] == "pass"
+
+
 def test_story_arcs_allow_variable_reader_questions_to_order_supplied_sections():
     figure = lambda title: {
         "data": [{"type": "bar", "x": ["A", "B"], "y": [2, 1]}],

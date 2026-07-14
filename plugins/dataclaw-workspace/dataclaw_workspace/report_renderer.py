@@ -68,6 +68,18 @@ __all__ = [
 
 CHART_SECTION_KINDS = {"chart", "chart_interpretation", "filterable_chart", "chart_table_explorer"}
 INTERACTIVE_SECTION_KINDS = {"filterable_chart", "interactive_table", "selector_panel", "chart_table_explorer"}
+DESKTOP_COMPOSITIONS = {
+    "opening",
+    "headline_metrics",
+    "reader_readout",
+    "editorial_findings",
+    "guided_visual",
+    "interactive_explorer",
+    "comparison",
+    "trust_close",
+    "story_arc",
+    "supporting",
+}
 STORY_SECTION_KINDS = {
     "findings",
     "insight_grid",
@@ -679,6 +691,33 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .r-section.is-full-width { max-width: none; }
 .r-section.is-content-width { max-width: none; }
 .r-section.is-reading-width { max-width: 780px; margin-left: auto; margin-right: auto; }
+/*
+ * Desktop composition contract.  These are a deliberately small number of
+ * repeatable frames, not per-report pixel offsets: orientation and evidence
+ * use the available report width; long-form conclusions and trust material
+ * get a readable measure; explorations keep a stable chart/rail hierarchy.
+ */
+@media (min-width: 721px) {
+  .r-section.is-composition-reader-readout { max-width: 780px; margin-top: 34px; margin-bottom: 34px; }
+  .r-section.is-composition-editorial-findings,
+  .r-section.is-composition-supporting,
+  .r-section.is-composition-trust-close { max-width: 920px; margin-left: auto; margin-right: auto; }
+  .r-section.is-composition-guided-visual,
+  .r-section.is-composition-interactive-explorer,
+  .r-section.is-composition-comparison { max-width: none; margin-top: 34px; margin-bottom: 38px; padding: 26px; }
+  .r-section.is-composition-guided-visual .r-chart-story-grid,
+  .r-section.is-composition-interactive-explorer .r-chart-story-grid,
+  .r-section.is-composition-interactive-explorer .r-explorer-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+    gap: 22px;
+  }
+  .r-section.is-composition-guided-visual .r-interpretation-panel,
+  .r-section.is-composition-interactive-explorer .r-interpretation-panel { position: sticky; top: 22px; }
+  .r-section.is-composition-editorial-findings .r-insight-grid:not(.is-editorial-list) {
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  }
+  .r-section.is-composition-editorial-findings .r-insight-card p { line-height: 1.55; }
+}
 .r-section.is-story-arc {
   margin: 46px 0 18px;
   padding: 0 0 14px;
@@ -3142,6 +3181,88 @@ def _presentation_options(requirements: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def _desktop_composition_for(item: dict[str, Any]) -> str:
+    """Infer one intentional desktop composition for a planned section.
+
+    The composition is deliberately independent from a report archetype.  An
+    archetype decides *which supplied material appears when*; this small
+    vocabulary decides the stable desktop frame in which that material is
+    read.  It keeps a mixed report from degenerating into arbitrary full-width
+    cards, narrow floating prose, and one-off layout rules.
+    """
+    data = item.get("data") if isinstance(item.get("data"), dict) else {}
+    supplied = clean_text(data.get("desktop_composition") or "").lower().replace("-", "_")
+    if supplied:
+        if supplied not in DESKTOP_COMPOSITIONS:
+            allowed = ", ".join(sorted(DESKTOP_COMPOSITIONS))
+            raise ValueError(f"desktop_composition must be one of: {allowed}")
+        return supplied
+
+    section_type = clean_text(item.get("section_type") or item.get("kind") or "").lower()
+    role = clean_text(item.get("layout_role") or "").lower()
+    variant = clean_text(data.get("layout_variant") or "").lower().replace("-", "_")
+    if variant == "story_arc":
+        return "story_arc"
+    if clean_text(item.get("layout_group") or ""):
+        return "comparison"
+    if section_type == "header":
+        return "opening"
+    if section_type == "metric_row":
+        return "headline_metrics"
+    if role in {"executive_readout", "report_epilogue"}:
+        return "reader_readout"
+    if section_type == "insight_grid":
+        return "editorial_findings"
+    if section_type in INTERACTIVE_SECTION_KINDS:
+        return "interactive_explorer"
+    if section_type in CHART_SECTION_KINDS:
+        return "guided_visual"
+    if section_type in TRUST_SECTION_KINDS or role in {
+        "methodology", "data_quality", "uncertainty", "hypothesis_dispositions", "evidence_trace",
+    }:
+        return "trust_close"
+    if section_type in {"narrative_band", "text", "explanation"}:
+        return "reader_readout"
+    return "supporting"
+
+
+def _apply_desktop_compositions(section_plan: list[dict[str, Any]]) -> bool:
+    """Attach a bounded desktop layout contract without changing report content.
+
+    Callers can explicitly choose ``desktop_composition`` per section.  For all
+    other sections, the compiler applies a semantic default and a matching
+    width only when the author has not already supplied one.  This preserves
+    author intent while making composition visible in the storyboard and
+    inspectable in the rendered HTML.
+    """
+    changed = False
+    widths = {
+        "opening": "full",
+        "headline_metrics": "full",
+        "reader_readout": "reading",
+        "editorial_findings": "content",
+        "guided_visual": "full",
+        "interactive_explorer": "full",
+        "comparison": "full",
+        "trust_close": "content",
+        "story_arc": "full",
+        "supporting": "content",
+    }
+    for item in section_plan:
+        if not isinstance(item, dict):
+            continue
+        data = item.get("data") if isinstance(item.get("data"), dict) else {}
+        composition = _desktop_composition_for(item)
+        if clean_text(data.get("desktop_composition") or "").lower().replace("-", "_") != composition:
+            data["desktop_composition"] = composition
+            changed = True
+        if not clean_text(data.get("layout_width") or data.get("width") or ""):
+            data["layout_width"] = widths[composition]
+            changed = True
+        item["data"] = data
+    return changed
+
+
 def _story_arc_id(value: Any, index: int) -> str:
     """Return a stable, reader-neutral identifier for a supplied story arc."""
     raw = clean_text(value or "").lower()
@@ -3547,6 +3668,7 @@ def design_report_storyboard(
 
     editorial_architecture = _apply_editorial_architecture(section_plan, requirements)
     supplied_story_arcs = _apply_story_arcs(section_plan, requirements)
+    _apply_desktop_compositions(section_plan)
     if supplied_story_arcs:
         storyboard_steps = supplied_story_arcs
         interaction_plan = _storyboard_interactions(section_plan)
@@ -4205,6 +4327,8 @@ def _critique_editorial_design(storyboard: dict[str, Any], *, max_passes: int = 
             noted = _add_local_data_notes(section_plan)
             interpreted = _complete_chart_context_from_adjacent_insights(section_plan)
             changed = paired or noted or interpreted
+        elif action == "audit_page_architecture":
+            changed = _apply_desktop_compositions(section_plan)
 
         stages.append({"pass": pass_number, "action": action, "changed": changed})
         if changed:
@@ -4313,6 +4437,54 @@ def _review_editorial_design(storyboard: dict[str, Any]) -> dict[str, Any]:
     def item_data(item: dict[str, Any]) -> dict[str, Any]:
         value = item.get("data")
         return value if isinstance(value, dict) else {}
+
+    expected_widths = {
+        "opening": "full",
+        "headline_metrics": "full",
+        "reader_readout": "reading",
+        "editorial_findings": "content",
+        "guided_visual": "full",
+        "interactive_explorer": "full",
+        "comparison": "full",
+        "trust_close": "content",
+        "story_arc": "full",
+        "supporting": "content",
+    }
+    missing_compositions: list[str] = []
+    width_conflicts: list[str] = []
+    for item in indexed:
+        data = item_data(item)
+        role = clean_text(item.get("layout_role") or item.get("section_type") or "")
+        composition = clean_text(data.get("desktop_composition") or "").lower().replace("-", "_")
+        if not composition:
+            missing_compositions.append(role)
+            continue
+        if composition not in DESKTOP_COMPOSITIONS:
+            width_conflicts.append(role)
+            continue
+        width = clean_text(data.get("layout_width") or data.get("width") or item.get("layout_width") or "").lower().replace("-", "_")
+        expected = expected_widths[composition]
+        # The epilogue is intentionally a reader-width trust close; all other
+        # values are checked exactly so a visual cannot quietly become a narrow
+        # text card or a long-form disclosure cannot sprawl across the page.
+        if width and width != expected and not (role == "report_epilogue" and width == "reading"):
+            width_conflicts.append(role)
+    if missing_compositions:
+        add(
+            "desktop_composition_missing",
+            severity="warning",
+            claim="One or more sections have no declared desktop composition.",
+            recommendation="Run the storyboard compiler or set desktop_composition explicitly so widths and visual hierarchy are deliberate rather than type-driven.",
+            sections=missing_compositions,
+        )
+    if width_conflicts:
+        add(
+            "desktop_composition_width_conflict",
+            severity="warning",
+            claim="One or more section widths conflict with their desktop composition.",
+            recommendation="Use full width for guided visuals, explorers, comparisons, and headline blocks; use reading/content width only for intentional narrative and trust material.",
+            sections=width_conflicts,
+        )
 
     visual_sections = [
         item for item in indexed
@@ -4829,6 +5001,8 @@ def render_report_from_storyboard(storyboard: dict[str, Any], *, title: str | No
     section_plan = storyboard.get("section_plan", [])
     if not isinstance(section_plan, list) or not section_plan:
         raise ValueError("storyboard requires non-empty list 'section_plan'")
+    _apply_desktop_compositions(section_plan)
+    storyboard["layout_plan"] = _storyboard_layout(section_plan)
 
     html_sections: list[str] = []
     include_plotly = False
@@ -5334,7 +5508,12 @@ def _storyboard_layout(section_plan: list[dict[str, Any]]) -> list[dict[str, str
             pattern = "trust and provenance block"
         else:
             pattern = "narrative band"
-        layout.append({"section": role, "section_type": section_type, "layout_pattern": pattern})
+        layout.append({
+            "section": role,
+            "section_type": section_type,
+            "layout_pattern": pattern,
+            "desktop_composition": _desktop_composition_for(item),
+        })
     return layout
 
 
@@ -5383,9 +5562,19 @@ def render_report_section(section_type: str, data: dict[str, Any], typed: dict[s
         classes.append("is-story-arc")
     if st == "header" and clean_text(data.get("visual_treatment") or "") == "editorial_dark":
         classes.append("is-editorial-dark")
+    composition = _desktop_composition_for({"section_type": st, "data": data})
+    # Keep the hero's established class signature stable for callers that use
+    # it as a presentation hook; the durable composition is still exposed on
+    # every section through data-dc-composition.
+    if st != "header":
+        classes.append(f"is-composition-{composition.replace('_', '-')}")
     if classes:
         wrapper = "r-hero" if st == "header" else "r-section"
-        html = html.replace(f'class="{wrapper}"', f'class="{wrapper} {" ".join(classes)}"', 1)
+        html = html.replace(
+            f'class="{wrapper}"',
+            f'class="{wrapper} {" ".join(classes)}" data-dc-composition="{_esc(composition)}"',
+            1,
+        )
     kicker = clean_text(data.get("kicker") or "")
     if kicker and st != "header" and not (st == "metric_row" and variant == "floating_kpis"):
         html = re.sub(r"(<h2>)", f'<p class="r-section-kicker">{_esc(kicker)}</p>\\1', html, count=1)
