@@ -595,6 +595,38 @@ def test_typed_sections_reject_oversize_chart_summary():
     assert exc.value.code == "chart_summary_too_large"
 
 
+def test_typed_display_facts_are_evidence_bound_and_validate_their_shape():
+    normalized = normalize_section("insight_grid", {
+        "title": "Decision findings",
+        "display_facts": [
+            {
+                "fact_id": "portfolio-window",
+                "text": "Last 90 days",
+                "uses": ["pill", "annotation"],
+                "evidence_refs": [{"ref": "cell-window"}],
+            }
+        ],
+        "items": [{
+            "finding_id": "finding-risk",
+            "title": "Risk is concentrated in one cohort",
+            "display_facts": [{
+                "fact_id": "risk-rate",
+                "text": "61% renewal rate",
+                "uses": ["pill", "scan_point"],
+                "evidence": "cell-cohort",
+            }],
+        }],
+    })
+
+    assert normalized["section_schema"] == 3
+    assert normalized["payload"]["display_facts"][0]["evidence_refs"] == ["cell-window"]
+    assert normalized["payload"]["items"][0]["display_facts"][0]["fact_id"] == "risk-rate"
+
+    with pytest.raises(SectionValidationError) as exc:
+        normalize_section("text", {"display_facts": [{"fact_id": "bad fact", "text": "x", "uses": ["pill"]}]})
+    assert exc.value.code == "invalid_display_fact_id"
+
+
 @pytest.mark.asyncio
 async def test_report_note_creates_live_report_and_compiles_pages():
     result = await report_note(

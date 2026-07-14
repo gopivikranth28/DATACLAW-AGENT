@@ -4,9 +4,12 @@ _Consolidated design and implementation-status note. Branch: `structured-eda`. S
 report visual/analytical quality regressed, what "good" means for a dataclaw report, and the
 architecture to guarantee it. The document distinguishes shipped behavior from target design._
 
-_Status refreshed 2026-07-13. The renderer overhaul, storyboard path, versioned rubric gate,
-fail-closed publish boundary, raw-HTML normalization, bounded critique, evidence registry, and
-publish-time runtime smoke are shipped. DOCX fidelity/static fallbacks remain target work._
+_Status refreshed 2026-07-14. The renderer overhaul, storyboard path, versioned rubric gate,
+fail-closed publish boundary, raw-HTML normalization, bounded critique, evidence registry,
+typed display-fact contract, evidence-bound runtime visual author, constrained story-block
+reordering, and hash-bound human/vision approval over full-page/key-section browser review are
+shipped. Deterministic rendered-page semantic review, source-bound regeneration recipes, and
+declared rigor/component contracts are also shipped. DOCX fidelity/static fallbacks remain target work._
 
 ---
 
@@ -410,14 +413,13 @@ _Resolved this pass:_
 
 The remaining immediate report-builder milestone is **DOCX fidelity**: static fallbacks for
 interactive sections, explicit conversion diagnostics on the legacy path, and promotion of
-`export_fidelity`. Longer-term deferred criteria still cover methodology/data-quality/uncertainty
-coverage, regeneration recipes, and richer semantic component upgrades. After a compatibility
-window, promote the new v3 resolver/runtime/theme warnings only where the relevant runtime
-environment is guaranteed.
+`export_fidelity`. Longer-term work is a learned/vision semantic evaluator that can supplement
+the shipped deterministic rendered-page audit. Promote warning criteria only where the relevant
+runtime environment is guaranteed.
 
 ---
 
-## Appendix A — `report_rubric` v3 (specification and implementation status)
+## Appendix A — `report_rubric` v7 (specification and implementation status)
 
 _The versioned config is live at `plugins/dataclaw-workspace/dataclaw_workspace/report_rubric.yaml`.
 The gate consumes all `live` criteria. The designer records the live check ids and rubric
@@ -447,7 +449,7 @@ traceable across how a report is written, remediated, and judged.
 ### A.3 Criterion schema
 
 ```yaml
-rubric_version: 3
+rubric_version: 7
 # Gate thresholds — every value here matches the live gate today
 # (report_renderer.py: analyze_report_quality), so the rubric describes real behavior.
 thresholds:
@@ -498,17 +500,18 @@ also carries `replaces: <live_id>` so the version history stays coherent across 
 |---|---|---|---|---|---|
 | `evidence_unresolved` | warn (v3) → fail | live | no | every evidence ref resolves to a present, registered target | flag claim as unsourced / caveat |
 | `unsourced_claim` | warn (v1) → fail | live | no | every finding/insight carries ≥1 evidence ref | downgrade to caveat; never mint an id |
-| `missing_methodology` | fail | deferred | partial | a `methodology_block` states grain, denominator, validation | reshape intake methodology notes into the block; block only if intake has none |
-| `missing_data_quality` | warn | deferred | yes | data-quality / coverage risk is disclosed | synthesize from intake notes |
-| `missing_uncertainty` | warn | deferred | partial | quantitative headline claims show CI / confidence / n where applicable | annotate from source stats; never invent |
+| `missing_methodology` | fail (v7) | live | partial | a declared rigor contract requires a `methodology_block` with grain, denominator, validation | reshape supplied methodology notes; block only when explicitly required |
+| `missing_data_quality` | warn (v7) | live | yes | a declared rigor contract requires visible data-quality / coverage disclosure | render supplied coverage notes as a callout |
+| `missing_uncertainty` | warn (v7) | live | partial | declared or predictive rigor requires visible uncertainty | render supplied interval/confidence information; never invent |
 | `chart_interpretation_missing_evidence` | warn | live | no | a `chart_interpretation` with a conclusion has ≥1 evidence ref | request evidence; flag if absent |
-| `missing_recipe` | warn | deferred | yes | storyboard JSON + regeneration recipe is attached | attach the storyboard used to render |
+| `missing_recipe` | warn (v7) | live | yes | a source-bound embedded recipe and `*.recipe.json` sidecar accompany the storyboard | regenerate from the recorded source context, never edited HTML |
 
 `unsourced_claim` is today's `missing_evidence_ids` renamed (`replaces: missing_evidence_ids`).
 It enters v1 at its **live severity, `warn`** — encoding it at `fail` in v1 would silently
 tighten the gate, exactly what A.10 forbids — and promotes to `fail` in a later version.
-`missing_methodology` is deferred because the designer _plans_ a `methodology_block`
-(`report_renderer.py`) but the gate does not yet assert its presence.
+These rigor checks are source-declared rather than inferred from prose. Predictive analysis
+contracts require uncertainty by default; methodology and data-quality checks require an
+explicit `requirements.rigor` flag.
 
 ### A.5 Criteria catalog — Narrative axis
 
@@ -522,7 +525,7 @@ tighten the gate, exactly what A.10 forbids — and promotes to `fail` in a late
 | `missing_narrative_answer` | warn | live | yes | a `narrative_band` answers the primary question up front | synthesize the answer from findings |
 | `bare_bullet_findings` | warn | live | yes | findings render as insight cards, not plain `<ul><li>` | reshape bullets into insight cards |
 | `missing_section_dek` | warn | live | yes | each section opens with a one-line dek | write safe context from the section title |
-| `plaintext_where_component_warranted` | warn | deferred | yes | categorical/%/entity values use the right component (§A.7) | upgrade plain text per the semantics map |
+| `plaintext_where_component_warranted` | warn (v7) | live | yes | a declared semantic role uses its matching component (§A.7) | upgrade the explicit role to its safe component |
 | `missing_table_caption` | warn | live | yes | tables have a caption explaining grain/filters | write caption from columns/filters |
 | `missing_primary_insights` | fail | live | partial | ≥1 findings/insight-grid carries completed insight items | promote intake insights into an insight-grid; block only if intake has none |
 | `missing_insight_sections` | fail | live | partial | ≥4 sections ⇒ ≥1 story layer (findings/insight-grid/narrative/methodology/evidence/explorer) | build a story layer from intake material; block only if intake has none |
@@ -539,16 +542,28 @@ evidence refs but is not anchored to an evidence section.
 | `oversized_report` | fail | live | partial | payload (excl. Plotly runtime) ≤ `max_payload_bytes` | drop raw/full datasets; sample/aggregate |
 | `chart_theme_defeated` | warn (v3) → fail | live | yes | no stored figure carries a baked template/background/font/colorway that defeats token theming and dark-mode re-render | **strip** the baked template / explicit colors from `fig.layout`; render-time theming supplies them |
 | `runtime_smoke_failed` | warn (v3) → fail | live | partial | structural smoke always checks shell/anchors/mount points; publish additionally attempts headless render assertions for charts, controls, selector cards, and empty states | re-render after upstream fixes; browser-unavailable is recorded as `skipped`, never passed |
+| `visual_semantic_review` | warn (v7) | live | yes | browser audit checks hero/section hierarchy, contextualized evidence, editorial findings, and undeclared nested surfaces | revise the rendered composition and regenerate |
+| `visual_author_fallback` | warn (v4) | live | yes | a requested runtime visual author either records a validated plan or declares safe fallback | inspect the runtime provider or use a provided spec |
+| `visual_plan_budget` | warn (v4) | live | yes | advisory plan review has no repeated strong surfaces, unclear parent-child nesting, repeated narrative framing, or card grids without peer comparison | revise the plan or accept contextual density explicitly |
+| `display_fact_coverage` | warn (v5); explicit contract blocks publish (v6) | live | yes | requested runtime composition has stable source-owned display facts rather than prose inference or legacy display fields; every display-fact evidence ref resolves through the registry | add `display_facts` or explicit `visual_author.facts`, then register its evidence |
 | `export_fidelity` | warn | deferred | partial | exports (`.docx`/print) derive from the upgraded report, and every interactive section has a static fallback (sorted table snapshot, chart image, or first-N rows) or the export discloses the omission | generate static fallbacks; disclose what could not be preserved |
 | `not_self_contained` | warn | live (v3) | yes | no external script/style/media asset the offline artifact can't load | inline or replace the external ref |
-| `contrast_below_aa` | warn | live (v3) | partial | primary ink/muted/surface token pairs meet WCAG-AA in light and dark themes | adjust token colors; screenshot coverage remains a future enhancement |
+| `contrast_below_aa` | warn | live (v3) | partial | primary ink/muted/surface token pairs meet WCAG-AA in light and dark themes | adjust token colors; v7 stores full-page desktop/mobile and desktop key-section browser artifacts alongside the deterministic token check |
 | `stale_installed_skills` | fail | live | no | installed library skills match bundled skill-library | block; refresh skills out-of-band |
 
-v3-status notes: `chart_theme_defeated` evaluates stored figure layout fields; the renderer's
+v7-status notes: `chart_theme_defeated` evaluates stored figure layout fields; the renderer's
 runtime token application remains the source of actual theme styling. `runtime_smoke_failed`
 always performs static wiring checks, then attempts Playwright at publish; an unavailable browser
-is recorded as `skipped`, never a browser pass. `export_fidelity` remains deferred because the
-legacy `.docx` conversion still has no static fallbacks or reliable fidelity accounting.
+is recorded as `skipped`, never a browser pass. When available, browser smoke records full-page
+desktop/mobile and desktop key-section screenshot hashes and checks section, chart, and narrative
+clipping. Browser review also performs a deterministic semantic audit of hierarchy, evidence
+context, editorial findings, and nested surfaces. `requirements.publication.require_visual_review=true`
+requires that audit plus a named approved `report_review_visuals` record bound to the exact HTML and
+screenshot hashes. The audit is not a learned vision model. Runtime visual authoring is a constrained fact-selection stage; its model can
+select only typed source facts and, when explicitly enabled, reorder only declared contiguous
+story blocks inside a named zone. Designed reports embed a source-context/section-plan recipe and
+write a hash-bound `*.recipe.json` sidecar. `export_fidelity` remains deferred because the legacy
+`.docx` conversion still has no static fallbacks or reliable fidelity accounting.
 
 _Runtime criteria (`runtime_smoke_failed`, `contrast_below_aa`) are evaluated outside the
 section-model critique loop (§5.3) — the loop cannot see rendered behavior and must not score it._

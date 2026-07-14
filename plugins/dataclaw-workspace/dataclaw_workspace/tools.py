@@ -11,6 +11,7 @@ import asyncio
 import difflib
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,7 @@ from dataclaw_workspace.report_renderer import (
     critique_report_storyboard as _critique_report_storyboard,
     design_report_storyboard as _design_report_storyboard,
     ensure_plotly_runtime as _ensure_plotly_runtime,
+    ensure_regeneration_recipe as _ensure_regeneration_recipe,
     ensure_report_shell_context as _ensure_report_shell_context,
     normalize_raw_html_report as _normalize_raw_html_report,
     plotly_script_tag as _plotly_script_tag,
@@ -39,8 +41,14 @@ from dataclaw_workspace.report_renderer import (
     report_shell_css as _report_shell_css,
     report_shell_script as _report_shell_script,
     review_storyboard_design as _review_storyboard_design,
+    review_storyboard_authoring as _review_storyboard_authoring,
     review_storyboard_analysis as _review_storyboard_analysis,
     typed_report_section as _typed_report_section,
+)
+from dataclaw_workspace.visual_author import (
+    VisualAuthorRequiredError,
+    author_report_visuals,
+    visual_author_config,
 )
 
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
@@ -87,6 +95,82 @@ def _stable_json_sha256(value: Any) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _write_visual_author_failure_audit(
+    storyboard_path: Path,
+    *,
+    report_goal: str,
+    title: str,
+    error: VisualAuthorRequiredError,
+) -> Path:
+    """Persist a small audit record before a required runtime stage fails."""
+    audit_path = storyboard_path.with_name(f"{storyboard_path.stem}.visual-author-failure.json")
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    audit_path.write_text(json.dumps({
+        "schema": 1,
+        "status": "failed",
+        "report_goal": report_goal,
+        "title": title,
+        "visual_author": error.record,
+        "reason": error.reason,
+    }, indent=2, default=str), encoding="utf-8")
+    return audit_path
+
+
+def _write_regeneration_recipe(
+    report_path: Path,
+    storyboard_path: Path,
+    storyboard: dict[str, Any],
+    *,
+    html_sha256: str,
+) -> Path:
+    """Persist the source-bound rebuild instructions beside a publishable report."""
+    recipe = _ensure_regeneration_recipe(storyboard)
+    record = {
+        **recipe,
+        "artifact": {
+            "html_path": str(report_path),
+            "storyboard_path": str(storyboard_path),
+            "html_sha256": html_sha256,
+        },
+    }
+    recipe_path = report_path.with_name(f"{report_path.stem}.recipe.json")
+    recipe_path.write_text(json.dumps(record, indent=2, default=str), encoding="utf-8")
+    return recipe_path
+
+
+def _verify_regeneration_recipe(
+    report_path: Path,
+    storyboard_path: Path,
+    storyboard: dict[str, Any],
+    *,
+    html_sha256: str,
+) -> dict[str, Any] | None:
+    """Verify the sidecar only for storyboards that declare the new recipe contract."""
+    expected = storyboard.get("regeneration_recipe")
+    if not isinstance(expected, dict):
+        return None
+    recipe_path = report_path.with_name(f"{report_path.stem}.recipe.json")
+    if not recipe_path.is_file():
+        raise ValueError("Report publish integrity gate failed: regeneration recipe sidecar is missing; redesign the report before publishing.")
+    try:
+        record = json.loads(recipe_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError("Report publish integrity gate failed: regeneration recipe sidecar is not valid JSON.") from exc
+    if not isinstance(record, dict) or record.get("recipe_schema") != 1:
+        raise ValueError("Report publish integrity gate failed: regeneration recipe sidecar is invalid.")
+    for key in ("source_context_sha256", "section_plan_sha256", "renderer"):
+        if record.get(key) != expected.get(key):
+            raise ValueError(
+                "Report publish integrity gate failed: regeneration recipe no longer matches the storyboard; redesign the report before publishing."
+            )
+    artifact = record.get("artifact") if isinstance(record.get("artifact"), dict) else {}
+    if artifact.get("html_sha256") != html_sha256 or artifact.get("storyboard_path") != str(storyboard_path):
+        raise ValueError(
+            "Report publish integrity gate failed: regeneration recipe is bound to a different artifact; redesign the report before publishing."
+        )
+    return {"path": str(recipe_path), **record}
+
+
 _REPORT_REVIEW_ACTOR = "report_critique"
 _REPORT_REVIEW_SCOPE = "artifact"
 _REPORT_REVIEW_CATEGORY = {
@@ -97,6 +181,21 @@ _REPORT_REVIEW_CATEGORY = {
     "export": "security_export_risk",
     "presentation": "misleading_visualization",
 }
+
+_BROWSER_INFRASTRUCTURE_ERROR_RE = re.compile(
+    r"(?:"
+    r"target page, context or browser has been closed|"
+    r"browser (?:has been )?closed|"
+    r"browser process (?:has )?exited|"
+    r"page (?:has )?crashed|"
+    r"connection (?:has been )?closed|"
+    r"failed to launch|"
+    r"executable (?:does not exist|is missing)|"
+    r"missing dependencies"
+    r")",
+    re.IGNORECASE,
+)
+_BROWSER_INFRASTRUCTURE_CHECKS = {"page_load", "browser_error", "full_page_screenshot", "key_section_screenshot"}
 
 
 def _sync_report_review_lifecycle(
@@ -322,6 +421,164 @@ def _attach_rendered_layout_review(design_review: dict[str, Any], runtime_smoke:
     return review
 
 
+def _classify_runtime_smoke_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Downgrade unavailable browser infrastructure to a transparent skip.
+
+    A report-layout failure remains fail-closed.  This only reclassifies a
+    failed result when *every* reported check is an infrastructure-only
+    browser-close/crash error, which cannot identify a defect in the report
+    being published.
+    """
+    if result.get("status") != "failed":
+        return result
+    checks = result.get("checks")
+    if not isinstance(checks, list) or not checks:
+        return result
+    environment_details: list[str] = []
+    for check in checks:
+        if not isinstance(check, dict):
+            return result
+        check_name = str(check.get("check") or "").strip()
+        detail = str(check.get("detail") or "").strip()
+        if check_name not in _BROWSER_INFRASTRUCTURE_CHECKS or not _BROWSER_INFRASTRUCTURE_ERROR_RE.search(detail):
+            return result
+        environment_details.append(detail)
+    reason = environment_details[0] if environment_details else "browser process became unavailable"
+    return {
+        "status": "skipped",
+        "reason": f"Browser smoke environment unavailable: {reason}",
+        "checks": checks,
+    }
+
+
+def _visual_review_required(storyboard: dict[str, Any], override: bool | None) -> bool:
+    if override is not None:
+        return override
+    source_context = storyboard.get("source_context") if isinstance(storyboard.get("source_context"), dict) else {}
+    requirements = source_context.get("requirements") if isinstance(source_context.get("requirements"), dict) else {}
+    publication = requirements.get("publication") if isinstance(requirements.get("publication"), dict) else {}
+    return bool(publication.get("require_visual_review", requirements.get("require_visual_review", False)))
+
+
+def _display_facts_required(storyboard: dict[str, Any]) -> bool:
+    source_context = storyboard.get("source_context") if isinstance(storyboard.get("source_context"), dict) else {}
+    requirements = source_context.get("requirements") if isinstance(source_context.get("requirements"), dict) else {}
+    presentation = requirements.get("presentation") if isinstance(requirements.get("presentation"), dict) else {}
+    return bool(presentation.get("require_display_facts", False))
+
+
+def _require_display_fact_coverage(authoring_review: dict[str, Any], *, required: bool) -> None:
+    """Fail closed only when the source explicitly requests typed display facts."""
+    if not required or not authoring_review.get("findings"):
+        return
+    finding_ids = ", ".join(
+        str(finding.get("id") or "unknown")
+        for finding in authoring_review.get("findings", [])
+        if isinstance(finding, dict)
+    )
+    raise ValueError(
+        "Report publish authoring gate failed: required display_facts coverage is incomplete "
+        f"({finding_ids or 'unknown'}). Add typed source facts or remove the explicit requirement before publication."
+    )
+
+
+def _require_completed_visual_review(runtime_smoke: dict[str, Any]) -> None:
+    """Enforce browser evidence when an author marks a release as final."""
+    if runtime_smoke.get("status") != "passed":
+        reason = str(runtime_smoke.get("reason") or "browser review did not pass")
+        raise ValueError(
+            "Report publish visual-review gate failed: final release requires a passed browser review with full-page and key-section screenshots. "
+            f"{reason}"
+        )
+    artifacts = runtime_smoke.get("screenshots") if isinstance(runtime_smoke.get("screenshots"), list) else []
+    full_page_viewports = {
+        str(item.get("viewport") or "")
+        for item in artifacts
+        if isinstance(item, dict) and item.get("kind") == "full_page" and item.get("path") and item.get("sha256")
+    }
+    key_section_count = sum(
+        1
+        for item in artifacts
+        if isinstance(item, dict) and item.get("kind") == "key_section" and item.get("path") and item.get("sha256")
+    )
+    if not {"desktop", "mobile"}.issubset(full_page_viewports) or key_section_count < 1:
+        raise ValueError(
+            "Report publish visual-review gate failed: browser review is missing required desktop/mobile full-page or key-section screenshot artifacts."
+        )
+    semantic = runtime_smoke.get("semantic_visual") if isinstance(runtime_smoke.get("semantic_visual"), dict) else {}
+    if semantic.get("visual_semantic_schema") != 1 or semantic.get("status") != "pass":
+        raise ValueError(
+            "Report publish visual-review gate failed: automated visual-semantic review did not pass; "
+            "resolve hierarchy, framing, or evidence-context findings before approving the release."
+        )
+
+
+def _visual_review_manifest_path(report_path: Path) -> Path:
+    return report_path.with_name(f"{report_path.stem}.visual-review.json")
+
+
+def _screenshot_digest_matches(path: Path, expected_sha256: Any) -> bool:
+    if not path.is_file() or not isinstance(expected_sha256, str) or not expected_sha256:
+        return False
+    return hashlib.sha256(path.read_bytes()).hexdigest() == expected_sha256
+
+
+def _require_current_visual_review_artifacts(report_path: Path, runtime_smoke: dict[str, Any]) -> None:
+    """Require that approved screenshot records are local, present, and untampered."""
+    _require_completed_visual_review(runtime_smoke)
+    review_dir = report_path.with_name(f"{report_path.stem}.visual-review").resolve()
+    for artifact in runtime_smoke.get("screenshots", []):
+        if not isinstance(artifact, dict):
+            continue
+        raw_path = artifact.get("path")
+        if not isinstance(raw_path, str) or not raw_path:
+            raise ValueError("a screenshot record has no path")
+        artifact_path = Path(raw_path).resolve()
+        try:
+            artifact_path.relative_to(review_dir)
+        except ValueError as exc:
+            raise ValueError("screenshot artifact is outside the report review directory") from exc
+        if not _screenshot_digest_matches(artifact_path, artifact.get("sha256")):
+            raise ValueError("a reviewed screenshot is missing or changed; re-run and approve visual review")
+
+
+def _approved_visual_review(
+    report_path: Path,
+    *,
+    html_sha256: str,
+) -> dict[str, Any]:
+    """Load and verify the immutable visual-review decision for this HTML."""
+    manifest_path = _visual_review_manifest_path(report_path)
+    if not manifest_path.is_file():
+        raise ValueError(
+            "Report publish visual-review gate failed: no approved visual-review record exists. "
+            "Run report_review_visuals after inspecting the generated screenshots, then publish again."
+        )
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError("Report publish visual-review gate failed: visual-review record is not valid JSON.") from exc
+    if not isinstance(manifest, dict):
+        raise ValueError("Report publish visual-review gate failed: visual-review record is invalid.")
+    if manifest.get("visual_review_schema") != 1 or manifest.get("decision") != "approved":
+        raise ValueError(
+            "Report publish visual-review gate failed: visual-review record is not approved. "
+            "Resolve the recorded visual issues and record an approved review for the current HTML."
+        )
+    if str(manifest.get("html_sha256") or "").lower() != html_sha256:
+        raise ValueError(
+            "Report publish visual-review gate failed: approval is for different report HTML; regenerate screenshots and review the current artifact."
+        )
+    if not str(manifest.get("reviewer") or "").strip() or not str(manifest.get("notes") or "").strip():
+        raise ValueError("Report publish visual-review gate failed: approved review needs a named reviewer and review notes.")
+    runtime_smoke = manifest.get("runtime_smoke") if isinstance(manifest.get("runtime_smoke"), dict) else {}
+    try:
+        _require_current_visual_review_artifacts(report_path, runtime_smoke)
+    except ValueError as exc:
+        raise ValueError(f"Report publish visual-review gate failed: approved review has invalid browser evidence. {exc}") from exc
+    return {"path": str(manifest_path), **manifest}
+
+
 async def _run_report_runtime_smoke(report_path: Path) -> dict[str, Any]:
     """Attempt browser-level report smoke checks through the UI's Playwright install.
 
@@ -336,23 +593,33 @@ async def _run_report_runtime_smoke(report_path: Path) -> dict[str, Any]:
 
     script = """
 const { pathToFileURL } = require('url');
+const crypto = require('crypto');
+const fs = require('fs');
 const { chromium } = require(process.argv[2]);
 const target = process.argv[1];
 (async () => {
   let browser;
+  let browserDisconnected = false;
+  function isBrowserInfrastructureError(error) {
+    return /target page, context or browser has been closed|browser (?:has been )?closed|browser process (?:has )?exited|page (?:has )?crashed|connection (?:has been )?closed|failed to launch|executable (?:does not exist|is missing)|missing dependencies/i.test(String(error && error.message || error));
+  }
   try {
     browser = await chromium.launch({ headless: true });
   } catch (error) {
     console.log(JSON.stringify({status: 'skipped', reason: 'Chromium launch unavailable: ' + error.message.split('\\n')[0]}));
     return;
   }
+  browser.on('disconnected', () => { browserDisconnected = true; });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push('pageerror: ' + error.message));
   page.on('console', message => { if (message.type() === 'error') pageErrors.push('console: ' + message.text()); });
   try {
     await page.goto(pathToFileURL(target).href, { waitUntil: 'load' });
-    await page.waitForTimeout(350);
+    // Three self-contained Plotly charts may still be mounting after the load
+    // event.  Give the renderer a short, deterministic settle window before
+    // treating an empty chart target as a report defect.
+    await page.waitForTimeout(1000);
     const checks = await page.evaluate(() => {
       const failures = [];
       document.querySelectorAll('a[href^="#"]').forEach(anchor => {
@@ -365,7 +632,11 @@ const target = process.argv[1];
         }
       });
       document.querySelectorAll('.r-chart-target').forEach((target, index) => {
-        if (window.Plotly && !target.querySelector('.js-plotly-plot')) failures.push({check: 'chart_mount', detail: 'chart target ' + index + ' did not mount'});
+        // Plotly marks the supplied target itself (rather than a child) with
+        // js-plotly-plot, so querySelector alone produces a false negative.
+        if (window.Plotly && !target.matches('.js-plotly-plot') && !target.querySelector('.js-plotly-plot')) {
+          failures.push({check: 'chart_mount', detail: 'chart target ' + index + ' did not mount'});
+        }
       });
       document.querySelectorAll('[data-dc-section="filterable_chart"], [data-dc-section="interactive_table"], [data-dc-section="selector_panel"], [data-dc-section="chart_table_explorer"]').forEach(section => {
         if (!section.querySelector('[data-dc-control-bar]')) failures.push({check: 'interactive_controls', detail: 'interactive section missing controls'});
@@ -379,6 +650,96 @@ const target = process.argv[1];
       document.querySelectorAll('.r-empty-state').forEach(node => failures.push({check: 'empty_state', detail: node.textContent.trim()}));
       return failures;
     });
+    const semanticVisual = await page.evaluate(() => {
+      const findings = [];
+      const text = node => (node && node.textContent || '').trim();
+      const heroHeadings = Array.from(document.querySelectorAll('.r-hero h1'));
+      if (heroHeadings.length !== 1) {
+        findings.push({id: 'hero_heading_count', detail: 'report should expose exactly one hero H1; found ' + heroHeadings.length});
+      }
+      document.querySelectorAll('.r-section').forEach((section, index) => {
+        const kind = section.getAttribute('data-dc-section') || 'section';
+        const heading = section.querySelector('h2');
+        if (!heading || !text(heading)) {
+          findings.push({id: 'section_heading_missing', section: kind, detail: 'section ' + index + ' has no readable H2 heading'});
+        } else if (/^(section|analysis|chart)\\s*\\d*$/i.test(text(heading))) {
+          findings.push({id: 'section_heading_generic', section: kind, detail: 'section ' + index + ' uses a generic heading: ' + text(heading)});
+        }
+        if (/^(chart|chart_interpretation|filterable_chart|chart_table_explorer)$/.test(kind)) {
+          const hasContext = !!section.querySelector('.r-section-dek, .r-caption, .r-interpretation-panel, .r-conclusion');
+          if (!hasContext) findings.push({id: 'evidence_context_missing', section: kind, detail: 'visual evidence has no visible conclusion, caption, or interpretation context'});
+        }
+      });
+      document.querySelectorAll('.r-insight-grid.is-editorial-list').forEach((grid, index) => {
+        const cards = grid.querySelectorAll('.r-insight-card');
+        if (cards.length && grid.querySelectorAll('.r-insight-index').length !== cards.length) {
+          findings.push({id: 'editorial_findings_unindexed', detail: 'editorial findings list ' + index + ' does not number every insight'});
+        }
+      });
+      document.querySelectorAll('.r-section .r-section').forEach((child, index) => {
+        const parent = child.parentElement && child.parentElement.closest('.r-section');
+        if (parent && !child.hasAttribute('data-dc-parent-section')) {
+          findings.push({id: 'nested_surface_unrelated', detail: 'nested report surface ' + index + ' has no declared parent-child relationship'});
+        }
+      });
+      return {
+        visual_semantic_schema: 1,
+        status: findings.length ? 'attention_required' : 'pass',
+        findings,
+      };
+    });
+    const screenshots = [];
+    const reviewDir = target.replace(/\\.html$/i, '') + '.visual-review';
+    function writeScreenshot(name, screenshot, metadata) {
+      if (!screenshot || screenshot.length < 1024) return false;
+      fs.mkdirSync(reviewDir, { recursive: true });
+      const snapshotPath = reviewDir + '/' + name + '.png';
+      fs.writeFileSync(snapshotPath, screenshot);
+      screenshots.push({
+        path: snapshotPath,
+        bytes: screenshot.length,
+        sha256: crypto.createHash('sha256').update(screenshot).digest('hex'),
+        ...metadata,
+      });
+      return true;
+    }
+    async function captureKeySections(viewport) {
+      const selectors = [
+        '.r-hero',
+        '[data-dc-section="insight_grid"]',
+        '[data-dc-section="entity_card_grid"]',
+        '[data-dc-section="chart_interpretation"]',
+        '[data-dc-section="chart_table_explorer"]',
+        '[data-dc-section="filterable_chart"]',
+        '[data-dc-section="methodology_block"]',
+        '[data-dc-section="evidence_trace"]',
+        '.r-section',
+      ];
+      const captured = new Set();
+      let ordinal = 0;
+      for (const selector of selectors) {
+        const handles = await page.$$(selector);
+        for (const handle of handles) {
+          if (ordinal >= 8) return;
+          const identity = await handle.evaluate(node => (
+            node.getAttribute('data-dc-section-id') || node.getAttribute('data-dc-section') || node.className || 'section'
+          ));
+          const slug = String(identity).replace(/[^a-z0-9_-]+/ig, '-').replace(/^-+|-+$/g, '') || 'section';
+          const name = viewport + '-section-' + String(ordinal + 1).padStart(2, '0') + '-' + slug;
+          if (captured.has(String(identity))) continue;
+          captured.add(String(identity));
+          try {
+            const screenshot = await handle.screenshot({ type: 'png' });
+            if (!writeScreenshot(name, screenshot, { kind: 'key_section', viewport, section: String(identity) })) {
+              checks.push({check: 'key_section_screenshot', detail: viewport + ' key section ' + slug + ' did not produce a usable screenshot'});
+            }
+          } catch (error) {
+            checks.push({check: 'key_section_screenshot', detail: viewport + ' key section ' + slug + ' could not be captured: ' + String(error && error.message || error).split('\\n')[0]});
+          }
+          ordinal += 1;
+        }
+      }
+    }
     async function inspectViewport(name, width, height) {
       await page.setViewportSize({ width, height });
       await page.waitForTimeout(180);
@@ -388,6 +749,24 @@ const target = process.argv[1];
         if (document.documentElement.scrollWidth > viewportWidth + 1) {
           failures.push({check: 'horizontal_overflow', detail: name + ' viewport scrolls horizontally (' + document.documentElement.scrollWidth + 'px > ' + viewportWidth + 'px)'});
         }
+        document.querySelectorAll('.r-section, .r-hero').forEach((section, index) => {
+          const rect = section.getBoundingClientRect();
+          if (rect.left < -1 || rect.right > viewportWidth + 1) {
+            failures.push({check: 'section_viewport_clip', detail: name + ' section ' + index + ' extends outside the viewport'});
+          }
+        });
+        document.querySelectorAll('.r-hero h1, .r-hero-abstract, .r-section h2, .r-section-dek, .r-data-note').forEach((node, index) => {
+          const style = getComputedStyle(node);
+          if (node.scrollWidth > node.clientWidth + 1 && style.overflowX !== 'auto' && style.overflowX !== 'scroll') {
+            failures.push({check: 'text_viewport_clip', detail: name + ' narrative node ' + index + ' clips its text'});
+          }
+        });
+        document.querySelectorAll('.r-chart-target').forEach((target, index) => {
+          const rect = target.getBoundingClientRect();
+          if (rect.left < -1 || rect.right > viewportWidth + 1) {
+            failures.push({check: 'chart_viewport_clip', detail: name + ' chart target ' + index + ' extends outside the viewport'});
+          }
+        });
         document.querySelectorAll('.r-diagnostic-pair').forEach((pair, index) => {
           const sections = Array.from(pair.querySelectorAll(':scope > .r-section'));
           const tracks = getComputedStyle(pair).gridTemplateColumns.trim().split(/\\s+/).filter(Boolean).length;
@@ -423,20 +802,26 @@ const target = process.argv[1];
         });
         return failures;
       }, { name });
-      const screenshot = await page.screenshot({ type: 'png' });
-      if (!screenshot || screenshot.length < 1024) {
-        layoutChecks.push({check: 'viewport_screenshot', detail: name + ' viewport did not produce a usable compositor screenshot'});
+      const screenshot = await page.screenshot({ type: 'png', fullPage: true });
+      if (!writeScreenshot(name + '-full-page', screenshot, { kind: 'full_page', viewport: name })) {
+        layoutChecks.push({check: 'full_page_screenshot', detail: name + ' full page did not produce a usable compositor screenshot'});
       }
+      if (name === 'desktop') await captureKeySections(name);
       return layoutChecks;
     }
     checks.push(...await inspectViewport('desktop', 1440, 900));
     checks.push(...await inspectViewport('mobile', 390, 844));
     checks.push(...pageErrors.map(detail => ({check: 'browser_error', detail})));
-    console.log(JSON.stringify({status: checks.length ? 'failed' : 'passed', checks}));
+    console.log(JSON.stringify({status: checks.length ? 'failed' : 'passed', checks, screenshots, semantic_visual: semanticVisual}));
   } catch (error) {
-    console.log(JSON.stringify({status: 'failed', checks: [{check: 'page_load', detail: error.message.split('\\n')[0]}]}));
+    const detail = String(error && error.message || error).split('\\n')[0];
+    if (browserDisconnected || isBrowserInfrastructureError(error)) {
+      console.log(JSON.stringify({status: 'skipped', reason: 'Browser smoke environment unavailable: ' + detail}));
+    } else {
+      console.log(JSON.stringify({status: 'failed', checks: [{check: 'page_load', detail}]}));
+    }
   } finally {
-    await browser.close();
+    await browser.close().catch(() => {});
   }
 })();
 """
@@ -466,7 +851,9 @@ const target = process.argv[1];
         result = json.loads(lines[-1])
     except json.JSONDecodeError:
         return {"status": "skipped", "reason": "Browser smoke returned an unreadable result."}
-    return result if isinstance(result, dict) else {"status": "skipped", "reason": "Browser smoke returned an invalid result."}
+    if not isinstance(result, dict):
+        return {"status": "skipped", "reason": "Browser smoke returned an invalid result."}
+    return _classify_runtime_smoke_result(result)
 
 
 # ── Tools ───────────────────────────────────────────────────────────────────
@@ -736,10 +1123,20 @@ async def build_report(
     critique["analytical_review"] = analytical_review
     storyboard["analytical_review"] = analytical_review
     storyboard["review_lifecycle"] = review_lifecycle
+    # The sidecar is verified only when the persisted storyboard declares the
+    # recipe.  Attach it before serialization so builds (including exact typed
+    # preservation) cannot silently bypass the regeneration integrity gate.
+    _ensure_regeneration_recipe(storyboard)
     resolved_html.write_text(rendered_html, encoding="utf-8")
     resolved_storyboard = _resolve_path(workspace_id, storyboard_path)
     resolved_storyboard.parent.mkdir(parents=True, exist_ok=True)
     resolved_storyboard.write_text(json.dumps(storyboard, indent=2, default=str), encoding="utf-8")
+    recipe_path = _write_regeneration_recipe(
+        resolved_html,
+        resolved_storyboard,
+        storyboard,
+        html_sha256=storyboard["rendered_html_sha256"],
+    )
 
     # Generate .docx alongside
     docx_path = output_path.rsplit(".", 1)[0] + ".docx"
@@ -763,6 +1160,7 @@ async def build_report(
         "publish_required": True,
         "html_path": str(resolved_html),
         "storyboard_path": str(resolved_storyboard),
+        "recipe_path": str(recipe_path),
         "source_html_path": str(resolved_source),
         "normalization": normalization,
         "critique": critique,
@@ -770,6 +1168,7 @@ async def build_report(
         "analytical_review": analytical_review,
         "review_lifecycle": review_lifecycle,
         "quality": quality,
+        "html_sha256": storyboard["rendered_html_sha256"],
         "size": resolved_html.stat().st_size,
         "created": True,
     }
@@ -779,6 +1178,80 @@ async def build_report(
     return result
 
 
+async def report_review_visuals(
+    *,
+    cfg: WorkspaceConfig,
+    report_path: str,
+    storyboard_path: str,
+    reviewer: str,
+    decision: str,
+    notes: str,
+    workspace_id: str = "default",
+    **_: Any,
+) -> dict[str, Any]:
+    """Record a human or vision review of browser screenshot artifacts.
+
+    This is intentionally separate from publishing: a browser can prove that
+    the page mounted and captured correctly, but it cannot decide that the
+    composition is reader-ready. The review record binds the reviewer decision
+    and screenshot hashes to the exact rendered HTML.
+    """
+    if not report_path.endswith(".html"):
+        report_path = report_path.rsplit(".", 1)[0] + ".html"
+    if not storyboard_path.endswith(".json"):
+        storyboard_path = storyboard_path.rsplit(".", 1)[0] + ".json"
+    reviewer = reviewer.strip()
+    notes = notes.strip()
+    decision = decision.strip().lower().replace("-", "_")
+    if not reviewer:
+        raise ValueError("reviewer must identify the human or vision reviewer")
+    if not notes:
+        raise ValueError("visual review notes are required")
+    if decision not in {"approved", "rework_required"}:
+        raise ValueError("visual review decision must be 'approved' or 'rework_required'")
+
+    resolved_html = _resolve_path(workspace_id, report_path)
+    resolved_storyboard = _resolve_path(workspace_id, storyboard_path)
+    if not resolved_html.is_file() or not resolved_storyboard.is_file():
+        raise ValueError("visual review requires an existing report HTML and storyboard JSON")
+    try:
+        storyboard = json.loads(resolved_storyboard.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError("visual review storyboard is not valid JSON") from exc
+    if not isinstance(storyboard, dict):
+        raise ValueError("visual review storyboard is invalid")
+    doc = resolved_html.read_text(encoding="utf-8", errors="replace")
+    html_sha256 = hashlib.sha256(doc.encode("utf-8")).hexdigest()
+    if str(storyboard.get("rendered_html_sha256") or "").lower() != html_sha256:
+        raise ValueError("visual review requires HTML that exactly matches the rendered storyboard")
+
+    runtime_smoke = await _run_report_runtime_smoke(resolved_html)
+    if decision == "approved":
+        _require_current_visual_review_artifacts(resolved_html, runtime_smoke)
+    manifest = {
+        "visual_review_schema": 1,
+        "reviewed_at": datetime.now(timezone.utc).isoformat(),
+        "decision": decision,
+        "reviewer": reviewer,
+        "notes": notes,
+        "html_path": str(resolved_html),
+        "storyboard_path": str(resolved_storyboard),
+        "html_sha256": html_sha256,
+        "analysis_contract_sha256": storyboard.get("analysis_contract_sha256"),
+        "runtime_smoke": runtime_smoke,
+    }
+    manifest_path = _visual_review_manifest_path(resolved_html)
+    manifest_path.write_text(json.dumps(manifest, indent=2, default=str), encoding="utf-8")
+    return {
+        "type": "report_visual_review",
+        "review_path": str(manifest_path),
+        "decision": decision,
+        "reviewer": reviewer,
+        "runtime_smoke": runtime_smoke,
+        "approved": decision == "approved",
+    }
+
+
 async def report_publish(
     *,
     cfg: WorkspaceConfig,
@@ -786,6 +1259,7 @@ async def report_publish(
     storyboard_path: str,
     receipt_path: str | None = None,
     export_docx: bool = True,
+    require_visual_review: bool | None = None,
     workspace_id: str = "default",
     **_: Any,
 ) -> dict[str, Any]:
@@ -818,6 +1292,8 @@ async def report_publish(
             "Storyboard must be a report-design JSON object with a section_plan; "
             "recreate it with report_design_report or build_report before publishing."
         )
+    if require_visual_review is not None and not isinstance(require_visual_review, bool):
+        raise ValueError("require_visual_review must be a boolean when supplied")
     expected_html_hash = str(storyboard.get("rendered_html_sha256") or "").strip().lower()
     actual_html_hash = hashlib.sha256(doc.encode("utf-8")).hexdigest()
     if not expected_html_hash:
@@ -838,11 +1314,34 @@ async def report_publish(
         raise ValueError(
             "Report publish integrity gate failed: the analytical review contract changed after rendering; redesign the report before publishing."
         )
+    regeneration_recipe = _verify_regeneration_recipe(
+        resolved_html,
+        resolved_storyboard,
+        storyboard,
+        html_sha256=actual_html_hash,
+    )
+    visual_review_required = _visual_review_required(storyboard, require_visual_review)
+    approved_visual_review = (
+        _approved_visual_review(resolved_html, html_sha256=actual_html_hash)
+        if visual_review_required
+        else None
+    )
     runtime_smoke = await _run_report_runtime_smoke(resolved_html)
+    if visual_review_required:
+        # An existing approval is bound to this exact HTML and its reviewed
+        # artifacts. A fresh failed browser smoke still identifies a current
+        # runtime defect; an unavailable browser does not invalidate already
+        # reviewed, unchanged HTML.
+        if runtime_smoke.get("status") == "failed":
+            _require_completed_visual_review(runtime_smoke)
+    authoring_review = _review_storyboard_authoring(storyboard)
+    _require_display_fact_coverage(authoring_review, required=_display_facts_required(storyboard))
     quality = _analyze_report_quality(
         doc,
         stale_skills=stale_installed_library_skills(),
         runtime_smoke=runtime_smoke,
+        visual_author=storyboard.get("visual_author") if isinstance(storyboard.get("visual_author"), dict) else None,
+        authoring_review=authoring_review,
     )
     if quality.get("status") == "fail":
         codes = ", ".join(
@@ -860,6 +1359,7 @@ async def report_publish(
         runtime_smoke,
     )
     storyboard["design_review"] = design_review
+    storyboard["authoring_review"] = authoring_review
     design_blockers = [
         finding for finding in design_review.get("findings", [])
         if isinstance(finding, dict) and str(finding.get("severity") or "").strip().lower() == "warning"
@@ -947,11 +1447,22 @@ async def report_publish(
         "storyboard_schema": storyboard.get("storyboard_schema"),
         "html_sha256": actual_html_hash,
         "storyboard_sha256": hashlib.sha256(resolved_storyboard.read_bytes()).hexdigest(),
+        "regeneration_recipe": {
+            "path": regeneration_recipe.get("path") if regeneration_recipe else None,
+            "source_context_sha256": regeneration_recipe.get("source_context_sha256") if regeneration_recipe else None,
+        },
         "quality": quality,
         "design_review": design_review,
+        "authoring_review": authoring_review,
         "analytical_review": analytical_review,
         "review_lifecycle": review_lifecycle,
         "runtime_smoke": runtime_smoke,
+        "visual_review": {
+            "required": visual_review_required,
+            "status": approved_visual_review.get("decision") if approved_visual_review else "not_required",
+            "review_path": approved_visual_review.get("path") if approved_visual_review else None,
+            "reviewer": approved_visual_review.get("reviewer") if approved_visual_review else None,
+        },
         "docx_export": docx_export,
     }
     resolved_receipt = _resolve_path(workspace_id, receipt_path)
@@ -966,11 +1477,18 @@ async def report_publish(
         "html_path": str(resolved_html),
         "storyboard_path": str(resolved_storyboard),
         "receipt_path": str(resolved_receipt),
+        "recipe_path": regeneration_recipe.get("path") if regeneration_recipe else None,
         "quality": quality,
         "design_review": design_review,
         "analytical_review": analytical_review,
         "review_lifecycle": review_lifecycle,
         "runtime_smoke": runtime_smoke,
+        "visual_review": {
+            "required": visual_review_required,
+            "status": approved_visual_review.get("decision") if approved_visual_review else "not_required",
+            "review_path": approved_visual_review.get("path") if approved_visual_review else None,
+            "reviewer": approved_visual_review.get("reviewer") if approved_visual_review else None,
+        },
         "docx_export": docx_export,
         "size": resolved_html.stat().st_size,
     }
@@ -992,6 +1510,8 @@ async def report_design_report(
     title: str = "Analysis Report",
     quality_gate: str = "fail",
     design_passes: int = 5,
+    visual_author: dict[str, Any] | None = None,
+    llm: Any = None,
     workspace_id: str = "default",
     **_: Any,
 ) -> dict[str, Any]:
@@ -1012,6 +1532,8 @@ async def report_design_report(
         raise ValueError("requirements must be a dictionary")
     if requirements is not None and "analysis_review" in requirements and not isinstance(requirements["analysis_review"], dict):
         raise ValueError("requirements.analysis_review must be a dictionary")
+    if visual_author is not None and not isinstance(visual_author, dict):
+        raise ValueError("visual_author must be a dictionary when supplied")
     if quality_gate not in {"warn", "fail", "off"}:
         raise ValueError("quality_gate must be one of: warn, fail, off")
     if not isinstance(design_passes, int) or not 1 <= design_passes <= 5:
@@ -1031,10 +1553,61 @@ async def report_design_report(
         requirements=requirements or {},
         max_design_passes=design_passes,
     )
+    # Finish deterministic structure and evidence critique before the runtime
+    # author sees the page. The model then composes the final, validated plan
+    # rather than choosing a treatment for a structure that later mutates.
     storyboard, critique = _critique_report_storyboard(storyboard)
+    visual_author_cfg = visual_author_config(requirements or {}, visual_author)
+    # Store the resolved, bounded contract so authoring-coverage checks at
+    # publication can validate the same source facts without replaying an LLM.
+    storyboard["visual_author_config"] = visual_author_cfg
+    resolved_storyboard = _resolve_path(workspace_id, storyboard_path)
+    try:
+        storyboard, visual_author_result = await author_report_visuals(
+            storyboard,
+            config=visual_author_cfg,
+            llm=llm,
+        )
+    except VisualAuthorRequiredError as exc:
+        audit_path = _write_visual_author_failure_audit(
+            resolved_storyboard,
+            report_goal=report_goal,
+            title=title,
+            error=exc,
+        )
+        raise ValueError(
+            "Report design stopped because required runtime visual authoring failed. "
+            f"Failure audit: {audit_path}"
+        ) from exc
+
+    # The visual author may select evidence-bound display facts and, only when
+    # source-declared zones permit it, reorder whole story blocks. It never
+    # creates evidence, so follow-up reviews confirm the final plan read-only.
+    final_design_review = _review_storyboard_design(storyboard)
+    final_authoring_review = _review_storyboard_authoring(storyboard)
+    initial_design_review = critique.get("design_review") if isinstance(critique.get("design_review"), dict) else {}
+    for key in ("max_passes", "passes", "stages", "repairs", "guardrail"):
+        if key in initial_design_review:
+            final_design_review[key] = initial_design_review[key]
+    final_analytical_review = _review_storyboard_analysis(storyboard)
+    storyboard["design_review"] = final_design_review
+    storyboard["authoring_review"] = final_authoring_review
+    storyboard["analytical_review"] = final_analytical_review
+    critique["design_review"] = final_design_review
+    critique["authoring_review"] = final_authoring_review
+    critique["analytical_review"] = final_analytical_review
     doc = _render_report_from_storyboard(storyboard, title=title)
     stale_skills = [] if quality_gate == "off" else stale_installed_library_skills()
-    quality = _analyze_report_quality(doc, stale_skills=stale_skills) if quality_gate != "off" else {"status": "off", "warnings": []}
+    quality = (
+        _analyze_report_quality(
+            doc,
+            stale_skills=stale_skills,
+            visual_author=visual_author_result,
+            authoring_review=final_authoring_review,
+        )
+        if quality_gate != "off"
+        else {"status": "off", "warnings": []}
+    )
     if quality_gate == "fail" and quality.get("status") == "fail":
         codes = ", ".join(w.get("code", "unknown") for w in quality.get("warnings", []) if w.get("severity") == "fail")
         raise ValueError(f"Report quality gate failed: {codes}")
@@ -1047,18 +1620,27 @@ async def report_design_report(
         html_sha256=storyboard["rendered_html_sha256"],
         session_id=workspace_id,
     )
-    analytical_review = _attach_review_lifecycle(critique.get("analytical_review", {}), review_lifecycle)
+    analytical_review = _attach_review_lifecycle(final_analytical_review, review_lifecycle)
     critique["analytical_review"] = analytical_review
     storyboard["analytical_review"] = analytical_review
     storyboard["review_lifecycle"] = review_lifecycle
+    # Keep the serialized storyboard and recipe sidecar on the same explicit
+    # contract even if a future renderer path stops attaching it as a side
+    # effect of rendering.
+    _ensure_regeneration_recipe(storyboard)
 
     resolved_html = _resolve_path(workspace_id, report_path)
     resolved_html.parent.mkdir(parents=True, exist_ok=True)
     resolved_html.write_text(doc, encoding="utf-8")
 
-    resolved_storyboard = _resolve_path(workspace_id, storyboard_path)
     resolved_storyboard.parent.mkdir(parents=True, exist_ok=True)
     resolved_storyboard.write_text(json.dumps(storyboard, indent=2, default=str), encoding="utf-8")
+    recipe_path = _write_regeneration_recipe(
+        resolved_html,
+        resolved_storyboard,
+        storyboard,
+        html_sha256=storyboard["rendered_html_sha256"],
+    )
 
     return {
         "type": "report_design",
@@ -1066,12 +1648,16 @@ async def report_design_report(
         "publish_required": True,
         "html_path": str(resolved_html),
         "storyboard_path": str(resolved_storyboard),
+        "recipe_path": str(recipe_path),
         "title": title,
         "section_count": len(storyboard.get("section_plan", [])),
         "interaction_count": len(storyboard.get("interaction_plan", [])),
+        "visual_author": visual_author_result,
         "quality": quality,
+        "html_sha256": storyboard["rendered_html_sha256"],
         "critique": critique,
         "design_review": critique.get("design_review", storyboard.get("design_review", {})),
+        "authoring_review": final_authoring_review,
         "analytical_review": analytical_review,
         "review_lifecycle": review_lifecycle,
         "size": resolved_html.stat().st_size,

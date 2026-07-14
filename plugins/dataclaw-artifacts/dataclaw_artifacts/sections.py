@@ -87,6 +87,8 @@ TABLE_PREVIEW_MAX_ROWS = 20
 TABLE_PREVIEW_MAX_BYTES = 50 * 1024
 INTERACTIVE_DATA_MAX_ROWS = 500
 INTERACTIVE_DATA_MAX_BYTES = 160 * 1024
+DISPLAY_FACT_USES = {"pill", "scan_point", "example", "annotation"}
+DISPLAY_FACT_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,119}$")
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
@@ -113,6 +115,9 @@ def normalize_section(section_type: str, data: dict[str, Any]) -> dict[str, Any]
         )
 
     payload: dict[str, Any] = {}
+    semantic_role = clean_text(data.get("semantic_role") or data.get("content_role") or data.get("semantic_intent") or "").lower().replace("-", "_")
+    if semantic_role:
+        payload["semantic_role"] = semantic_role
     if kind in {"chart", "chart_interpretation"}:
         figure = _figure_from_data(data)
         encoded = json.dumps(figure, default=str).encode("utf-8")
@@ -253,6 +258,16 @@ def normalize_section(section_type: str, data: dict[str, Any]) -> dict[str, Any]
             raise SectionValidationError("invalid_methodology_checks", "methodology_block checks must be a list")
         payload["method_count"] = len(methods or [])
         payload["check_count"] = len(checks or [])
+        payload["method_titles"] = [
+            clean_text(item.get("title") or item.get("name") or item.get("label") or "")
+            for item in methods or []
+            if isinstance(item, dict)
+        ]
+        payload["check_titles"] = [
+            clean_text(item.get("title") or item.get("name") or item.get("label") or "")
+            for item in checks or []
+            if isinstance(item, dict)
+        ]
     elif kind == "evidence_rail":
         items = data.get("evidence", data.get("items", []))
         if not isinstance(items, list):
@@ -283,9 +298,17 @@ def normalize_section(section_type: str, data: dict[str, Any]) -> dict[str, Any]
         payload["evidence_count"] = len(items)
         payload["items"] = [_ledger_item_summary(item) for item in items if isinstance(item, dict)]
 
+    # Display facts are a typed authoring input, rather than visual copy the
+    # renderer tries to infer from prose. They remain deliberately small: the
+    # actual report renderer decides where an explicitly selected fact appears.
+    display_facts = _normalize_display_facts(data, owner_kind="section", owner_id=section_id)
+    if display_facts:
+        payload["display_fact_count"] = len(display_facts)
+        payload["display_facts"] = display_facts
+
     return {
         "section_id": section_id,
-        "section_schema": 2,
+        "section_schema": 3,
         "kind": kind,
         "title": clean_text(data.get("title") or ""),
         "caption": clean_text(data.get("caption") or ""),
@@ -357,16 +380,106 @@ def _stable_section_id(kind: str, data: dict[str, Any]) -> str:
     return f"sec-{kind}-{digest}"
 
 
-def _ledger_item_summary(item: dict[str, Any]) -> dict[str, str]:
-    return {
+def _ledger_item_summary(item: dict[str, Any]) -> dict[str, Any]:
+    summary: dict[str, Any] = {
         "finding_id": clean_text(item.get("finding_id") or ""),
         "hypothesis_id": clean_text(item.get("hypothesis_id") or item.get("id") or ""),
         "title": clean_text(item.get("title") or item.get("statement") or item.get("name") or ""),
         "status": clean_text(item.get("status") or item.get("state") or ""),
         "severity": clean_text(item.get("severity") or ""),
         "evidence": clean_text(item.get("evidence") or item.get("evidence_ref") or ""),
+        "evidence_anchor": clean_text(item.get("evidence_anchor") or ""),
         "ref": clean_text(item.get("ref") or item.get("cell_id") or item.get("artifact_id") or item.get("path") or ""),
     }
+    owner_id = clean_text(item.get("finding_id") or item.get("hypothesis_id") or item.get("id") or summary["title"])
+    display_facts = _normalize_display_facts(item, owner_kind="item", owner_id=owner_id)
+    if display_facts:
+        summary["display_fact_count"] = len(display_facts)
+        summary["display_facts"] = display_facts
+    return summary
+
+
+def _normalize_display_facts(data: dict[str, Any], *, owner_kind: str, owner_id: str) -> list[dict[str, Any]]:
+    """Validate source-owned facts that a visual author may selectively show.
+
+    ``visual_facts`` remains a backwards-compatible alias.  A fact is not a
+    renderer instruction: it identifies exact source text, permitted display
+    roles, and optional provenance references.  This keeps runtime composition
+    evidence-bound across domains without forcing every report into a template.
+    """
+    primary = data.get("display_facts")
+    legacy = data.get("visual_facts")
+    if primary is not None and legacy is not None and primary != legacy:
+        raise SectionValidationError(
+            "ambiguous_display_facts",
+            "Use either display_facts or the legacy visual_facts alias, not both with different values.",
+        )
+    raw = primary if primary is not None else legacy
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise SectionValidationError("invalid_display_facts", "display_facts must be a list of fact objects")
+
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, fact in enumerate(raw):
+        if not isinstance(fact, dict):
+            raise SectionValidationError(
+                "invalid_display_fact",
+                "Each display_facts entry must be an object with fact_id, text, and uses.",
+                {"owner_kind": owner_kind, "owner_id": owner_id, "index": index},
+            )
+        fact_id = clean_text(fact.get("fact_id") or fact.get("id"))
+        text = clean_text(fact.get("text") or fact.get("label") or fact.get("value"))
+        uses_raw = fact.get("uses", fact.get("use"))
+        uses = uses_raw if isinstance(uses_raw, list) else [uses_raw]
+        normalized_uses: list[str] = []
+        for use in uses:
+            value = clean_text(use).lower().replace("-", "_")
+            if value not in DISPLAY_FACT_USES:
+                raise SectionValidationError(
+                    "invalid_display_fact_use",
+                    f"display fact use {value!r} is unsupported",
+                    {"allowed": sorted(DISPLAY_FACT_USES), "fact_id": fact_id or None},
+                )
+            if value not in normalized_uses:
+                normalized_uses.append(value)
+        if not fact_id or not DISPLAY_FACT_ID.fullmatch(fact_id):
+            raise SectionValidationError(
+                "invalid_display_fact_id",
+                "display fact_id must start with a letter and contain only letters, digits, underscores, or hyphens.",
+                {"fact_id": fact_id or None, "owner_kind": owner_kind, "owner_id": owner_id},
+            )
+        if fact_id in seen:
+            raise SectionValidationError("duplicate_display_fact_id", f"display fact_id {fact_id!r} is repeated for this owner")
+        if not text:
+            raise SectionValidationError("missing_display_fact_text", f"display fact {fact_id!r} needs exact source text")
+        if not normalized_uses:
+            raise SectionValidationError("missing_display_fact_uses", f"display fact {fact_id!r} needs at least one allowed use")
+        references = _normalize_display_fact_references(fact.get("evidence", fact.get("evidence_refs", fact.get("source_refs"))))
+        entry: dict[str, Any] = {"fact_id": fact_id, "text": text, "uses": normalized_uses}
+        if references:
+            entry["evidence_refs"] = references
+        normalized.append(entry)
+        seen.add(fact_id)
+    return normalized
+
+
+def _normalize_display_fact_references(value: Any) -> list[str]:
+    if value is None or value == "":
+        return []
+    values = value if isinstance(value, list) else [value]
+    references: list[str] = []
+    for entry in values:
+        if isinstance(entry, dict):
+            ref = clean_text(entry.get("ref") or entry.get("id") or entry.get("cell_id") or entry.get("artifact_id"))
+        else:
+            ref = clean_text(entry)
+        if not ref:
+            raise SectionValidationError("invalid_display_fact_evidence", "display fact evidence references must be non-empty")
+        if ref not in references:
+            references.append(ref)
+    return references
 
 
 def _default_data_policy(kind: str) -> str:

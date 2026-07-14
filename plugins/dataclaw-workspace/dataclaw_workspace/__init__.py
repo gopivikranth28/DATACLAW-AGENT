@@ -24,6 +24,7 @@ from dataclaw_workspace.tools import (
     display_image,
     build_report,
     report_design_report,
+    report_review_visuals,
     report_publish,
     report_add_section,
     set_project_dir,
@@ -176,7 +177,7 @@ class WorkspacePlugin:
                 "Use after EDA/modeling has produced findings: this tool storyboards the report, chooses section "
                 "layouts and interactive controls, writes a storyboard JSON, and renders the final HTML in one pass."
             ),
-            fn=lambda **kw: report_design_report(cfg=cfg, **kw),
+            fn=lambda **kw: report_design_report(cfg=cfg, llm=ctx.providers.llm, **kw),
             parameters={
                 "type": "object",
                 "properties": {
@@ -190,8 +191,29 @@ class WorkspacePlugin:
                     "title": {"type": "string", "description": "Report title", "default": "Analysis Report"},
                     "quality_gate": {"type": "string", "description": "Report-quality behavior: warn and write, fail on required quality regressions, or off", "enum": ["warn", "fail", "off"], "default": "fail"},
                     "design_passes": {"type": "integer", "description": "Bounded storyboard refinement passes (1-5); default 5 preserves context while improving layout, adjacent evidence, and local data notes", "minimum": 1, "maximum": 5, "default": 5},
+                    "visual_author": {"type": "object", "description": "Optional runtime visual-author contract. Set mode='runtime' to let the configured LLM choose a named theme, section surfaces, and selections of only supplied typed fact IDs. Facts may belong to an insight (insight_id/finding_id) or any supported section (section_id/layout_role), with text and uses (pill, scan_point, example, annotation); the model cannot create report copy or HTML. Set allow_story_reorder=true only with declared visual_author_story_zone/block source fields, so it may reorder whole blocks within a zone. Runtime output is bounded and fallback is recorded; mode='provided' uses a reproducible validated spec, while mode='required' stops and writes a failure audit."},
                 },
                 "required": ["report_goal", "insights"],
+            },
+        ))
+
+        ctx.tool_registry.register_tool(PythonTool(
+            name="report_review_visuals",
+            description=(
+                "Capture full-page and key-section browser screenshots for a structured report, then record a named human or vision-review decision "
+                "bound to the exact HTML hash. Use before publishing reports that require visual review."
+            ),
+            fn=lambda **kw: report_review_visuals(cfg=cfg, **kw),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "report_path": {"type": "string", "description": "Structured report HTML path"},
+                    "storyboard_path": {"type": "string", "description": "Storyboard JSON created for the report"},
+                    "reviewer": {"type": "string", "description": "Named human reviewer or declared vision-review system"},
+                    "decision": {"type": "string", "enum": ["approved", "rework_required"], "description": "Reviewer decision after inspecting the screenshots"},
+                    "notes": {"type": "string", "description": "Concise review rationale, including any resolved visual concerns"},
+                },
+                "required": ["report_path", "storyboard_path", "reviewer", "decision", "notes"],
             },
         ))
 
@@ -201,6 +223,7 @@ class WorkspacePlugin:
                 "Publish a storyboard-backed report after re-running the current report rubric at "
                 "fail severity. Writes a durable publish receipt and records the DOCX export result. "
                 "The receipt binds the exact rendered HTML and analytical-review contract for artifact publication. "
+                "When visual review is required, an approved report_review_visuals record for the exact HTML is also required. "
                 "Use after report_design_report or a structured build_report result; "
                 "low-confidence preserved source must be redesigned before publishing."
             ),
@@ -212,6 +235,7 @@ class WorkspacePlugin:
                     "storyboard_path": {"type": "string", "description": "Storyboard JSON created for the report"},
                     "receipt_path": {"type": "string", "description": "Publish receipt JSON path (defaults beside the report)"},
                     "export_docx": {"type": "boolean", "description": "Attempt DOCX export and record its outcome", "default": True},
+                    "require_visual_review": {"type": "boolean", "description": "Require a named approved report_review_visuals record, bound to passed Playwright desktop/mobile full-page and key-section screenshot artifacts, for this final release. When omitted, uses requirements.publication.require_visual_review."},
                 },
                 "required": ["report_path", "storyboard_path"],
             },

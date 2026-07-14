@@ -57,6 +57,15 @@ IMPLEMENTED_GATE_CHECKS = {
     "unpaired_insights",
     "chart_theme_defeated",
     "runtime_smoke_failed",
+    "visual_semantic_review",
+    "visual_author_fallback",
+    "visual_plan_budget",
+    "display_fact_coverage",
+    "missing_methodology",
+    "missing_data_quality",
+    "missing_uncertainty",
+    "missing_recipe",
+    "plaintext_where_component_warranted",
     "not_self_contained",
     "contrast_below_aa",
 }
@@ -64,7 +73,7 @@ IMPLEMENTED_GATE_CHECKS = {
 
 def test_rubric_loads_and_matches_implemented_checks():
     rubric = load_report_rubric()
-    assert rubric_version() == 3
+    assert rubric_version() == 7
     assert set(live_criterion_ids()) == IMPLEMENTED_GATE_CHECKS
     for value in rubric_thresholds().values():
         assert isinstance(value, int)
@@ -120,7 +129,7 @@ async def test_gate_result_cites_rubric_version(cfg):
         quality_gate="warn",
         data={"title": "Note", "text": "Just one section."},
     )
-    assert result["quality"]["rubric_version"] == 3
+    assert result["quality"]["rubric_version"] == 7
 
 
 def test_gate_rejects_report_without_typed_section_metadata():
@@ -151,6 +160,120 @@ def test_evidence_registry_resolves_only_registered_targets():
     unresolved_storyboard, _ = report_renderer.critique_report_storyboard(unresolved_storyboard)
     unresolved = report_renderer.analyze_report_quality(report_renderer.render_report_from_storyboard(unresolved_storyboard))
     assert "evidence_unresolved" in {warning["code"] for warning in unresolved["warnings"]}
+
+
+def test_display_fact_evidence_uses_the_same_registry_resolution():
+    inputs = {
+        "report_goal": "Explain the result",
+        "insights": [{"title": "Result", "detail": "A completed finding.", "finding_id": "finding-1"}],
+        "analyses": [{
+            "title": "Supporting chart",
+            "figure": {"data": [{"x": [1], "y": [2]}]},
+            "interpretation": "The aggregate supports the reported result.",
+            "display_facts": [{
+                "fact_id": "observed-result",
+                "text": "Observed aggregate result",
+                "uses": ["annotation"],
+                "evidence": {"kind": "notebook_cell", "ref": "cell-display-result"},
+            }],
+        }],
+        "requirements": {
+            "evidence_registry": {
+                "targets": [{"id": "cell-display-result", "kind": "notebook_cell", "present": True}],
+            },
+        },
+    }
+    storyboard = report_renderer.design_report_storyboard(**inputs)
+    resolved = report_renderer.analyze_report_quality(report_renderer.render_report_from_storyboard(storyboard))
+    assert "evidence_unresolved" not in {warning["code"] for warning in resolved["warnings"]}
+
+    inputs["requirements"] = {}
+    unresolved_storyboard = report_renderer.design_report_storyboard(**inputs)
+    unresolved = report_renderer.analyze_report_quality(report_renderer.render_report_from_storyboard(unresolved_storyboard))
+    assert "evidence_unresolved" in {warning["code"] for warning in unresolved["warnings"]}
+
+
+def test_rigor_contract_materializes_required_disclosures_and_recipe():
+    storyboard = report_renderer.design_report_storyboard(
+        report_goal="Forecast renewal risk.",
+        insights=[{"title": "Risk remains elevated", "detail": "Observed cohorts retain less often.", "finding_id": "risk-1"}],
+        requirements={
+            "rigor": {
+                "require_methodology": True,
+                "require_data_quality": True,
+                "require_component_semantics": True,
+            },
+            "methodology": [
+                {"title": "Grain", "detail": "Customer-month."},
+                {"title": "Denominator", "detail": "Eligible renewals."},
+                {"title": "Validation", "detail": "Reconciled to invoices."},
+            ],
+            "data_quality": "Coverage excludes customers without a completed renewal window.",
+            "analysis_review": {
+                "mode": "predictive",
+                "uncertainty": {"method": "Bootstrap", "result": "90% interval"},
+            },
+        },
+    )
+    rendered = report_renderer.render_report_from_storyboard(storyboard)
+    quality = report_renderer.analyze_report_quality(rendered)
+    codes = {warning["code"] for warning in quality["warnings"]}
+
+    assert "data-dc-regeneration-recipe" in rendered
+    assert "missing_recipe" not in codes
+    assert {"missing_methodology", "missing_data_quality", "missing_uncertainty"}.isdisjoint(codes)
+    roles = {item["layout_role"] for item in storyboard["section_plan"]}
+    assert {"data_quality", "uncertainty"}.issubset(roles)
+
+
+def test_rigor_contract_only_blocks_explicit_missing_methodology():
+    storyboard = report_renderer.design_report_storyboard(
+        report_goal="Explain the result.",
+        insights=[{"title": "Result", "detail": "The observed outcome changed."}],
+        requirements={"rigor": {"require_methodology": True}},
+    )
+    quality = report_renderer.analyze_report_quality(report_renderer.render_report_from_storyboard(storyboard))
+    failures = {warning["code"] for warning in quality["warnings"] if warning["severity"] == "fail"}
+
+    assert failures == {"missing_methodology"}
+
+
+def test_semantic_component_contract_flags_an_explicit_mismatch():
+    storyboard = report_renderer.design_report_storyboard(
+        report_goal="Explain the operational sequence.",
+        insights=[{"title": "Sequence changed", "detail": "The supplied events occur in a new order."}],
+        analyses=[{
+            "section_type": "text",
+            "title": "Event sequence",
+            "text": "The source supplied a dated event sequence.",
+            "semantic_role": "timeline",
+        }],
+        requirements={"rigor": {"require_component_semantics": True}},
+    )
+    quality = report_renderer.analyze_report_quality(report_renderer.render_report_from_storyboard(storyboard))
+
+    assert "plaintext_where_component_warranted" in {warning["code"] for warning in quality["warnings"]}
+
+
+def test_quality_reports_automated_visual_semantic_findings():
+    storyboard = report_renderer.design_report_storyboard(
+        report_goal="Explain the result.",
+        insights=[{"title": "Result", "detail": "A completed finding."}],
+    )
+    quality = report_renderer.analyze_report_quality(
+        report_renderer.render_report_from_storyboard(storyboard),
+        runtime_smoke={
+            "status": "passed",
+            "checks": [],
+            "semantic_visual": {
+                "visual_semantic_schema": 1,
+                "status": "attention_required",
+                "findings": [{"id": "evidence_context_missing", "detail": "Chart has no context."}],
+            },
+        },
+    )
+
+    assert "visual_semantic_review" in {warning["code"] for warning in quality["warnings"]}
 
 
 def test_critique_adds_safe_context_without_minting_evidence():
@@ -463,7 +586,220 @@ def test_guided_explorer_reorders_visual_evidence_before_findings_without_taxono
     assert roles.index(hero["layout_role"]) < roles.index("primary_insights") < roles.index(explorer["layout_role"])
 
 
-def test_critique_persists_fifa_style_predictive_review_findings():
+def test_path_dependent_forecast_uses_generic_roles_not_tournament_terms():
+    storyboard = report_renderer.design_report_storyboard(
+        report_goal="Forecast which customer onboarding path will produce the highest renewal rate.",
+        insights=[
+            {"title": "Guided onboarding leads", "detail": "The guided path has the highest renewal forecast.", "story_role": "thesis"},
+            {"title": "Activation is the pivot", "detail": "A delayed activation step changes the expected path."},
+        ],
+        analyses=[
+            {
+                "section_type": "chart_interpretation",
+                "story_role": "decision_path",
+                "title": "Projected onboarding paths",
+                "caption": "The staged routes from signup to renewal.",
+                "figure": {"data": [{"type": "scatter", "x": [0, 1], "y": [0, 1]}]},
+                "interpretation": "The guided route has the highest expected renewal.",
+                "evidence": [{"kind": "notebook_cell", "ref": "cell-path"}],
+            },
+            {
+                "section_type": "chart_table_explorer",
+                "story_role": "outcome_race",
+                "title": "Renewal outcome comparison",
+                "caption": "Expected renewal by onboarding route.",
+                "records": [{"route": "Guided", "renewal": 0.7}, {"route": "Self-serve", "renewal": 0.5}],
+                "chart": {"type": "bar", "x": "route", "y": "renewal"},
+                "columns": ["route", "renewal"],
+            },
+            {
+                "section_type": "comparison",
+                "story_role": "mechanism",
+                "title": "Why guided onboarding leads",
+                "caption": "Activation timing drives the gap.",
+                "groups": [{"title": "Guided", "metrics": {"Activation": "Earlier"}}],
+            },
+            {
+                "section_type": "chart_table_explorer",
+                "story_role": "outcome_distribution",
+                "title": "Renewal distribution",
+                "caption": "Likely renewal outcomes for the leading path.",
+                "records": [{"outcome": "Renew", "probability": 70}],
+                "chart": {"type": "bar", "x": "outcome", "y": "probability"},
+                "columns": ["outcome", "probability"],
+            },
+            {
+                "section_type": "interactive_table",
+                "story_role": "complete_lookup",
+                "title": "All path forecasts",
+                "caption": "The full route-level lookup.",
+                "rows": [{"route": "Guided", "renewal": 0.7}],
+                "columns": ["route", "renewal"],
+            },
+        ],
+        requirements={
+            "editorial_archetype": "path_dependent_forecast",
+            "methodology": [{"title": "Grain", "detail": "Customer-level aggregates."}],
+        },
+    )
+
+    roles = [item["layout_role"] for item in storyboard["section_plan"]]
+
+    assert storyboard["editorial_architecture"]["archetype"] == "path_dependent_forecast"
+    assert roles.index("analysis_1_chart_interpretation") < roles.index("analysis_2_chart_table_explorer")
+    assert roles.index("analysis_4_chart_table_explorer") < roles.index("primary_insights")
+    assert roles.index("primary_insights") < roles.index("analysis_5_interactive_table")
+
+
+def test_path_dependent_forecast_falls_back_without_a_decision_path():
+    storyboard = report_renderer.design_report_storyboard(
+        report_goal="Forecast next-quarter retention.",
+        insights=[{"title": "Retention rises", "detail": "Retention is forecast to rise."}],
+        analyses=[{
+            "section_type": "interactive_table",
+            "story_role": "complete_lookup",
+            "title": "Forecast detail",
+            "caption": "The supplied forecast rows.",
+            "rows": [{"period": "Q2", "retention": 0.7}],
+            "columns": ["period", "retention"],
+        }],
+        requirements={"editorial_archetype": "path_dependent_forecast"},
+    )
+
+    assert storyboard["editorial_architecture"]["archetype"] == "standard"
+    assert "decision-path visual" in storyboard["editorial_architecture"]["reason"]
+
+
+def test_editorial_insight_list_supports_semantic_pills_scan_points_and_linked_evidence():
+    html = report_renderer.render_report_section("insight_grid", {
+        "title": "Primary insights",
+        "caption": "The conclusions readers should scan before the supporting evidence.",
+        "layout_variant": "editorial_list",
+        "evidence_presentation": "linked",
+        "items": [{
+            "title": "Guided onboarding leads renewal",
+            "detail": "The guided route has the highest projected renewal.",
+            "status": "validated",
+            "pills": [
+                {"label": "70% projected renewal", "tone": "accent", "color": "#0f766e"},
+                {"label": "Highest route", "tone": "neutral"},
+            ],
+            "scan_points": ["Activation occurs earlier.", "The first-week completion rate remains the key sensitivity."],
+            "evidence": [{"kind": "notebook_cell", "ref": "cell-guided-route"}],
+            "evidence_anchor": "sec-guided-route",
+        }],
+    })
+
+    assert "r-insight-grid is-editorial_list" in html
+    assert 'r-insight-index">01</span>' in html
+    assert "r-chip accent" in html
+    assert "--chip-accent:#0f766e" in html
+    assert "Activation occurs earlier." in html
+    assert "notebook cell: cell-guided-route" not in html
+    assert 'href="#sec-guided-route"' in html
+
+
+def test_long_evidence_trace_defaults_to_a_disclosure():
+    html = report_renderer.render_report_section("evidence_trace", {
+        "title": "Evidence trace",
+        "caption": "Registered evidence behind the report.",
+        "presentation": "disclosure",
+        "evidence": [
+            {"kind": "notebook_cell", "ref": f"cell-{index}", "summary": "Completed analysis"}
+            for index in range(7)
+        ],
+    })
+
+    assert '<details class="r-evidence-disclosure">' in html
+    assert "Show 7 registered evidence references" in html
+    assert "cell-6" in html
+
+
+def test_primary_insight_layout_defaults_to_editorial_list_but_keeps_card_grid_opt_in():
+    standard = report_renderer.design_report_storyboard(
+        report_goal="Explain observed retention.",
+        insights=[{"title": "New customers churn first", "detail": "The newest cohort has the lowest observed renewal."}],
+    )
+    standard_findings = next(item["data"] for item in standard["section_plan"] if item["layout_role"] == "primary_insights")
+    assert standard_findings["layout_variant"] == "editorial_list"
+    assert "is-editorial_list" in report_renderer.render_report_from_storyboard(standard)
+
+    analysis = {
+        "section_type": "chart_interpretation",
+        "story_role": "decision_path",
+        "title": "Renewal paths",
+        "caption": "Routes from activation to renewal.",
+        "figure": {"data": [{"type": "scatter", "x": [0, 1], "y": [0, 1]}]},
+        "interpretation": "The guided path has the highest predicted renewal.",
+    }
+    editorial = report_renderer.design_report_storyboard(
+        report_goal="Forecast renewal along the customer journey.",
+        insights=[{"title": "Guided onboarding leads", "detail": "The guided route has the highest renewal forecast."}],
+        analyses=[analysis],
+        requirements={"editorial_archetype": "path_dependent_forecast"},
+    )
+    editorial_findings = next(item["data"] for item in editorial["section_plan"] if item["layout_role"] == "primary_insights")
+    assert editorial_findings["layout_variant"] == "editorial_list"
+    assert editorial_findings["evidence_presentation"] == "linked"
+
+    explicit_grid = report_renderer.design_report_storyboard(
+        report_goal="Forecast renewal along the customer journey.",
+        insights=[{"title": "Guided onboarding leads", "detail": "The guided route has the highest renewal forecast."}],
+        analyses=[analysis],
+        requirements={
+            "editorial_archetype": "path_dependent_forecast",
+            "presentation": {"insight_layout": "card_grid"},
+        },
+    )
+    explicit_findings = next(item["data"] for item in explicit_grid["section_plan"] if item["layout_role"] == "primary_insights")
+    assert explicit_findings["layout_variant"] == "card_grid"
+
+
+def test_surface_hierarchy_distinguishes_quiet_trust_and_evidence_sections():
+    narrative = report_renderer.render_report_section("narrative_band", {
+        "title": "The answer",
+        "summary": "Retention is projected to improve.",
+    })
+    methodology = report_renderer.render_report_section("methodology_block", {
+        "title": "Method",
+        "methods": [{"title": "Grain", "detail": "Customer-month aggregate."}],
+    })
+    chart = report_renderer.render_report_section("chart_interpretation", {
+        "title": "Renewal by path",
+        "caption": "Expected renewal by path.",
+        "figure": {"data": [{"type": "bar", "x": ["Guided"], "y": [0.7]}]},
+        "interpretation": "Guided onboarding leads.",
+    })
+    entities = report_renderer.render_report_section("entity_card_grid", {
+        "title": "Customer segments",
+        "items": [{"title": "Guided", "count": 42, "detail": "Customers with guided onboarding."}],
+    })
+
+    assert "is-quiet-surface" in narrative
+    assert "is-trust-surface" in methodology
+    assert "is-evidence-surface" in chart
+    assert "is-quiet-surface" in entities
+    assert "r-entity-card" in entities
+
+
+def test_critique_requires_a_path_visual_for_a_customer_journey_forecast():
+    storyboard = report_renderer.design_report_storyboard(
+        report_goal="Forecast next-quarter renewal along the customer journey.",
+        insights=[{
+            "title": "Guided onboarding leads",
+            "detail": "The guided journey has the highest predicted renewal.",
+        }],
+        requirements={"editorial_archetype": "path_dependent_forecast"},
+    )
+
+    _critiqued, critique = report_renderer.critique_report_storyboard(storyboard)
+    findings = {finding["id"]: finding for finding in critique["analytical_review"]["findings"]}
+
+    assert "missing_decision_path_visual" in findings
+    assert "path-dependent forecast" in findings["missing_decision_path_visual"]["claim"]
+
+
+def test_critique_keeps_path_language_as_advisory_without_an_explicit_contract():
     storyboard = report_renderer.design_report_storyboard(
         report_goal="Forecast the remaining World Cup knockout matches and champion probabilities.",
         insights=[{
@@ -487,8 +823,9 @@ def test_critique_persists_fifa_style_predictive_review_findings():
     assert findings["missing_baseline_comparison"]["severity"] == "required"
     assert "missing_uncertainty_quantification" in findings
     assert "missing_assumption_sensitivity" in findings
-    assert "missing_decision_path_visual" in findings
-    assert "missing_outcome_distribution" in findings
+    assert "missing_decision_path_visual" not in findings
+    assert "missing_outcome_distribution" not in findings
+    assert findings["possible_path_dependent_forecast"]["severity"] == "info"
     unresolved_refs = findings["unresolved_evidence_anchors"]["evidence"]
     assert {entry["ref"] for entry in unresolved_refs} == {"cell-projection"}
     assert {entry["section_id"] for entry in unresolved_refs} == {"sec-primary-insights", "evidence_trace"}
@@ -652,5 +989,5 @@ def test_storyboard_quality_plan_derives_from_rubric():
         requirements={},
     )
     plan = storyboard["quality_plan"]
-    assert plan["rubric_version"] == 3
+    assert plan["rubric_version"] == 7
     assert plan["checks"] == live_criterion_ids()
