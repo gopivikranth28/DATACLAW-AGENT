@@ -1,0 +1,1451 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WC26: Predicting the Final 8 Knockout Matches</title>
+  
+  <style data-dc-report-shell-css>
+
+:root {
+  color-scheme: light dark;
+  --dc-bg: #eef2f6;
+  --dc-surface: #ffffff;
+  --dc-surface-raised: #ffffff;
+  --dc-surface-muted: #f8fafc;
+  --dc-ink: #111827;
+  --dc-muted: #667085;
+  --dc-line: #d9e1ea;
+  --dc-accent: #2563eb;
+  --dc-accent-2: #0f766e;
+  --dc-accent-3: #c2410c;
+  --dc-accent-soft: #e8f0ff;
+  --dc-good: #15803d;
+  --dc-warn: #b45309;
+  --dc-danger: #b91c1c;
+  --dc-shadow: 0 18px 45px rgba(15, 23, 42, 0.10);
+  --dc-shadow-soft: 0 7px 22px rgba(15, 23, 42, 0.07);
+  --dc-cat-1: #2563eb;
+  --dc-cat-2: #0f766e;
+  --dc-cat-3: #c2410c;
+  --dc-cat-4: #7c3aed;
+  --dc-cat-5: #be185d;
+  --dc-cat-6: #4d7c0f;
+  --dc-cat-7: #0369a1;
+  --dc-cat-8: #a16207;
+  --bg: var(--dc-bg);
+  --paper: var(--dc-surface);
+  --ink: var(--dc-ink);
+  --muted: var(--dc-muted);
+  --line: var(--dc-line);
+  --accent: var(--dc-accent);
+  --accent-soft: var(--dc-accent-soft);
+  --good: var(--dc-good);
+  --warn: var(--dc-warn);
+}
+:root[data-theme="dark"] {
+  --dc-bg: #0f141b;
+  --dc-surface: #171d26;
+  --dc-surface-raised: #1f2733;
+  --dc-surface-muted: #141a22;
+  --dc-ink: #f2f5f8;
+  --dc-muted: #a5afbd;
+  --dc-line: #303846;
+  --dc-accent: #7aa7ff;
+  --dc-accent-2: #5eead4;
+  --dc-accent-3: #fdba74;
+  --dc-accent-soft: #1b2b46;
+  --dc-good: #6dd58c;
+  --dc-warn: #f3bd63;
+  --dc-danger: #ff8b8b;
+  --dc-shadow: none;
+  --dc-shadow-soft: none;
+  --dc-cat-1: #7aa7ff;
+  --dc-cat-2: #5eead4;
+  --dc-cat-3: #fdba74;
+  --dc-cat-4: #c4b5fd;
+  --dc-cat-5: #f9a8d4;
+  --dc-cat-6: #bef264;
+  --dc-cat-7: #7dd3fc;
+  --dc-cat-8: #fde047;
+  --good: var(--dc-good);
+  --warn: var(--dc-warn);
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background:
+    linear-gradient(180deg, rgba(37, 99, 235, 0.10), rgba(15, 118, 110, 0.04) 320px, transparent 580px),
+    var(--bg);
+  color: var(--ink);
+  font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+}
+.r-progress { position: fixed; inset: 0 0 auto; height: 3px; background: transparent; z-index: 30; }
+.r-progress span { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--dc-accent), var(--dc-accent-2), var(--dc-accent-3)); transition: width .18s ease; }
+.r-story-nav {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: none;
+  gap: 8px;
+  align-items: center;
+  overflow-x: auto;
+  padding: 10px max(16px, calc((100vw - 1100px) / 2 + 18px));
+  background: color-mix(in srgb, var(--dc-surface) 88%, transparent);
+  border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(12px);
+}
+.r-story-nav.ready { display: flex; }
+.r-story-nav-head { display: none; }
+.r-story-nav a {
+  flex: 0 0 auto;
+  max-width: 210px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 11px;
+  color: var(--muted);
+  background: var(--dc-surface-muted);
+  font-size: 12px;
+  text-decoration: none;
+  transition: color .16s ease, background .16s ease, border-color .16s ease, transform .16s ease;
+}
+.r-story-nav a.active, .r-story-nav a:hover {
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--dc-accent) 45%, var(--line));
+  background: var(--accent-soft);
+  transform: translateY(-1px);
+}
+.r-story-nav a .r-nav-num { display: none; }
+@media (min-width: 1240px) {
+  .r-story-nav {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: 224px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 26px 14px 26px 18px;
+    border-bottom: 0;
+    border-right: 1px solid var(--line);
+    background: color-mix(in srgb, var(--dc-surface) 65%, var(--dc-bg));
+    backdrop-filter: none;
+  }
+  .r-story-nav-head {
+    display: block;
+    font-size: 11px;
+    font-weight: 760;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--muted);
+    padding: 0 10px 10px;
+  }
+  .r-story-nav a {
+    max-width: none;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    border: 0;
+    border-left: 2px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    padding: 7px 10px;
+    font-size: 12.5px;
+    line-height: 1.3;
+    white-space: normal;
+  }
+  .r-story-nav a .r-nav-num {
+    display: inline;
+    flex: 0 0 auto;
+    font-size: 10px;
+    font-weight: 760;
+    color: color-mix(in srgb, var(--dc-accent) 60%, var(--muted));
+    font-variant-numeric: tabular-nums;
+  }
+  .r-story-nav a.active, .r-story-nav a:hover {
+    background: var(--accent-soft);
+    border-left-color: var(--dc-accent);
+    color: var(--ink);
+    transform: none;
+  }
+  body.has-rail .r-page { margin: 0 auto 0 max(224px, calc((100vw - 1100px) / 2)); }
+}
+.r-page { max-width: 1100px; margin: 0 auto; padding: 30px 22px 48px; }
+.r-hero {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.16), rgba(15, 118, 110, 0.14)), var(--dc-surface);
+  color: var(--dc-ink);
+  border: 1px solid color-mix(in srgb, var(--dc-accent) 18%, var(--line));
+  border-radius: 18px;
+  padding: 38px;
+  margin-bottom: 20px;
+  box-shadow: var(--dc-shadow);
+}
+.r-hero::after {
+  content: "";
+  position: absolute;
+  right: 26px;
+  bottom: 24px;
+  width: 140px;
+  height: 140px;
+  border: 1px solid color-mix(in srgb, var(--dc-accent-2) 30%, transparent);
+  transform: rotate(12deg);
+  opacity: .45;
+  pointer-events: none;
+}
+.r-kicker { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--accent); font-weight: 760; }
+.r-hero h1 { position: relative; margin: 8px 0 10px; max-width: 850px; font-size: clamp(30px, 5vw, 54px); line-height: 1.02; letter-spacing: 0; }
+.r-hero p { position: relative; max-width: 790px; margin: 0; color: var(--muted); font-size: 16px; }
+.r-section {
+  position: relative;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 22px;
+  margin: 18px 0;
+  box-shadow: var(--dc-shadow-soft);
+  transform: translateY(8px);
+  opacity: .96;
+  transition: transform .24s ease, opacity .24s ease, box-shadow .24s ease, border-color .24s ease;
+}
+.r-section.in-view, .r-hero.in-view { transform: translateY(0); opacity: 1; }
+.r-section:focus-within, .r-section:hover {
+  border-color: color-mix(in srgb, var(--dc-accent) 26%, var(--line));
+  box-shadow: var(--dc-shadow);
+}
+.r-section::before {
+  content: counter(story-step, decimal-leading-zero);
+  counter-increment: story-step;
+  position: absolute;
+  top: 18px;
+  right: 20px;
+  color: color-mix(in srgb, var(--dc-accent) 52%, var(--line));
+  font-size: 12px;
+  font-weight: 760;
+}
+main { counter-reset: story-step; }
+.r-section h2, .r-section h3 { margin: 0 0 10px; line-height: 1.18; letter-spacing: 0; }
+.r-section h2 { padding-right: 54px; font-size: 23px; }
+.r-section h3 { font-size: 16px; color: var(--muted); font-weight: 650; }
+.r-section-dek { max-width: 760px; margin: 0 0 12px; color: var(--muted); font-size: 14px; }
+.r-section-context { display: grid; gap: 10px; margin: 0 0 14px; }
+.r-pill-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.r-method-note {
+  border-left: 3px solid var(--dc-accent-2);
+  background: color-mix(in srgb, var(--dc-accent-2) 8%, var(--dc-surface-muted));
+  padding: 10px 12px;
+  border-radius: 0 12px 12px 0;
+  color: var(--ink);
+}
+.r-method-note strong { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0; color: var(--muted); margin-bottom: 3px; }
+.r-method-note p { margin: 0; color: var(--ink); }
+.r-bullets { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.r-bullets li { position: relative; padding-left: 18px; color: var(--ink); }
+.r-bullets li::before { content: ""; position: absolute; left: 2px; top: .72em; width: 6px; height: 6px; border-radius: 999px; background: var(--accent); }
+.r-grid { display: grid; gap: 12px; }
+.r-grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.r-section[data-dc-section="metric_row"], .r-section[data-dc-section="insight_grid"] {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  padding: 6px 0;
+}
+.r-section[data-dc-section="metric_row"]::before, .r-section[data-dc-section="insight_grid"]::before { display: none; }
+.r-section[data-dc-section="chart"], .r-section[data-dc-section="chart_interpretation"], .r-section[data-dc-section="filterable_chart"], .r-section[data-dc-section="chart_table_explorer"], .r-section[data-dc-section="interactive_table"] { background: linear-gradient(180deg, var(--dc-surface), var(--dc-surface-muted)); }
+.r-section[data-dc-section="narrative_band"] { background: linear-gradient(135deg, color-mix(in srgb, var(--dc-accent) 8%, var(--dc-surface)), var(--dc-surface)); border-left: 4px solid color-mix(in srgb, var(--dc-accent) 55%, var(--line)); }
+.r-section[data-dc-section="methodology_block"] { background: color-mix(in srgb, var(--dc-accent-2) 5%, var(--dc-surface)); }
+.r-section[data-dc-section="hypothesis_ledger"], .r-section[data-dc-section="evidence_trace"], .r-section[data-dc-section="ledger_timeline"], .r-section[data-dc-section="evidence_rail"] {
+  border-left: 4px solid color-mix(in srgb, var(--dc-accent-2) 55%, var(--line));
+}
+.r-narrative-band { max-width: 820px; display: grid; gap: 12px; }
+.r-narrative-band p { margin: 0; font-size: 15px; }
+.r-methodology-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+.r-method-card { border: 1px solid var(--line); border-radius: 12px; padding: 13px 14px; background: var(--dc-surface-raised); }
+.r-method-card h3 { margin: 0 0 6px; color: var(--ink); }
+.r-chart-story-grid, .r-evidence-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 320px); gap: 18px; align-items: start; }
+.r-chart-main { min-width: 0; }
+.r-interpretation-panel, .r-evidence-rail { border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: var(--dc-surface-raised); }
+.r-interpretation-panel h3, .r-evidence-rail h3 { margin: 0 0 8px; color: var(--ink); font-size: 15px; }
+.r-interpretation-panel p { margin: 0 0 8px; }
+.r-evidence-rail { display: grid; gap: 10px; }
+.r-evidence-rail.compact .r-ledger-item { padding: 10px 11px; border-left-width: 2px; }
+.r-timeline { position: relative; display: grid; gap: 12px; padding-left: 20px; }
+.r-timeline::before { content: ""; position: absolute; left: 6px; top: 6px; bottom: 6px; width: 2px; background: color-mix(in srgb, var(--dc-accent-2) 35%, var(--line)); }
+.r-timeline-item { position: relative; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--dc-surface-raised); }
+.r-timeline-item::before { content: ""; position: absolute; left: -19px; top: 16px; width: 10px; height: 10px; border-radius: 999px; background: var(--dc-accent-2); border: 2px solid var(--dc-surface); }
+.r-timeline-top { display: flex; gap: 8px; justify-content: space-between; align-items: start; flex-wrap: wrap; }
+.r-timeline-time { color: var(--muted); font-size: 12px; }
+.r-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.r-metric { border: 1px solid var(--line); border-radius: 12px; padding: 15px; background: linear-gradient(180deg, var(--dc-surface-raised), var(--dc-surface-muted)); }
+.r-metric-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0; font-weight: 700; }
+.r-metric-value { font-size: 32px; font-weight: 780; margin-top: 4px; line-height: 1.1; color: var(--dc-accent-2); }
+.r-metric-delta { font-size: 12px; margin-top: 6px; color: var(--muted); }
+.r-metric-delta.up { color: var(--good); }
+.r-metric-delta.down { color: var(--dc-danger); }
+.r-callout { border-left: 4px solid var(--accent); background: var(--accent-soft); padding: 15px 16px; border-radius: 12px; }
+.r-findings { display: grid; gap: 10px; padding: 0; margin: 0; list-style: none; }
+.r-finding { padding: 13px 15px; border: 1px solid var(--line); border-radius: 12px; background: var(--dc-surface-raised); }
+.r-finding-title { font-weight: 720; margin-bottom: 4px; color: var(--ink); }
+.r-finding-detail { margin: 0; color: var(--ink); }
+.r-finding-meta { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+.r-insight-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+.r-insight-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 15px;
+  background: linear-gradient(180deg, var(--dc-surface-raised), var(--dc-surface-muted));
+  box-shadow: var(--dc-shadow-soft);
+}
+.r-chip { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 8px; font-size: 11px; font-weight: 720; background: var(--accent-soft); color: var(--accent); }
+.r-chip.good { background: color-mix(in srgb, var(--dc-good) 14%, transparent); color: var(--dc-good); }
+.r-chip.warn { background: color-mix(in srgb, var(--dc-warn) 16%, transparent); color: var(--dc-warn); }
+.r-chip.danger { background: color-mix(in srgb, var(--dc-danger) 14%, transparent); color: var(--dc-danger); }
+.r-chip.neutral { background: var(--dc-surface-muted); color: var(--muted); border: 1px solid var(--line); }
+.r-insight-card h3, .r-step h3, .r-compare-card h3 { margin: 8px 0 6px; color: var(--ink); font-size: 16px; }
+.r-insight-card p, .r-step p, .r-compare-card p { margin: 0; }
+.r-meta-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; color: var(--muted); font-size: 12px; }
+.r-steps { display: grid; gap: 11px; }
+.r-step { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: start; }
+.r-step-num { width: 30px; height: 30px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; background: var(--accent-soft); color: var(--accent); font-weight: 780; font-size: 12px; }
+.r-comparison { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.r-compare-card { border: 1px solid var(--line); border-radius: 14px; background: var(--dc-surface-muted); padding: 15px; }
+.r-compare-metric { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-top: 1px solid var(--line); font-size: 13px; }
+.r-compare-metric:first-of-type { border-top: 0; }
+.r-compare-value { font-weight: 760; color: var(--ink); text-align: right; }
+.r-checks { display: grid; gap: 8px; }
+.r-check { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: start; border: 1px solid var(--line); border-radius: 12px; padding: 11px 12px; background: var(--dc-surface-muted); }
+.r-check-dot { width: 10px; height: 10px; border-radius: 999px; margin-top: 5px; background: var(--muted); }
+.r-check.pass .r-check-dot, .r-check.good .r-check-dot { background: var(--dc-good); }
+.r-check.warning .r-check-dot, .r-check.warn .r-check-dot { background: var(--dc-warn); }
+.r-check.fail .r-check-dot, .r-check.blocked .r-check-dot, .r-check.error .r-check-dot, .r-check.danger .r-check-dot { background: var(--dc-danger); }
+.r-check-title { font-weight: 720; color: var(--ink); }
+.r-ledger { display: grid; gap: 10px; position: relative; }
+.r-ledger-item { border: 1px solid var(--line); border-left: 3px solid var(--dc-accent-2); border-radius: 12px; padding: 12px 14px; background: var(--dc-surface-raised); }
+.r-ledger-top { display: flex; gap: 8px; justify-content: space-between; align-items: start; flex-wrap: wrap; }
+.r-evidence-ref { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--muted); }
+.r-chart-target { width: 100%; min-height: 390px; }
+.r-interactive-shell { display: grid; gap: 14px; }
+.r-control-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--dc-surface-muted) 78%, var(--dc-surface));
+}
+.r-control-bar:empty { display: none; }
+.r-control { display: grid; gap: 4px; min-width: 150px; }
+.r-control label, .r-table-meta { color: var(--muted); font-size: 11px; font-weight: 720; letter-spacing: 0; text-transform: uppercase; }
+.r-control select, .r-table-tools input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--dc-surface);
+  color: var(--ink);
+  font: inherit;
+}
+.r-control select:focus-visible, .r-table-tools input:focus-visible, .r-pagination button:focus-visible, .r-sort-button:focus-visible, .r-control-reset:focus-visible, .r-entity-card[data-dc-selector-card]:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--dc-accent) 72%, transparent);
+  outline-offset: 2px;
+}
+.r-control-actions { display: flex; gap: 8px; align-items: center; align-self: end; margin-left: auto; flex-wrap: wrap; }
+.r-control-summary { color: var(--muted); font-size: 12px; }
+.r-control-reset {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: var(--dc-surface);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+}
+.r-empty-state {
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  padding: 18px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--dc-surface-muted) 80%, transparent);
+  text-align: center;
+}
+.r-explorer-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 380px); gap: 16px; align-items: start; }
+.r-table-tools { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+.r-table-tools input { max-width: 260px; }
+.r-interactive-table-wrap { width: 100%; overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--dc-surface); }
+.r-interactive-table th { cursor: pointer; user-select: none; white-space: nowrap; }
+.r-sort-button { all: unset; display: inline-flex; align-items: center; gap: 5px; cursor: pointer; color: inherit; }
+.r-sort-indicator { color: var(--accent); font-size: 10px; min-width: 1em; }
+.r-interactive-table tbody tr:hover { background: color-mix(in srgb, var(--dc-accent-soft) 42%, transparent); }
+.r-pagination { display: flex; gap: 8px; justify-content: flex-end; align-items: center; margin-top: 8px; color: var(--muted); font-size: 12px; }
+.r-pagination button {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: var(--dc-surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+.r-pagination button:disabled { opacity: .45; cursor: default; }
+.r-selector-panel { display: grid; gap: 14px; }
+.r-entity-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+.r-entity-card { border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: var(--dc-surface-raised); }
+.r-entity-card[data-dc-selector-card] { cursor: pointer; transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
+.r-entity-card[data-dc-selector-card]:hover { transform: translateY(-1px); border-color: color-mix(in srgb, var(--dc-accent) 34%, var(--line)); }
+.r-entity-card.is-selected { border-color: color-mix(in srgb, var(--dc-accent) 65%, var(--line)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--dc-accent) 14%, transparent); }
+.r-entity-card h3 { margin: 7px 0 6px; color: var(--ink); }
+.r-entity-metrics { display: grid; gap: 6px; margin-top: 10px; }
+.r-entity-metric { display: flex; justify-content: space-between; gap: 10px; border-top: 1px solid var(--line); padding-top: 6px; color: var(--muted); font-size: 12px; }
+.r-entity-metric strong { color: var(--ink); text-align: right; }
+.r-selection-detail { border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: var(--dc-surface-raised); }
+.r-selection-detail h3 { margin: 0 0 6px; color: var(--ink); }
+.r-caption { color: var(--muted); font-size: 12px; margin: 8px 2px 0; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0; }
+th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.r-section-kicker {
+  font-size: 11px;
+  font-weight: 760;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--accent);
+  margin: 0 0 6px;
+}
+.r-section.is-hero {
+  padding: 30px 28px;
+  border-color: color-mix(in srgb, var(--dc-accent) 30%, var(--line));
+  background: linear-gradient(160deg, color-mix(in srgb, var(--dc-accent) 7%, var(--dc-surface)), var(--dc-surface) 55%);
+  box-shadow: var(--dc-shadow);
+}
+.r-section.is-hero h2 { font-size: 28px; }
+.r-section.is-hero .r-chart-target { min-height: 470px; }
+.r-section.is-narrow { max-width: 860px; margin-left: auto; margin-right: auto; }
+.r-conclusion {
+  margin: 10px 2px 0;
+  padding-left: 12px;
+  border-left: 3px solid var(--dc-accent);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+.r-evidence-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+.r-evidence-chips-label { font-size: 10px; font-weight: 760; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.r-evidence-chip { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; font-weight: 560; text-decoration: none; }
+a.r-evidence-chip:hover { border-color: color-mix(in srgb, var(--dc-accent) 45%, var(--line)); color: var(--accent); }
+.r-supports-link {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: 12px;
+  font-weight: 660;
+  color: var(--accent);
+  text-decoration: none;
+}
+.r-supports-link:hover { text-decoration: underline; }
+.r-insight-card.good { border-top: 3px solid var(--dc-good); }
+.r-insight-card.warn { border-top: 3px solid var(--dc-warn); }
+.r-insight-card.danger { border-top: 3px solid var(--dc-danger); }
+.r-insight-card.neutral { border-top: 3px solid color-mix(in srgb, var(--dc-accent) 55%, var(--line)); }
+.r-entity-card { border-top: 3px solid var(--card-accent, transparent); position: relative; }
+.r-entity-count {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  font-size: 11px;
+  font-weight: 760;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: var(--dc-surface-muted);
+}
+.r-entity-metric { position: relative; }
+.r-metric-bar { flex: 1 1 auto; align-self: center; height: 5px; margin: 0 10px; border-radius: 999px; background: color-mix(in srgb, var(--line) 55%, transparent); overflow: hidden; }
+.r-metric-bar span { display: block; height: 100%; border-radius: 999px; background: var(--card-accent, var(--dc-accent)); }
+.r-spark { display: block; margin-top: 8px; width: 100%; height: 34px; }
+.r-spark polyline { fill: none; stroke: var(--dc-accent); stroke-width: 2; }
+.r-spark polygon { fill: color-mix(in srgb, var(--dc-accent) 12%, transparent); stroke: none; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .r-section, .r-story-nav a, .r-progress span { transition: none; }
+}
+@media (max-width: 720px) {
+  .r-story-nav { padding: 8px 12px; }
+  .r-page { padding: 16px 12px 28px; }
+  .r-hero { padding: 24px; border-radius: 14px; }
+  .r-hero h1 { font-size: 26px; }
+  .r-grid.cols-2, .r-chart-story-grid, .r-evidence-layout, .r-explorer-grid { grid-template-columns: 1fr; }
+  .r-interpretation-panel, .r-evidence-rail { position: static; }
+}
+
+  </style>
+</head>
+<body>
+  <div class="r-progress" aria-hidden="true"><span></span></div>
+  <nav class="r-story-nav" aria-label="Report sections"></nav>
+  <main class="r-page">
+    <!-- DATACLAW_REPORT_SECTIONS_START -->
+    <section class="r-hero" data-dc-section="header" data-dc-section-id="sec-header-4f862ec29e" data-dc-data-policy="narrative">
+      <div class="r-kicker">DataClaw report</div>
+      <h1>WC26: Predicting the Final 8 Knockout Matches</h1>
+      <p>Which of the 8 remaining teams will win WC26, and how will the final 8 knockout matches (4 QF, 2 SF, 3rd-place, Final) play out?</p>
+      <script type="application/json" data-dc-section-meta>{"section_id": "sec-header-4f862ec29e", "section_schema": 2, "kind": "header", "title": "WC26: Predicting the Final 8 Knockout Matches", "caption": "", "plan_step_id": "", "data_policy": "narrative", "payload": {}, "tokens": ["--dc-bg", "--dc-surface", "--dc-surface-raised", "--dc-surface-muted", "--dc-ink", "--dc-muted", "--dc-line", "--dc-accent", "--dc-accent-2", "--dc-accent-3", "--dc-accent-soft", "--dc-good", "--dc-warn", "--dc-danger"]}</script>
+    </section>
+    <section class="r-section" data-dc-section="metric_row" data-dc-section-id="sec-metric_row-66161cf0f7" data-dc-data-policy="aggregate_only">
+      <p class="r-section-kicker">At a glance</p><h2>Headline metrics</h2>
+      
+      <div class="r-metrics"><div class="r-metric">
+        <div class="r-metric-label">Spain champion</div>
+        <div class="r-metric-value">28%</div>
+        
+        
+      </div><div class="r-metric">
+        <div class="r-metric-label">France champion</div>
+        <div class="r-metric-value">25%</div>
+        
+        
+      </div><div class="r-metric">
+        <div class="r-metric-label">Most likely final</div>
+        <div class="r-metric-value">ARG-ESP 13%</div>
+        
+        
+      </div><div class="r-metric">
+        <div class="r-metric-label">Norway advance</div>
+        <div class="r-metric-value">57%</div>
+        
+        
+      </div><div class="r-metric">
+        <div class="r-metric-label">Spain xG against</div>
+        <div class="r-metric-value">0.56</div>
+        
+        
+      </div></div>
+      <script type="application/json" data-dc-section-meta>{"section_id": "sec-metric_row-66161cf0f7", "section_schema": 2, "kind": "metric_row", "title": "Headline metrics", "caption": "", "plan_step_id": "", "data_policy": "aggregate_only", "payload": {"metric_count": 5}, "tokens": ["--dc-bg", "--dc-surface", "--dc-surface-raised", "--dc-surface-muted", "--dc-ink", "--dc-muted", "--dc-line", "--dc-accent", "--dc-accent-2", "--dc-accent-3", "--dc-accent-soft", "--dc-good", "--dc-warn", "--dc-danger"]}</script>
+    </section>
+    <section class="r-section is-narrow" data-dc-section="narrative_band" data-dc-section-id="sec-narrative_band-9abe9068cc" data-dc-data-policy="narrative">
+      <div class="r-narrative-band">
+        <p class="r-section-kicker">Executive readout</p><h2>The answer</h2>
+        <div class="r-section-context"><p class="r-section-dek">Context and evidence for The answer.</p><ul class="r-bullets"><li>Most likely Final: Argentina vs Spain (13%)</li><li>Norway–England is the round&#x27;s likeliest upset</li><li>Spain&#x27;s edge is defense plus underlying chances</li></ul></div>
+        <p>The decisive game is the semifinal, not the Final. Spain (28%) and France (25%) are the two strongest teams but share a bracket half, so they meet in the semifinal — one is eliminated before the Final.</p><p>The analysis surfaced 6 material insights; each is paired with its evidence below.</p>
+      </div>
+      <script type="application/json" data-dc-section-meta>{"section_id": "sec-narrative_band-9abe9068cc", "section_schema": 2, "kind": "narrative_band", "title": "The answer", "caption": "Context and evidence for The answer.", "plan_step_id": "", "data_policy": "narrative", "payload": {"paragraph_count": 2, "point_count": 3}, "tokens": ["--dc-bg", "--dc-surface", "--dc-surface-raised", "--dc-surface-muted", "--dc-ink", "--dc-muted", "--dc-line", "--dc-accent", "--dc-accent-2", "--dc-accent-3", "--dc-accent-soft", "--dc-good", "--dc-warn", "--dc-danger"]}</script>
+    </section>
+    <section class="r-section" data-dc-section="insight_grid" data-dc-section-id="sec-primary-insights" data-dc-data-policy="narrative">
+      <p class="r-section-kicker">What changed</p><h2>Primary insights</h2>
+      <div class="r-section-context"><p class="r-section-dek">Findings promoted from completed analysis with evidence, caveats, and next actions where available.</p></div>
+      <div class="r-insight-grid"><article class="r-insight-card neutral">
+      <div class="r-meta-row"><span class="r-chip neutral">reviewed</span></div>
+      <h3>The decisive game is the semifinal, not the Final</h3>
+      <p>Spain (28%) and France (25%) are the two strongest teams but share a bracket half, so they meet in the semifinal — one is eliminated before the Final.</p>
+      
+      
+      <div class="r-evidence-chips"><span class="r-evidence-chips-label">Evidence</span><span class="r-chip neutral r-evidence-chip">Reach-Final odds Spain 39% and France 34% are mutually exclusive across 10k simulations.</span></div>
+      <p class="r-finding-meta"><strong>Caveat:</strong> Assumes the inferred QF98/QF100 pairings; a different real draw could separate them.</p>
+      
+      
+    </article><article class="r-insight-card neutral">
+      <div class="r-meta-row"><span class="r-chip neutral">reviewed</span></div>
+      <h3>Most likely Final: Argentina vs Spain (13%)</h3>
+      <p>Argentina is clearly the best team in the more open bottom half, making it the most probable opponent for whichever giant survives the top half.</p>
+      
+      
+      <div class="r-evidence-chips"><span class="r-evidence-chips-label">Evidence</span><span class="r-chip neutral r-evidence-chip">Top simulated finals: ARG-ESP 13%, NOR-ESP 12%, ARG-FRA 11%.</span></div>
+      
+      
+      
+    </article><article class="r-insight-card neutral">
+      <div class="r-meta-row"><span class="r-chip neutral">reviewed</span></div>
+      <h3>Norway–England is the round&#x27;s likeliest upset</h3>
+      <p>The tightest quarter-final at 57/43: Haaland-led Norway attacks the leakiest defense left in the draw.</p>
+      
+      
+      <div class="r-evidence-chips"><span class="r-evidence-chips-label">Evidence</span><span class="r-chip neutral r-evidence-chip">England concede 1.26 expected goals per match, worst among the survivors.</span></div>
+      
+      
+      
+    </article><article class="r-insight-card neutral">
+      <div class="r-meta-row"><span class="r-chip neutral">reviewed</span></div>
+      <h3>Spain&#x27;s edge is defense plus underlying chances</h3>
+      <p>Spain have scored only 8 goals but post the best defense (0.56 xGA) and a top-3 attack by xG — signs of under-conversion and possible positive finishing regression.</p>
+      
+      
+      <div class="r-evidence-chips"><span class="r-evidence-chips-label">Evidence</span><span class="r-chip neutral r-evidence-chip">The blended rating weights xG 60%, rewarding Spain&#x27;s chance creation over raw goals.</span></div>
+      
+      
+      
+    </article><article class="r-insight-card neutral">
+      <div class="r-meta-row"><span class="r-chip neutral">reviewed</span></div>
+      <h3>Squad behavior separates the contenders</h3>
+      <p>France pair the best attack with the cleanest discipline (0.2 cards/match), while England carry real card risk (2.0/match) and Norway lean on one striker (Haaland = 64% of goals).</p>
+      
+      
+      <div class="r-evidence-chips"><span class="r-evidence-chips-label">Evidence</span><span class="r-chip neutral r-evidence-chip">Goal concentration and discipline are squad-composition risks that raise variance in single-elimination games.</span></div>
+      
+      
+      
+    </article><article class="r-insight-card neutral">
+      <div class="r-meta-row"><span class="r-chip neutral">reviewed</span></div>
+      <h3>The model is validated out-of-sample</h3>
+      <p>Trained on group-stage matches only, it called 66.7% of the 24 completed knockouts correctly, with confident (&gt;60%) picks right 90% of the time.</p>
+      
+      
+      <div class="r-evidence-chips"><span class="r-evidence-chips-label">Evidence</span><span class="r-chip neutral r-evidence-chip">Log-loss 0.54 vs 0.69 baseline; Brier 0.18; well-calibrated across probability buckets.</span></div>
+      
+      
+      
+    </article></div>
+      <script type="application/json" data-dc-section-meta>{"section_id": "sec-primary-insights", "section_schema": 2, "kind": "insight_grid", "title": "Primary insights", "caption": "Findings promoted from completed analysis with evidence, caveats, and next actions where available.", "plan_step_id": "", "data_policy": "narrative", "payload": {"insight_count": 6, "items": [{"finding_id": "", "hypothesis_id": "", "title": "The decisive game is the semifinal, not the Final", "status": "reviewed", "severity": "", "evidence": "Reach-Final odds Spain 39% and France 34% are mutually exclusive across 10k simulations.", "ref": ""}, {"finding_id": "", "hypothesis_id": "", "title": "Most likely Final: Argentina vs Spain (13%)", "status": "reviewed", "severity": "", "evidence": "Top simulated finals: ARG-ESP 13%, NOR-ESP 12%, ARG-FRA 11%.", "ref": ""}, {"finding_id": "", "hypothesis_id": "", "title": "Norway\u2013England is the round's likeliest upset", "status": "reviewed", "severity": "", "evidence": "England concede 1.26 expected goals per match, worst among the survivors.", "ref": ""}, {"finding_id": "", "hypothesis_id": "", "title": "Spain's edge is defense plus underlying chances", "status": "reviewed", "severity": "", "evidence": "The blended rating weights xG 60%, rewarding Spain's chance creation over raw goals.", "ref": ""}, {"finding_id": "", "hypothesis_id": "", "title": "Squad behavior separates the contenders", "status": "reviewed", "severity": "", "evidence": "Goal concentration and discipline are squad-composition risks that raise variance in single-elimination games.", "ref": ""}, {"finding_id": "", "hypothesis_id": "", "title": "The model is validated out-of-sample", "status": "reviewed", "severity": "", "evidence": "Log-loss 0.54 vs 0.69 baseline; Brier 0.18; well-calibrated across probability buckets.", "ref": ""}]}, "tokens": ["--dc-bg", "--dc-surface", "--dc-surface-raised", "--dc-surface-muted", "--dc-ink", "--dc-muted", "--dc-line", "--dc-accent", "--dc-accent-2", "--dc-accent-3", "--dc-accent-soft", "--dc-good", "--dc-warn", "--dc-danger"]}</script>
+    </section>
+    <section class="r-section is-hero" data-dc-section="chart_interpretation" data-dc-section-id="sec-evidence-1" data-dc-data-policy="aggregate_only">
+      <p class="r-section-kicker">Evidence 01</p><h2>Quarter-final predictions (all 4 matchups known)</h2>
+      
+      <div class="r-chart-main">
+          <div id="chart-sec-evidence-1" class="r-chart-target"></div>
+          <p class="r-caption">Advance probabilities including extra time and shootouts.</p>
+          
+        </div>
+      <script>(window.__DataClawReportQueue=window.__DataClawReportQueue||[]).push({fn:"renderFigureById",id:"chart-sec-evidence-1",config:{"figure": {"data": [{"hovertemplate": "%{text}<extra><\/extra>", "marker": {"color": ["#4FA9E0", "#7B2D40", "#E4572E", "#2E4A8B"]}, "orientation": "h", "showlegend": false, "text": ["Argentina 62%", "Norway 57%", "Spain 68%", "France 62%"], "textposition": "outside", "x": [-62.1, -57.1, -68.4, -61.6], "y": ["Argentina", "Norway", "Spain", "France"], "type": "bar"}, {"hovertemplate": "%{text}<extra><\/extra>", "marker": {"color": ["#7D3C98", "#C0392B", "#E1A700", "#148F55"]}, "orientation": "h", "showlegend": false, "text": ["Switzerland 38%", "England 43%", "Belgium 32%", "Morocco 38%"], "textposition": "outside", "x": [37.9, 42.9, 31.6, 38.4], "y": ["Switzerland", "England", "Belgium", "Morocco"], "type": "bar"}], "layout": {"xaxis": {"title": {"text": "\u2190 advance %      advance % \u2192"}, "range": [-118, 118]}, "yaxis": {"showticklabels": false}, "barmode": "relative", "title": {"text": "Quarter-final Predictions"}, "font": {"family": "Inter, sans-serif"}}}}});</script>
+      <script type="application/json" data-dc-section-meta>{"section_id": "sec-evidence-1", "section_schema": 2, "kind": "chart_interpretation", "title": "Quarter-final predictions (all 4 matchups known)", "caption": "Advance probabilities including extra time and shootouts.", "plan_step_id": "", "data_policy": "aggregate_only", "payload": {"summary_json_bytes": 966, "series_count": 2, "evidence_count": 0, "has_interpretation": false}, "tokens": ["--dc-bg", "--dc-surface", "--dc-surface-raised", "--dc-surface-muted", "--dc-ink", "--dc-muted", "--dc-line", "--dc-accent", "--dc-accent-2", "--dc-accent-3", "--dc-accent-soft", "--dc-good", "--dc-warn", "--dc-danger"]}</script>
+    </section>
+    <section class="r-section" data-dc-section="chart_interpretation" data-dc-section-id="sec-evidence-2" data-dc-data-policy="aggregate_only">
+      <p class="r-section-kicker">Evidence 02</p><h2>Title race — champion vs reach-final odds</h2>
+      
+      <div class="r-chart-main">
+          <div id="chart-sec-evidence-2" class="r-chart-target"></div>
+          <p class="r-caption">10k simulations.</p>
+          
+        </div>
+      <script>(window.__DataClawReportQueue=window.__DataClawReportQueue||[]).push({fn:"renderFigureById",id:"chart-sec-evidence-2",config:{"figure": {"data": [{"marker": {"color": "#dfe3ea"}, "name": "Reach Final", "orientation": "h", "x": [14.2, 11.0, 20.7, 16.3, 31.6, 33.4, 34.1, 38.6], "y": ["Switzerland", "Belgium", "England", "Morocco", "Norway", "Argentina", "France", "Spain"], "type": "bar"}, {"marker": {"color": ["#7D3C98", "#E1A700", "#C0392B", "#148F55", "#7B2D40", "#4FA9E0", "#2E4A8B", "#E4572E"]}, "name": "Win title", "orientation": "h", "text": ["3%", "6%", "6%", "10%", "11%", "12%", "25%", "28%"], "textposition": "outside", "x": [3.4, 5.7, 5.8, 9.8, 10.8, 11.8, 24.7, 28.0], "y": ["Switzerland", "Belgium", "England", "Morocco", "Norway", "Argentina", "France", "Spain"], "type": "bar"}], "layout": {"legend": {"orientation": "h", "y": -0.15}, "barmode": "overlay", "title": {"text": "Title Race"}, "xaxis": {"title": {"text": "Probability (%)"}}, "font": {"family": "Inter, sans-serif"}}}}});</script>
+      <script type="application/json" data-dc-section-meta>{"section_id": "sec-evidence-2", "section_schema": 2, "kind": "chart_interpretation", "title": "Title race \u2014 champion vs reach-final odds", "caption": "10k simulations.", "plan_step_id": "", "data_policy": "aggregate_only", "payload": {"summary_json_bytes": 862, "series_count": 2, "evidence_count": 0, "has_interpretation": false}, "tokens": ["--dc-bg", "--dc-surface", "--dc-surface-raised", "--dc-surface-muted", "--dc-ink", "--dc-muted", "--dc-line", "--dc-accent", "--dc-accent-2", "--dc-accent-3", "--dc-accent-soft", "--dc-good", "--dc-warn", "--dc-danger"]}</script>
+    </section>
+    <section class="r-section" data-dc-section="chart_interpretation" data-dc-section-id="sec-evidence-3" data-dc-data-policy="aggregate_only">
+      <p class="r-section-kicker">Evidence 03</p><h2>Team strength map — attack vs defense (bubble = title odds)</h2>
+      
+      <div class="r-chart-main">
+          <div id="chart-sec-evidence-3" class="r-chart-target"></div>
+          <p class="r-caption">Axis inverted so up = stronger defense.</p>
+          
+        </div>
+      <script>(window.__DataClawReportQueue=window.__DataClawReportQueue||[]).push({fn:"renderFigureById",id:"chart-sec-evidence-3",config:{"figure": {"data": [{"hovertemplate": "%{text}<br>xG for %{x:.2f} \u00b7 xG against %{y:.2f}<extra><\/extra>", "marker": {"color": ["#E4572E", "#2E4A8B", "#148F55", "#7B2D40", "#4FA9E0", "#E1A700", "#C0392B", "#7D3C98"], "line": {"color": "white", "width": 1.5}, "size": [62, 58, 34, 35, 37, 27, 27, 23]}, "mode": "markers+text", "text": ["Spain", "France", "Morocco", "Norway", "Argentina", "Belgium", "England", "Switzerland"], "textposition": "bottom center", "x": [1.926, 2.191, 1.944, 2.117, 1.876, 1.836, 1.913, 1.471], "y": [0.558, 0.664, 0.861, 1.158, 1.026, 1.01, 1.261, 1.165], "type": "scatter"}], "layout": {"yaxis": {"title": {"text": "\u2190 Defense  xG against"}, "autorange": "reversed"}, "title": {"text": "Team Strength Map"}, "xaxis": {"title": {"text": "Attack \u2192  xG for"}}, "font": {"family": "Inter, sans-serif"}}}}});</script>
+      <script type="application/json" data-dc-section-meta>{"section_id": "sec-evidence-3", "section_schema": 2, "kind": "chart_interpretation", "title": "Team strength map \u2014 attack vs defense (bubble = title odds)", "caption": "Axis inverted so up = stronger defense.", "plan_step_id": "", "data_policy": "aggregate_only", "payload": {"summary_json_bytes": 830, "series_count": 1, "evidence_count": 0, "has_interpretation": false}, "tokens": ["--dc-bg", "--dc-surface", "--dc-surface-raised", "--dc-surface-muted", "--dc-ink", "--dc-muted", "--dc-line", "--dc-accent", "--dc-accent-2", "--dc-accent-3", "--dc-accent-soft", "--dc-good", "--dc-warn", "--dc-danger"]}</script>
+    </section>
+    <section class="r-section" data-dc-section="interactive_table" data-dc-section-id="sec-evidence-4" data-dc-data-policy="preview">
+      <p class="r-section-kicker">Evidence 04</p><h2>Full tournament projection (10k Monte Carlo)</h2>
+      <div class="r-section-context"><p class="r-section-dek">Context and evidence for Full tournament projection (10k Monte Carlo).</p></div>
+      <div id="interactive-4ed3d503a8" class="r-interactive-shell">
+        <div class="r-control-bar" data-dc-control-bar></div>
+        <div class="r-table-tools" data-dc-table-tools></div>
+        <div class="r-interactive-table-wrap" data-dc-interactive-table></div>
+        <div class="r-pagination" data-dc-pagination></div>
+      </div>
+      <script>(window.__DataClawReportQueue=window.__DataClawReportQueue||[]).push({fn:"initInteractiveTable",id:"interactive-4ed3d503a8",config:{"rows": [{"Team": "Spain", "Reach SF %": 69.9, "Reach Final %": 38.6, "Champion %": 28, "3rd place %": 23.1, "Elo": 2120, "FIFA rank": 2}, {"Team": "France", "Reach SF %": 62.3, "Reach Final %": 34.1, "Champion %": 24.7, "3rd place %": 20.3, "Elo": 2100, "FIFA rank": 3}, {"Team": "Argentina", "Reach SF %": 63.2, "Reach Final %": 33.4, "Champion %": 11.8, "3rd place %": 10.9, "Elo": 2150, "FIFA rank": 1}, {"Team": "Norway", "Reach SF %": 57.3, "Reach Final %": 31.6, "Champion %": 10.8, "3rd place %": 9.9, "Elo": 1775, "FIFA rank": 44}, {"Team": "Morocco", "Reach SF %": 37.7, "Reach Final %": 16.3, "Champion %": 9.8, "3rd place %": 13.1, "Elo": 1920, "FIFA rank": 7}, {"Team": "England", "Reach SF %": 42.7, "Reach Final %": 20.7, "Champion %": 5.8, "3rd place %": 6.7, "Elo": 2050, "FIFA rank": 4}, {"Team": "Belgium", "Reach SF %": 30.1, "Reach Final %": 11, "Champion %": 5.7, "3rd place %": 10.1, "Elo": 1950, "FIFA rank": 9}, {"Team": "Switzerland", "Reach SF %": 36.8, "Reach Final %": 14.2, "Champion %": 3.4, "3rd place %": 6, "Elo": 1860, "FIFA rank": 19}], "columns": ["Team", "Reach SF %", "Reach Final %", "Champion %", "3rd place %", "Elo", "FIFA rank"], "filters": [{"key": "Team", "label": "Team"}], "page_size": 20, "search": true}});</script>
+      <script type="application/json" data-dc-section-meta>{"section_id": "sec-evidence-4", "section_schema": 2, "kind": "interactive_table", "title": "Full tournament projection (10k Monte Carlo)", "caption": "Context and evidence for Full tournament projection (10k Monte Carlo).", "plan_step_id": "", "data_policy": "preview", "payload": {"record_count": 8, "data_json_bytes": 1063, "max_records": 500, "max_bytes": 163840, "row_count": 8, "column_count": 7, "filter_count": 1, "has_search": true, "caption_required": true}, "tokens": ["--dc-bg", "--dc-surface", "--dc-surface-raised", "--dc-surface-muted", "--dc-ink", "--dc-muted", "--dc-line", "--dc-accent", "--dc-accent-2", "--dc-accent-3", "--dc-accent-soft", "--dc-good", "--dc-warn", "--dc-danger"]}</script>
+    </section>
+    <section class="r-section" data-dc-section="interactive_table" data-dc-section-id="sec-evidence-5" data-dc-data-policy="preview">
+      <p class="r-section-kicker">Evidence 05</p><h2>Player behavior &amp; squad composition (8 live teams)</h2>
+      <div class="r-section-context"><p class="r-section-dek">Context and evidence for Player behavior &amp; squad composition (8 live teams).</p></div>
+      <div id="interactive-3673a5e797" class="r-interactive-shell">
+        <div class="r-control-bar" data-dc-control-bar></div>
+        <div class="r-table-tools" data-dc-table-tools></div>
+        <div class="r-interactive-table-wrap" data-dc-interactive-table></div>
+        <div class="r-pagination" data-dc-pagination></div>
+      </div>
+      <script>(window.__DataClawReportQueue=window.__DataClawReportQueue||[]).push({fn:"initInteractiveTable",id:"interactive-3673a5e797",config:{"rows": [{"Team": "Spain", "Top scorer (goals)": "Oyarzabal (4)", "Team goals": 8, "Top-scorer share": "50%", "Discipline (cards/match)": 0.6, "Top-15 value (\u20acB)": 1.57, "Star caps": 32}, {"Team": "France", "Top scorer (goals)": "Mbapp\u00e9 (7)", "Team goals": 14, "Top-scorer share": "50%", "Discipline (cards/match)": 0.2, "Top-15 value (\u20acB)": 1.31, "Star caps": 30}, {"Team": "Argentina", "Top scorer (goals)": "Messi (8)", "Team goals": 13, "Top-scorer share": "62%", "Discipline (cards/match)": 0.4, "Top-15 value (\u20acB)": 0.94, "Star caps": 33}, {"Team": "Norway", "Top scorer (goals)": "Haaland (7)", "Team goals": 11, "Top-scorer share": "64%", "Discipline (cards/match)": 0.4, "Top-15 value (\u20acB)": 0.42, "Star caps": 35}, {"Team": "Morocco", "Top scorer (goals)": "Saibari (3)", "Team goals": 10, "Top-scorer share": "30%", "Discipline (cards/match)": 0.4, "Top-15 value (\u20acB)": 0.41, "Star caps": 28}, {"Team": "England", "Top scorer (goals)": "Kane (6)", "Team goals": 11, "Top-scorer share": "55%", "Discipline (cards/match)": 2, "Top-15 value (\u20acB)": 1.1, "Star caps": 29}, {"Team": "Belgium", "Top scorer (goals)": "Lukaku (3)", "Team goals": 12, "Top-scorer share": "25%", "Discipline (cards/match)": 1.4, "Top-15 value (\u20acB)": 0.49, "Star caps": 29}, {"Team": "Switzerland", "Top scorer (goals)": "Manzambi (3)", "Team goals": 9, "Top-scorer share": "33%", "Discipline (cards/match)": 1.2, "Top-15 value (\u20acB)": 0.31, "Star caps": 43}], "columns": ["Team", "Top scorer (goals)", "Team goals", "Top-scorer share", "Discipline (cards/match)", "Top-15 value (\u20acB)", "Star caps"], "filters": [{"key": "Top-scorer share", "label": "Top-Scorer Share"}, {"key": "Team", "label": "Team"}, {"key": "Top scorer (goals)", "label": "Top Scorer (Goals)"}], "page_size": 20, "search": true}});</script>
+      <script type="application/json" data-dc-section-meta>{"section_id": "sec-evidence-5", "section_schema": 2, "kind": "interactive_table", "title": "Player behavior & squad composition (8 live teams)", "caption": "Context and evidence for Player behavior & squad composition (8 live teams).", "plan_step_id": "", "data_policy": "preview", "payload": {"record_count": 8, "data_json_bytes": 1478, "max_records": 500, "max_bytes": 163840, "row_count": 8, "column_count": 7, "filter_count": 3, "has_search": true, "caption_required": true}, "tokens": ["--dc-bg", "--dc-surface", "--dc-surface-raised", "--dc-surface-muted", "--dc-ink", "--dc-muted", "--dc-line", "--dc-accent", "--dc-accent-2", "--dc-accent-3", "--dc-accent-soft", "--dc-good", "--dc-warn", "--dc-danger"]}</script>
+    </section>
+    <section class="r-section" data-dc-section="methodology_block" data-dc-section-id="sec-methodology_block-139ab2afb2" data-dc-data-policy="narrative">
+      <p class="r-section-kicker">Method &amp; trust</p><h2>Methodology</h2>
+      <div class="r-section-context"><p class="r-section-dek">Context and evidence for Methodology.</p></div>
+      
+      <div class="r-methodology-grid"><article class="r-method-card"><h3>Step 1</h3><p>Data: 96 completed matches (Group + R32 + R16) from fifa_wc26, as of 2026-07-14.</p></article><article class="r-method-card"><h3>Step 2</h3><p>Features from player behavior (goals, assists, discipline) and squad composition (top-15 market value, age, caps, depth), plus team-match xG.</p></article><article class="r-method-card"><h3>Step 3</h3><p>Ratings: opponent-adjusted attack/defense on blended goals (0.6xG + 0.4 actual), shrunk toward a squad-strength prior (Elo + value + caps).</p></article><article class="r-method-card"><h3>Step 4</h3><p>Independent Poisson goals model; knockouts resolved with extra time and shootouts; neutral venue.</p></article><article class="r-method-card"><h3>Step 5</h3><p>10k Monte Carlo simulations through the reconstructed bracket (QF98=Spain-Belgium, QF100=Argentina-Switzerland).</p></article><article class="r-method-card"><h3>Step 6</h3><p>Validation: fit on group stage, predict 24 completed knockouts -&gt; 66.7% accuracy, log-loss 0.54 vs 0.69 baseline.</p></article></div>
+      
+      <script type="application/json" data-dc-section-meta>{"section_id": "sec-methodology_block-139ab2afb2", "section_schema": 2, "kind": "methodology_block", "title": "Methodology", "caption": "Context and evidence for Methodology.", "plan_step_id": "", "data_policy": "narrative", "payload": {"method_count": 6, "check_count": 0}, "tokens": ["--dc-bg", "--dc-surface", "--dc-surface-raised", "--dc-surface-muted", "--dc-ink", "--dc-muted", "--dc-line", "--dc-accent", "--dc-accent-2", "--dc-accent-3", "--dc-accent-soft", "--dc-good", "--dc-warn", "--dc-danger"]}</script>
+    </section>
+    <section class="r-section" data-dc-section="evidence_trace" data-dc-section-id="sec-evidence_trace-071f98e6a8" data-dc-data-policy="narrative">
+      <p class="r-section-kicker">Provenance</p><h2>Evidence trace</h2>
+      <div class="r-section-context"><p class="r-section-dek">Context and evidence for Evidence trace.</p></div>
+      <div class="r-ledger"><article class="r-ledger-item">
+      <div class="r-ledger-top">
+        <strong>Evidence Ref</strong>
+        <span><span class="r-chip neutral">evidence_ref</span><span class="r-chip good">active</span></span>
+      </div>
+      <p class="r-finding-meta">The decisive game is the semifinal, not the Final</p>
+      
+      <p class="r-evidence-ref">Reach-Final odds Spain 39% and France 34% are mutually exclusive across 10k simulations.</p>
+    </article><article class="r-ledger-item">
+      <div class="r-ledger-top">
+        <strong>Evidence Ref</strong>
+        <span><span class="r-chip neutral">evidence_ref</span><span class="r-chip good">active</span></span>
+      </div>
+      <p class="r-finding-meta">Most likely Final: Argentina vs Spain (13%)</p>
+      
+      <p class="r-evidence-ref">Top simulated finals: ARG-ESP 13%, NOR-ESP 12%, ARG-FRA 11%.</p>
+    </article><article class="r-ledger-item">
+      <div class="r-ledger-top">
+        <strong>Evidence Ref</strong>
+        <span><span class="r-chip neutral">evidence_ref</span><span class="r-chip good">active</span></span>
+      </div>
+      <p class="r-finding-meta">Norway–England is the round&#x27;s likeliest upset</p>
+      
+      <p class="r-evidence-ref">England concede 1.26 expected goals per match, worst among the survivors.</p>
+    </article><article class="r-ledger-item">
+      <div class="r-ledger-top">
+        <strong>Evidence Ref</strong>
+        <span><span class="r-chip neutral">evidence_ref</span><span class="r-chip good">active</span></span>
+      </div>
+      <p class="r-finding-meta">Spain&#x27;s edge is defense plus underlying chances</p>
+      
+      <p class="r-evidence-ref">The blended rating weights xG 60%, rewarding Spain&#x27;s chance creation over raw goals.</p>
+    </article><article class="r-ledger-item">
+      <div class="r-ledger-top">
+        <strong>Evidence Ref</strong>
+        <span><span class="r-chip neutral">evidence_ref</span><span class="r-chip good">active</span></span>
+      </div>
+      <p class="r-finding-meta">Squad behavior separates the contenders</p>
+      
+      <p class="r-evidence-ref">Goal concentration and discipline are squad-composition risks that raise variance in single-elimination games.</p>
+    </article><article class="r-ledger-item">
+      <div class="r-ledger-top">
+        <strong>Evidence Ref</strong>
+        <span><span class="r-chip neutral">evidence_ref</span><span class="r-chip good">active</span></span>
+      </div>
+      <p class="r-finding-meta">The model is validated out-of-sample</p>
+      
+      <p class="r-evidence-ref">Log-loss 0.54 vs 0.69 baseline; Brier 0.18; well-calibrated across probability buckets.</p>
+    </article></div>
+      <script type="application/json" data-dc-section-meta>{"section_id": "sec-evidence_trace-071f98e6a8", "section_schema": 2, "kind": "evidence_trace", "title": "Evidence trace", "caption": "Context and evidence for Evidence trace.", "plan_step_id": "", "data_policy": "narrative", "payload": {"evidence_count": 6, "items": [{"finding_id": "", "hypothesis_id": "", "title": "", "status": "", "severity": "", "evidence": "", "ref": "Reach-Final odds Spain 39% and France 34% are mutually exclusive across 10k simulations."}, {"finding_id": "", "hypothesis_id": "", "title": "", "status": "", "severity": "", "evidence": "", "ref": "Top simulated finals: ARG-ESP 13%, NOR-ESP 12%, ARG-FRA 11%."}, {"finding_id": "", "hypothesis_id": "", "title": "", "status": "", "severity": "", "evidence": "", "ref": "England concede 1.26 expected goals per match, worst among the survivors."}, {"finding_id": "", "hypothesis_id": "", "title": "", "status": "", "severity": "", "evidence": "", "ref": "The blended rating weights xG 60%, rewarding Spain's chance creation over raw goals."}, {"finding_id": "", "hypothesis_id": "", "title": "", "status": "", "severity": "", "evidence": "", "ref": "Goal concentration and discipline are squad-composition risks that raise variance in single-elimination games."}, {"finding_id": "", "hypothesis_id": "", "title": "", "status": "", "severity": "", "evidence": "", "ref": "Log-loss 0.54 vs 0.69 baseline; Brier 0.18; well-calibrated across probability buckets."}]}, "tokens": ["--dc-bg", "--dc-surface", "--dc-surface-raised", "--dc-surface-muted", "--dc-ink", "--dc-muted", "--dc-line", "--dc-accent", "--dc-accent-2", "--dc-accent-3", "--dc-accent-soft", "--dc-good", "--dc-warn", "--dc-danger"]}</script>
+    </section>
+    <script type="application/json" data-dc-evidence-registry>{"evidence_registry_schema": 1, "targets": [], "references": [{"section_id": "sec-primary-insights", "kind": "unknown", "ref": "Reach-Final odds Spain 39% and France 34% are mutually exclusive across 10k simulations."}, {"section_id": "sec-primary-insights", "kind": "unknown", "ref": "Top simulated finals: ARG-ESP 13%, NOR-ESP 12%, ARG-FRA 11%."}, {"section_id": "sec-primary-insights", "kind": "unknown", "ref": "England concede 1.26 expected goals per match, worst among the survivors."}, {"section_id": "sec-primary-insights", "kind": "unknown", "ref": "The blended rating weights xG 60%, rewarding Spain's chance creation over raw goals."}, {"section_id": "sec-primary-insights", "kind": "unknown", "ref": "Goal concentration and discipline are squad-composition risks that raise variance in single-elimination games."}, {"section_id": "sec-primary-insights", "kind": "unknown", "ref": "Log-loss 0.54 vs 0.69 baseline; Brier 0.18; well-calibrated across probability buckets."}, {"section_id": "evidence_trace", "kind": "evidence_ref", "ref": "Reach-Final odds Spain 39% and France 34% are mutually exclusive across 10k simulations."}, {"section_id": "evidence_trace", "kind": "evidence_ref", "ref": "Top simulated finals: ARG-ESP 13%, NOR-ESP 12%, ARG-FRA 11%."}, {"section_id": "evidence_trace", "kind": "evidence_ref", "ref": "England concede 1.26 expected goals per match, worst among the survivors."}, {"section_id": "evidence_trace", "kind": "evidence_ref", "ref": "The blended rating weights xG 60%, rewarding Spain's chance creation over raw goals."}, {"section_id": "evidence_trace", "kind": "evidence_ref", "ref": "Goal concentration and discipline are squad-composition risks that raise variance in single-elimination games."}, {"section_id": "evidence_trace", "kind": "evidence_ref", "ref": "Log-loss 0.54 vs 0.69 baseline; Brier 0.18; well-calibrated across probability buckets."}]}</script>
+    <!-- DATACLAW_REPORT_SECTIONS_END -->
+  </main>
+  <script data-dc-report-shell-script>
+
+(function() {
+  function text(value) {
+    return value === null || value === undefined ? '' : String(value);
+  }
+  function esc(value) {
+    return text(value).replace(/[&<>"']/g, function(ch) {
+      return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch];
+    });
+  }
+  function slugId(value, prefix) {
+    var base = text(value).trim().replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+    return (prefix || 'dc') + '-' + (base || Math.random().toString(36).slice(2, 8));
+  }
+  function cell(row, key) {
+    return row && row[key] !== undefined && row[key] !== null ? row[key] : '';
+  }
+  function columnsFrom(rows, columns) {
+    if (Array.isArray(columns) && columns.length) {
+      return columns.map(function(col) {
+        if (typeof col === 'string') return {key: col, label: col};
+        return {key: text(col.key || col.name || col.label), label: text(col.label || col.name || col.key)};
+      }).filter(function(col) { return col.key; });
+    }
+    var seen = {};
+    var cols = [];
+    (rows || []).forEach(function(row) {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) return;
+      Object.keys(row).forEach(function(key) {
+        if (!seen[key]) {
+          seen[key] = true;
+          cols.push({key: key, label: key.replace(/_/g, ' ')});
+        }
+      });
+    });
+    return cols;
+  }
+  function normalizeTableRows(rows, columns) {
+    if (!Array.isArray(rows)) return [];
+    var cols = columnsFrom([], columns);
+    if (!cols.length) return rows;
+    return rows.map(function(row) {
+      if (!Array.isArray(row)) return row;
+      var normalized = {};
+      cols.forEach(function(col, index) { normalized[col.key] = row[index]; });
+      return normalized;
+    });
+  }
+  function uniqueOptions(rows, key) {
+    var seen = {};
+    var options = [];
+    (rows || []).forEach(function(row) {
+      var value = text(cell(row, key));
+      if (value && !seen[value]) {
+        seen[value] = true;
+        options.push({value: value, label: value});
+      }
+    });
+    return options.sort(function(a, b) { return a.label.localeCompare(b.label); });
+  }
+  function normalizeFilters(filters, rows) {
+    return (Array.isArray(filters) ? filters : []).map(function(filter) {
+      if (typeof filter === 'string') filter = {key: filter, label: filter};
+      var key = text(filter.key || filter.name || filter.field);
+      if (!key) return null;
+      var opts = Array.isArray(filter.options) ? filter.options.map(function(option) {
+        if (option && typeof option === 'object') return {value: text(option.value || option.key || option.label), label: text(option.label || option.value || option.key)};
+        return {value: text(option), label: text(option)};
+      }) : uniqueOptions(rows, key);
+      return {key: key, label: text(filter.label || key.replace(/_/g, ' ')), options: opts};
+    }).filter(Boolean);
+  }
+  function buildControls(container, filters, rows, onChange) {
+    var normalized = normalizeFilters(filters, rows);
+    if (!container) return function() { return {}; };
+    if (!normalized.length) return function() { return {}; };
+    container.innerHTML = '';
+    var selects = [];
+    normalized.forEach(function(filter) {
+      var wrap = document.createElement('div');
+      wrap.className = 'r-control';
+      var label = document.createElement('label');
+      var selectId = slugId(filter.key + '-' + Math.random().toString(36).slice(2, 8), 'filter');
+      label.setAttribute('for', selectId);
+      label.textContent = filter.label;
+      var select = document.createElement('select');
+      select.id = selectId;
+      select.name = filter.key;
+      select.setAttribute('aria-label', filter.label);
+      select.setAttribute('data-dc-filter-key', filter.key);
+      var all = document.createElement('option');
+      all.value = '';
+      all.textContent = 'All ' + filter.label;
+      select.appendChild(all);
+      filter.options.forEach(function(option) {
+        var item = document.createElement('option');
+        item.value = option.value;
+        item.textContent = option.label;
+        select.appendChild(item);
+      });
+      select.addEventListener('change', function() {
+        updateSummary();
+        if (typeof onChange === 'function') onChange();
+      });
+      selects.push(select);
+      wrap.appendChild(label);
+      wrap.appendChild(select);
+      container.appendChild(wrap);
+    });
+    var actions = document.createElement('div');
+    actions.className = 'r-control-actions';
+    var summary = document.createElement('span');
+    summary.className = 'r-control-summary';
+    summary.setAttribute('aria-live', 'polite');
+    var reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'r-control-reset';
+    reset.textContent = 'Reset filters';
+    reset.addEventListener('click', function() {
+      selects.forEach(function(select) { select.value = ''; });
+      updateSummary();
+      if (typeof onChange === 'function') onChange();
+    });
+    actions.appendChild(summary);
+    actions.appendChild(reset);
+    container.appendChild(actions);
+    function getValues() {
+      var values = {};
+      selects.forEach(function(select) {
+        values[select.getAttribute('data-dc-filter-key')] = select.value;
+      });
+      return values;
+    }
+    function updateSummary() {
+      var active = selects.filter(function(select) { return select.value; }).length;
+      summary.textContent = active ? active + ' active filter' + (active === 1 ? '' : 's') : 'All records';
+      reset.disabled = active === 0;
+    }
+    updateSummary();
+    return getValues;
+  }
+  function applyFilters(rows, values) {
+    var keys = Object.keys(values || {}).filter(function(key) { return values[key]; });
+    if (!keys.length) return rows || [];
+    return (rows || []).filter(function(row) {
+      return keys.every(function(key) { return text(cell(row, key)) === values[key]; });
+    });
+  }
+  function matchSearch(row, query, columns) {
+    if (!query) return true;
+    var haystack = columns.map(function(col) { return text(cell(row, col.key)); }).join(' ').toLowerCase();
+    return haystack.indexOf(query.toLowerCase()) !== -1;
+  }
+  function cssVar(name, fallback) {
+    var value = getComputedStyle(document.documentElement).getPropertyValue(name);
+    return (value && value.trim()) || fallback || '';
+  }
+  function chartColorway() {
+    var colors = [];
+    for (var i = 1; i <= 8; i++) {
+      var color = cssVar('--dc-cat-' + i);
+      if (color) colors.push(color);
+    }
+    if (!colors.length) {
+      colors = [cssVar('--dc-accent', '#2563eb'), cssVar('--dc-accent-2', '#0f766e'), cssVar('--dc-accent-3', '#c2410c')];
+    }
+    return colors;
+  }
+  var CHART_FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif';
+  function mergeDeep(base, over) {
+    var out = {};
+    Object.keys(base || {}).forEach(function(key) { out[key] = base[key]; });
+    Object.keys(over || {}).forEach(function(key) {
+      var value = over[key];
+      if (value && typeof value === 'object' && !Array.isArray(value) && out[key] && typeof out[key] === 'object' && !Array.isArray(out[key])) {
+        out[key] = mergeDeep(out[key], value);
+      } else {
+        out[key] = value;
+      }
+    });
+    return out;
+  }
+  function themeAxis(axis) {
+    var line = cssVar('--dc-line', '#d9e1ea');
+    var muted = cssVar('--dc-muted', '#667085');
+    axis = axis || {};
+    axis.gridcolor = line;
+    axis.zerolinecolor = line;
+    axis.linecolor = line;
+    axis.tickcolor = line;
+    axis.tickfont = mergeDeep({color: muted}, axis.tickfont || {});
+    axis.tickfont.color = muted;
+    if (axis.automargin === undefined) axis.automargin = true;
+    if (axis.title && typeof axis.title === 'string') axis.title = {text: axis.title};
+    axis.title = mergeDeep({font: {color: muted}}, axis.title || {});
+    axis.title.font = mergeDeep(axis.title.font || {}, {color: muted});
+    return axis;
+  }
+  function applyChartTheme(layout) {
+    layout = layout || {};
+    delete layout.template;
+    var ink = cssVar('--dc-ink', '#111827');
+    layout.colorway = layout.colorway || chartColorway();
+    layout.font = mergeDeep({size: 12.5}, layout.font || {});
+    layout.font.family = CHART_FONT;
+    layout.font.color = ink;
+    layout.paper_bgcolor = 'rgba(0,0,0,0)';
+    layout.plot_bgcolor = 'rgba(0,0,0,0)';
+    Object.keys(layout).forEach(function(key) {
+      if (/^[xy]axis[0-9]*$/.test(key)) layout[key] = themeAxis(layout[key]);
+    });
+    layout.xaxis = themeAxis(layout.xaxis);
+    layout.yaxis = themeAxis(layout.yaxis);
+    layout.legend = mergeDeep({font: {color: ink}, bgcolor: 'rgba(0,0,0,0)'}, layout.legend || {});
+    layout.legend.font = mergeDeep(layout.legend.font || {}, {color: ink});
+    if (layout.title && typeof layout.title === 'string') layout.title = {text: layout.title};
+    if (layout.title) {
+      layout.title = mergeDeep({font: {color: ink, size: 15}}, layout.title);
+      layout.title.font.color = ink;
+    }
+    if (!layout.margin) layout.margin = {l: 52, r: 18, t: layout.title ? 40 : 18, b: 50};
+    layout.hoverlabel = mergeDeep({font: {family: CHART_FONT}}, layout.hoverlabel || {});
+    return layout;
+  }
+  var chartRegistry = [];
+  function registerChartRender(target, render) {
+    for (var i = 0; i < chartRegistry.length; i++) {
+      if (chartRegistry[i].target === target) {
+        chartRegistry[i].render = render;
+        return;
+      }
+    }
+    chartRegistry.push({target: target, render: render});
+  }
+  function rethemeCharts() {
+    chartRegistry.forEach(function(entry) {
+      if (document.body.contains(entry.target)) entry.render();
+    });
+  }
+  if (window.MutationObserver) {
+    new MutationObserver(rethemeCharts).observe(document.documentElement, {attributes: true, attributeFilter: ['data-theme']});
+  }
+  if (window.matchMedia) {
+    try { window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', rethemeCharts); } catch (err) {}
+  }
+  function renderFigure(target, fig) {
+    if (!target) return;
+    if (!window.Plotly) {
+      target.innerHTML = '<div class="r-empty-state">Chart runtime unavailable.</div>';
+      return;
+    }
+    var layout = applyChartTheme(JSON.parse(JSON.stringify((fig && fig.layout) || {})));
+    Plotly.react(target, (fig && fig.data) || [], layout, {responsive: true, displaylogo: false});
+    registerChartRender(target, function() { renderFigure(target, fig); });
+  }
+  function coerceNumber(value) {
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    var n = Number(text(value).replace(/,/g, ''));
+    return Number.isFinite(n) ? n : null;
+  }
+  function aggregateValues(values, how) {
+    var nums = values.map(coerceNumber).filter(function(v) { return v !== null; });
+    if (how === 'count') return values.length;
+    if (!nums.length) return values.length ? values[values.length - 1] : null;
+    var sum = nums.reduce(function(a, b) { return a + b; }, 0);
+    if (how === 'mean') return sum / nums.length;
+    if (how === 'max') return Math.max.apply(null, nums);
+    if (how === 'min') return Math.min.apply(null, nums);
+    return sum;
+  }
+  function referenceShapes(chart) {
+    var shapes = [];
+    var annotations = [];
+    var accent = cssVar('--dc-accent-3', '#c2410c');
+    var muted = cssVar('--dc-muted', '#667085');
+    (Array.isArray(chart.reference_lines) ? chart.reference_lines : []).forEach(function(rl) {
+      if (!rl || rl.value === undefined || rl.value === null) return;
+      var shape = {type: 'line', line: {dash: 'dot', width: 1.6, color: rl.color || accent}};
+      if (rl.axis === 'x') {
+        shape.x0 = rl.value; shape.x1 = rl.value; shape.yref = 'paper'; shape.y0 = 0; shape.y1 = 1;
+        if (rl.label) annotations.push({text: rl.label, x: rl.value, yref: 'paper', y: 1, yanchor: 'bottom', showarrow: false, font: {size: 11, color: muted}});
+      } else {
+        shape.y0 = rl.value; shape.y1 = rl.value; shape.xref = 'paper'; shape.x0 = 0; shape.x1 = 1;
+        if (rl.label) annotations.push({text: rl.label, y: rl.value, xref: 'paper', x: 1, xanchor: 'right', yanchor: 'bottom', showarrow: false, font: {size: 11, color: muted}});
+      }
+      shapes.push(shape);
+    });
+    (Array.isArray(chart.annotations) ? chart.annotations : []).forEach(function(note) {
+      if (!note || note.text === undefined) return;
+      annotations.push({text: text(note.text), x: note.x, y: note.y, showarrow: note.showarrow !== false, arrowhead: 2, arrowsize: 0.8, font: {size: 11}});
+    });
+    return {shapes: shapes, annotations: annotations};
+  }
+  function renderChart(target, chart, rows) {
+    if (!target) return;
+    chart = chart || {};
+    rows = rows || [];
+    if (!window.Plotly) {
+      target.innerHTML = '<div class="r-empty-state">Chart runtime unavailable.</div>';
+      return;
+    }
+    if (!rows.length) {
+      if (Plotly.purge) Plotly.purge(target);
+      target.innerHTML = '<div class="r-empty-state">No records match the current controls.</div>';
+      return;
+    }
+    if (!target._fullLayout && target.firstChild) target.innerHTML = '';
+    var type = chart.type || 'bar';
+    var horizontal = type === 'hbar' || chart.orientation === 'h';
+    if (type === 'hbar') type = 'bar';
+    var xKey = chart.x || chart.x_key || 'x';
+    var yKey = chart.y || chart.y_key || 'y';
+    var colorKey = chart.color || chart.group || chart.series;
+    var traces = [];
+    var layout = {};
+    if (type === 'heatmap') {
+      var zKey = chart.z || chart.value || chart.z_key || 'value';
+      var xs = [], ys = [], seenX = {}, seenY = {};
+      rows.forEach(function(row) {
+        var xv = text(cell(row, xKey));
+        var yv = text(cell(row, yKey));
+        if (xv && !seenX[xv]) { seenX[xv] = true; xs.push(xv); }
+        if (yv && !seenY[yv]) { seenY[yv] = true; ys.push(yv); }
+      });
+      var z = ys.map(function() { return xs.map(function() { return null; }); });
+      rows.forEach(function(row) {
+        var xi = xs.indexOf(text(cell(row, xKey)));
+        var yi = ys.indexOf(text(cell(row, yKey)));
+        if (xi > -1 && yi > -1) z[yi][xi] = coerceNumber(cell(row, zKey));
+      });
+      var flat = [];
+      z.forEach(function(rowVals) { rowVals.forEach(function(v) { if (v !== null) flat.push(v); }); });
+      var zMin = Math.min.apply(null, flat);
+      var zMax = Math.max.apply(null, flat);
+      var diverging = flat.length > 0 && zMin < 0 && zMax > 0;
+      var scale = chart.colorscale;
+      if (!scale) {
+        scale = diverging
+          ? [[0, cssVar('--dc-accent', '#2563eb')], [0.5, cssVar('--dc-surface-muted', '#f8fafc')], [1, cssVar('--dc-accent-3', '#c2410c')]]
+          : [[0, cssVar('--dc-surface-muted', '#f8fafc')], [1, cssVar('--dc-accent', '#2563eb')]];
+      }
+      var heatTrace = {
+        type: 'heatmap', x: xs, y: ys, z: z, hoverongaps: false,
+        colorscale: scale,
+        colorbar: {outlinewidth: 0, thickness: 12}
+      };
+      if (diverging && !chart.colorscale) heatTrace.zmid = 0;
+      traces = [heatTrace];
+    } else {
+      var grouped = {};
+      var order = [];
+      rows.forEach(function(row) {
+        var name = colorKey ? text(cell(row, colorKey)) || 'Series' : chart.name || 'Series';
+        if (!grouped[name]) { grouped[name] = {}; order.push(name); }
+        var xv = text(cell(row, xKey));
+        if (!grouped[name][xv]) grouped[name][xv] = [];
+        grouped[name][xv].push(cell(row, yKey));
+      });
+      var catTotals = {};
+      var cats = [];
+      order.forEach(function(name) {
+        Object.keys(grouped[name]).forEach(function(xv) {
+          if (catTotals[xv] === undefined) { catTotals[xv] = 0; cats.push(xv); }
+          var agg = aggregateValues(grouped[name][xv], chart.agg || 'sum');
+          var n = coerceNumber(agg);
+          if (n !== null) catTotals[xv] += n;
+        });
+      });
+      var sortMode = chart.sort === undefined ? (type === 'bar' ? 'value' : 'none') : chart.sort;
+      if (sortMode === true) sortMode = 'value';
+      if (sortMode === false) sortMode = 'none';
+      if (sortMode === 'value' || sortMode === 'asc' || sortMode === 'desc') {
+        var dir = sortMode === 'asc' ? 1 : -1;
+        cats.sort(function(a, b) { return (catTotals[a] - catTotals[b]) * dir; });
+      } else if (sortMode === 'label') {
+        cats.sort(function(a, b) { return a.localeCompare(b, undefined, {numeric: true}); });
+      }
+      traces = order.map(function(name) {
+        var xsOut = [], ysOut = [];
+        cats.forEach(function(xv) {
+          if (!grouped[name][xv]) return;
+          xsOut.push(xv);
+          ysOut.push(aggregateValues(grouped[name][xv], chart.agg || 'sum'));
+        });
+        var trace = {name: name, type: type === 'line' ? 'scatter' : type};
+        if (horizontal) {
+          trace.x = ysOut; trace.y = xsOut; trace.orientation = 'h';
+        } else {
+          trace.x = xsOut; trace.y = ysOut;
+        }
+        if (type === 'scatter') trace.mode = chart.mode || 'markers';
+        if (type === 'line') trace.mode = chart.mode || 'lines+markers';
+        return trace;
+      });
+      var catAxis = {categoryorder: 'array', categoryarray: cats};
+      var xTitle = chart.x_label || text(xKey).replace(/_/g, ' ');
+      var yTitle = chart.y_label || text(yKey).replace(/_/g, ' ');
+      if (horizontal) {
+        layout.yaxis = mergeDeep(catAxis, {title: xTitle, autorange: 'reversed'});
+        layout.xaxis = {title: yTitle};
+      } else {
+        layout.xaxis = mergeDeep(catAxis, {title: xTitle});
+        layout.yaxis = {title: yTitle};
+      }
+      if (order.length > 1 && type === 'bar') layout.barmode = chart.barmode || 'group';
+    }
+    if (chart.title) layout.title = {text: chart.title};
+    var extras = referenceShapes(chart);
+    if (extras.shapes.length) layout.shapes = (layout.shapes || []).concat(extras.shapes);
+    if (extras.annotations.length) layout.annotations = (layout.annotations || []).concat(extras.annotations);
+    layout = mergeDeep(layout, chart.layout || {});
+    Plotly.react(target, traces, applyChartTheme(layout), {responsive: true, displaylogo: false});
+    registerChartRender(target, function() { renderChart(target, chart, rows); });
+  }
+  function initTable(root, config, rowsProvider) {
+    var baseRows = normalizeTableRows(config.rows || config.records || [], config.columns);
+    var cols = columnsFrom(baseRows, config.columns);
+    var pageSize = Number(config.page_size || config.pageSize || 20);
+    var state = {page: 1, sortKey: '', sortDir: 1, search: ''};
+    var controls = root.querySelector('[data-dc-control-bar]');
+    var getFilters = buildControls(controls, config.filters || config.controls || [], baseRows, function() { state.page = 1; render(); });
+    var target = root.querySelector('[data-dc-interactive-table]');
+    var tools = root.querySelector('[data-dc-table-tools]');
+    var pager = root.querySelector('[data-dc-pagination]');
+    if (tools && config.search !== false && config.enable_search !== false) {
+      var input = document.createElement('input');
+      input.id = slugId('table-search-' + Math.random().toString(36).slice(2, 8), 'search');
+      input.type = 'search';
+      input.placeholder = config.search_placeholder || 'Search table';
+      input.setAttribute('aria-label', config.search_label || 'Search table');
+      input.addEventListener('input', function() { state.search = input.value; state.page = 1; render(); });
+      tools.appendChild(input);
+    }
+    function activeRows() {
+      var rows = typeof rowsProvider === 'function' ? rowsProvider() : baseRows;
+      rows = applyFilters(rows, getFilters()).filter(function(row) { return matchSearch(row, state.search, cols); });
+      if (state.sortKey) {
+        rows = rows.slice().sort(function(a, b) {
+          var av = cell(a, state.sortKey);
+          var bv = cell(b, state.sortKey);
+          var an = Number(av);
+          var bn = Number(bv);
+          if (!Number.isNaN(an) && !Number.isNaN(bn)) return (an - bn) * state.sortDir;
+          return text(av).localeCompare(text(bv), undefined, {numeric: true}) * state.sortDir;
+        });
+      }
+      return rows;
+    }
+    var numericCols = {};
+    cols.forEach(function(col) {
+      var sample = baseRows.filter(function(row) { return text(cell(row, col.key)) !== ''; });
+      numericCols[col.key] = sample.length > 0 && sample.every(function(row) { return coerceNumber(cell(row, col.key)) !== null; });
+    });
+    function formatCell(value, key) {
+      if (!numericCols[key]) return esc(value);
+      var n = coerceNumber(value);
+      if (n === null) return esc(value);
+      return esc(n.toLocaleString(undefined, {maximumFractionDigits: 2}));
+    }
+    function render() {
+      if (!target) return;
+      var rows = activeRows();
+      var pages = Math.max(1, Math.ceil(rows.length / pageSize));
+      state.page = Math.min(state.page, pages);
+      var start = (state.page - 1) * pageSize;
+      var shown = rows.slice(start, start + pageSize);
+      var head = '<thead><tr>' + cols.map(function(col) {
+        var sorted = state.sortKey === col.key;
+        var ariaSort = sorted ? (state.sortDir === 1 ? 'ascending' : 'descending') : 'none';
+        var marker = sorted ? (state.sortDir === 1 ? '▲' : '▼') : '';
+        var numClass = numericCols[col.key] ? ' class="num"' : '';
+        return '<th scope="col"' + numClass + ' aria-sort="' + ariaSort + '"><button type="button" class="r-sort-button" data-key="' + esc(col.key) + '" aria-label="Sort by ' + esc(col.label) + '">' + esc(col.label) + '<span class="r-sort-indicator" aria-hidden="true">' + marker + '</span></button></th>';
+      }).join('') + '</tr></thead>';
+      var bodyRows = shown.length
+        ? shown.map(function(row) {
+            return '<tr>' + cols.map(function(col) {
+              var numClass = numericCols[col.key] ? ' class="num"' : '';
+              return '<td' + numClass + '>' + formatCell(cell(row, col.key), col.key) + '</td>';
+            }).join('') + '</tr>';
+          }).join('')
+        : '<tr><td colspan="' + Math.max(1, cols.length) + '"><div class="r-empty-state">No matching rows. Adjust filters or search.</div></td></tr>';
+      var body = '<tbody>' + bodyRows + '</tbody>';
+      target.innerHTML = '<table class="r-interactive-table">' + head + body + '</table>';
+      Array.prototype.slice.call(target.querySelectorAll('.r-sort-button[data-key]')).forEach(function(button) {
+        button.addEventListener('click', function() {
+          var key = button.getAttribute('data-key');
+          state.sortDir = state.sortKey === key ? state.sortDir * -1 : 1;
+          state.sortKey = key;
+          render();
+        });
+      });
+      if (tools) {
+        var meta = tools.querySelector('.r-table-meta');
+        if (!meta) {
+          meta = document.createElement('span');
+          meta.className = 'r-table-meta';
+          tools.insertBefore(meta, tools.firstChild);
+        }
+        meta.textContent = rows.length + ' rows';
+      }
+      if (pager) {
+        var end = Math.min(rows.length, start + pageSize);
+        pager.innerHTML = '<button type="button" data-prev aria-label="Previous page">Prev</button><span>Showing ' + (rows.length ? start + 1 : 0) + '-' + end + ' of ' + rows.length + '</span><button type="button" data-next aria-label="Next page">Next</button>';
+        var prev = pager.querySelector('[data-prev]');
+        var next = pager.querySelector('[data-next]');
+        prev.disabled = state.page <= 1;
+        next.disabled = state.page >= pages;
+        prev.addEventListener('click', function() { state.page -= 1; render(); });
+        next.addEventListener('click', function() { state.page += 1; render(); });
+      }
+    }
+    render();
+    return render;
+  }
+  window.DataClawReport = window.DataClawReport || {};
+  window.DataClawReport.renderFigureById = function(id, config) {
+    var target = document.getElementById(id);
+    if (!target) return;
+    renderFigure(target, (config && config.figure) || {});
+  };
+  window.DataClawReport.initInteractiveTable = function(id, config) {
+    var root = document.getElementById(id);
+    if (root) initTable(root, config || {});
+  };
+  window.DataClawReport.initFilterableChart = function(id, config) {
+    var root = document.getElementById(id);
+    if (!root) return;
+    var records = config.records || config.rows || [];
+    var target = root.querySelector('[data-dc-chart-target]');
+    var getFilters = buildControls(root.querySelector('[data-dc-control-bar]'), config.filters || config.controls || [], records, update);
+    function update() {
+      renderChart(target, config.chart || {}, applyFilters(records, getFilters()));
+    }
+    update();
+  };
+  window.DataClawReport.initChartTableExplorer = function(id, config) {
+    var root = document.getElementById(id);
+    if (!root) return;
+    var records = config.records || config.rows || [];
+    var target = root.querySelector('[data-dc-chart-target]');
+    var getFilters = buildControls(root.querySelector('[data-dc-control-bar]'), config.filters || config.controls || [], records, update);
+    function currentRows() { return applyFilters(records, getFilters()); }
+    var tableRender = initTable(root, Object.assign({}, config, {rows: records, filters: []}), currentRows);
+    function update() {
+      renderChart(target, config.chart || {}, currentRows());
+      if (tableRender) tableRender();
+    }
+    update();
+  };
+  function selectorKey(item, index) {
+    if (item && typeof item === 'object') return text(item.id || item.key || item.name || item.title || index);
+    return text(index);
+  }
+  function itemTitle(item, fallback) {
+    if (item && typeof item === 'object') return text(item.title || item.headline || item.name || item.label || fallback);
+    return text(item || fallback);
+  }
+  function itemDetail(item) {
+    if (!item || typeof item !== 'object') return '';
+    return text(item.summary || item.detail || item.description || item.rationale || item.text || '');
+  }
+  function renderMetricRows(metrics) {
+    var rows = [];
+    if (metrics && typeof metrics === 'object' && !Array.isArray(metrics)) {
+      Object.keys(metrics).forEach(function(key) {
+        rows.push({label: key.replace(/_/g, ' '), value: metrics[key]});
+      });
+    } else if (Array.isArray(metrics)) {
+      metrics.forEach(function(metric) {
+        if (metric && typeof metric === 'object') rows.push({label: text(metric.label || metric.name || metric.key), value: metric.value});
+      });
+    }
+    return rows.filter(function(row) { return row.label || row.value !== undefined; }).map(function(row) {
+      return '<div class="r-entity-metric"><span>' + esc(row.label) + '</span><strong>' + esc(row.value) + '</strong></div>';
+    }).join('');
+  }
+  function renderSelectionDetail(target, item) {
+    if (!target) return;
+    if (!item) {
+      target.innerHTML = '<div class="r-empty-state">No selections match the current controls.</div>';
+      return;
+    }
+    var detail = itemDetail(item);
+    var metrics = item && typeof item === 'object' ? renderMetricRows(item.metrics) : '';
+    target.innerHTML = '<h3>' + esc(itemTitle(item, 'Selected item')) + '</h3>' +
+      (detail ? '<p>' + esc(detail) + '</p>' : '') +
+      (metrics ? '<div class="r-entity-metrics">' + metrics + '</div>' : '');
+  }
+  window.DataClawReport.initSelectorPanel = function(id, config) {
+    var root = document.getElementById(id);
+    if (!root) return;
+    var items = config.items || config.options || [];
+    var cards = Array.prototype.slice.call(root.querySelectorAll('[data-dc-selector-card]'));
+    var detail = root.querySelector('[data-dc-selection-detail]');
+    var keys = items.map(selectorKey);
+    var selectedKey = keys[0] || '';
+    var getFilters = buildControls(root.querySelector('[data-dc-control-bar]'), config.controls || config.filters || [], items, update);
+    cards.forEach(function(card) {
+      var key = card.getAttribute('data-dc-selector-card');
+      card.setAttribute('role', 'button');
+      card.setAttribute('tabindex', '0');
+      card.setAttribute('aria-pressed', key === selectedKey ? 'true' : 'false');
+      card.addEventListener('click', function() {
+        selectedKey = key;
+        update();
+      });
+      card.addEventListener('keydown', function(event) {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          selectedKey = key;
+          update();
+        }
+      });
+    });
+    function update() {
+      var visible = {};
+      var filtered = applyFilters(items, getFilters());
+      filtered.forEach(function(item) {
+        var index = items.indexOf(item);
+        visible[keys[index]] = true;
+      });
+      if (!visible[selectedKey]) selectedKey = filtered.length ? keys[items.indexOf(filtered[0])] : '';
+      cards.forEach(function(card) {
+        var key = card.getAttribute('data-dc-selector-card');
+        var isVisible = !!visible[key];
+        var isSelected = key === selectedKey;
+        card.style.display = isVisible ? '' : 'none';
+        card.classList.toggle('is-selected', isSelected);
+        card.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+      });
+      var selectedIndex = keys.indexOf(selectedKey);
+      renderSelectionDetail(detail, selectedIndex >= 0 ? items[selectedIndex] : null);
+    }
+    update();
+  };
+  function runQueuedInteractive(item) {
+    if (!item || !window.DataClawReport[item.fn]) return;
+    window.DataClawReport[item.fn](item.id, item.config || {});
+  }
+  (window.__DataClawReportQueue || []).forEach(runQueuedInteractive);
+  window.__DataClawReportQueue = {push: runQueuedInteractive};
+  function initStoryShell() {
+    var sections = Array.prototype.slice.call(document.querySelectorAll('.r-hero, .r-section'));
+    var nav = document.querySelector('.r-story-nav');
+    var progress = document.querySelector('.r-progress span');
+    if (!sections.length) return;
+    sections.forEach(function(section, index) {
+      if (!section.id) {
+        var rawId = section.getAttribute('data-dc-section-id') || ('story-' + index);
+        var baseId = rawId.replace(/[^A-Za-z0-9_-]/g, '-');
+        var candidate = baseId || ('story-' + index);
+        var suffix = 2;
+        while (document.getElementById(candidate)) {
+          candidate = baseId + '-' + suffix;
+          suffix += 1;
+        }
+        section.id = candidate;
+      }
+    });
+    var navigationSections = sections.filter(function(section) {
+      var heading = section.querySelector('h1, h2, h3');
+      return Boolean(heading && heading.textContent.trim());
+    });
+    navigationSections.forEach(function(section, index) {
+      var heading = section.querySelector('h1, h2, h3');
+      var label = heading.textContent.trim();
+      if (nav && navigationSections.length > 1) {
+        var link = document.createElement('a');
+        link.href = '#' + section.id;
+        var num = document.createElement('span');
+        num.className = 'r-nav-num';
+        num.textContent = (index < 9 ? '0' : '') + (index + 1);
+        link.appendChild(num);
+        link.appendChild(document.createTextNode(label));
+        link.dataset.target = section.id;
+        nav.appendChild(link);
+      }
+    });
+    if (nav && nav.children.length > 1) {
+      var head = document.createElement('div');
+      head.className = 'r-story-nav-head';
+      head.textContent = 'Contents';
+      nav.insertBefore(head, nav.firstChild);
+      nav.classList.add('ready');
+      document.body.classList.add('has-rail');
+    }
+    var navLinks = nav ? Array.prototype.slice.call(nav.querySelectorAll('a')) : [];
+    var markActive = function(id) {
+      navLinks.forEach(function(link) {
+        link.classList.toggle('active', link.dataset.target === id);
+      });
+    };
+    if ('IntersectionObserver' in window) {
+      var observer = new IntersectionObserver(function(entries) {
+        entries.forEach(function(entry) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('in-view');
+            if (navLinks.some(function(link) { return link.dataset.target === entry.target.id; })) {
+              markActive(entry.target.id);
+            }
+          }
+        });
+      }, { rootMargin: '-18% 0px -62% 0px', threshold: 0.01 });
+      sections.forEach(function(section) { observer.observe(section); });
+    } else {
+      sections.forEach(function(section) { section.classList.add('in-view'); });
+    }
+    var updateProgress = function() {
+      if (!progress) return;
+      var doc = document.documentElement;
+      var max = Math.max(1, doc.scrollHeight - window.innerHeight);
+      var pct = Math.min(100, Math.max(0, (window.scrollY / max) * 100));
+      progress.style.width = pct + '%';
+    };
+    window.addEventListener('scroll', updateProgress, { passive: true });
+    updateProgress();
+  }
+  initStoryShell();
+})();
+
+  </script>
+</body>
+</html>
