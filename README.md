@@ -2,7 +2,7 @@
 
 A local-first, extensible data science agent. Dataclaw provides an event-loop agent architecture with swappable providers, a hook-based plugin system, and a React frontend — all wired together with the [AG-UI protocol](https://docs.ag-ui.com) for standardized agent-to-UI communication.
 
-It combines OpenClaw, gBrain-style memory, notebook execution, and a custom analytics harness. It is an experimental beta and is built primarily with AI assistance. Release 3 adds a governed structured-EDA workflow, analytical review gates, versioned artifacts, and a storyboard-based report builder with evidence-bound visual authoring and publish-time integrity gates.
+It combines OpenClaw, gBrain-style memory, notebook execution, and a custom analytics harness. It is an experimental beta and is built primarily with AI assistance. Release 3 adds a governed structured-EDA workflow, analytical review gates, versioned artifacts, a storyboard-based report builder with evidence-bound visual authoring and publish-time integrity gates, and a session-centric chat console.
 
 > **Local use only.** Dataclaw is designed to run on your local machine or a trusted private server. It allows arbitrary code execution (shell commands, Python notebooks) on the host device. API keys and credentials are stored as plain text in `~/.dataclaw/dataclaw.config.json`. Do not expose Dataclaw to the public internet without additional security measures.
 
@@ -22,6 +22,7 @@ The `release3` branch turns a local analysis session into a traceable workflow: 
 | Analysis review | Deterministic review checks plus an optional read-only LLM reviewer | Audit claims, denominator/grain, reproducibility, visual honesty, data-quality caveats, and hypothesis hygiene before presenting results |
 | Report builder | Typed sections, editorial storyboard review, runtime visual-authoring plans, a v7 quality rubric, regeneration recipes, and explicit draft → designed → published states | Build narrative reports with metrics, evidence-backed charts, interactive tables, filters, methodology, evidence traces, and source-bound publish receipts |
 | Artifacts | Versioned, session-scoped HTML artifacts and a living-report event log | Publish, revise, preview, export, and inspect reports, dashboards, and other analytical HTML safely |
+| Chat console | Separate independent and project chats, a compact timestamped work log, execution-aware composer, and a session rail for plans, files, reports, datasets, experiments, and scope | Follow what the agent did, review durable published reports separately from scratch drafts, inspect session/project files, and keep project work in its project |
 | OpenClaw bridge | Live tool-manifest snapshots, drift detection, install/reinstall, and skill sync | Keep OpenClaw's Dataclaw extension aligned with the tools and skills available in the local UI |
 
 ### A typical Release 3 workflow
@@ -35,9 +36,11 @@ The `release3` branch turns a local analysis session into a traceable workflow: 
 
 The report workflow is HTML-first. DOCX conversion remains best-effort and should not be treated as the primary publish format. The rendered-page semantic audit is deterministic browser/DOM checking, not a learned vision judgment.
 
-### Chat console redesign (design-ready, not yet implemented)
+### Chat console
 
-The current `ui-chat-upgrade` branch also contains an approved chat-console redesign package: a product requirements document, build specification, and revision-5 clickable mock. It defines a turn-grouped transcript, notebook-style evidence cells, a Plans / Files / Reports / Scope edge rail, an in-thread pausable queue, and result provenance. These are implementation targets, not claims about the current production chat surface. See [the critique and decision log](docs/ui-upgrade/chat-redesign.md), [PRD](docs/ui-upgrade/chat-redesign-prd.md), [build specification](docs/ui-upgrade/chat-redesign-spec.md), and [clickable mock](docs/ui-upgrade/mockups/chat-redesign.html).
+Chat is organized around sessions. **Independent chats** are personal sessions listed outside a project; project chats are listed only inside their project. The focused chat view keeps the transcript and composer centered, groups agent work into concise timestamped notebook-style logs, and adapts the composer while a run, queue, or plan approval is active.
+
+The session rail provides Plans, Files, Reports, Datasets, Experiments, and Scope. Reports distinguish durable, versioned published artifacts from session-scoped scratch drafts; Files retain session/project workspace grouping and can be sorted by name or size. The supporting [critique and decision log](docs/ui-upgrade/chat-redesign.md), [PRD](docs/ui-upgrade/chat-redesign-prd.md), [build specification](docs/ui-upgrade/chat-redesign-spec.md), and [clickable mock](docs/ui-upgrade/mockups/chat-redesign.html) document the design and implementation rationale.
 
 ## Quick Start
 
