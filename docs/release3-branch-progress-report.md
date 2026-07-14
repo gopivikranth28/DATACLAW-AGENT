@@ -2,14 +2,16 @@
 
 | | |
 |---|---|
-| **Generated** | 2026-07-13 |
+| **Generated** | 2026-07-14 |
 | **Branch reviewed** | `structured-eda` |
-| **Implementation snapshot** | `827debe` — `feat(reporting): harden structured report publishing` |
+| **Implementation snapshot** | `f50ce84` — `fix(reporting): harden rendering and OpenClaw sync` |
 | **Scope** | Current repository implementation and local verification results; not a release-note promise |
 
 ## Executive summary
 
 Release 3 has a real, code-backed analysis and reporting core. Structured EDA phases P0–P6 are shipped: durable hypothesis and finding ledgers, evidence anchors, loop and multiplicity controls, readiness, plan gates, deterministic review, a bounded reviewer sub-agent, and shared OpenClaw contract fixtures. The report-builder now has a structured HTML publishing boundary: a storyboard designer, raw-HTML normalization with source retention, bounded critique, evidence registry, rubric v3 gate, publish receipt, and browser-runtime smoke attempt.
+
+The latest hardening pass closes defects found in a live low-level report: array-backed interactive tables are normalized before rendering, narrative headings and safe inline emphasis render correctly, untitled metric rows are excluded from the contents rail, and browser smoke detects blank tables or generic navigation labels. The UI now distinguishes draft, designed, and published report states. Report/dashboard/artifact plan steps require analysis review before becoming ready, and an automatic review failure revokes optimistic readiness.
 
 The work is not feature-complete. The remaining committed Structured EDA phases are P7 (a dedicated Findings/Review UI) and P8 (the committed golden/live evaluation harness). For the report builder, DOCX/static-export fidelity remains explicitly open. Release evidence should therefore claim durable HTML reports and governed EDA only where the supplied tests and demos support the claim; it should not claim a finished review UI, live-model evaluation results, or faithful DOCX export.
 
@@ -18,14 +20,14 @@ The work is not feature-complete. The remaining committed Structured EDA phases 
 | Capability | Status | Evidence in the current code |
 |---|---|---|
 | Artifact platform and safe preview | Shipped foundation | Versioned artifact store, validation/wrapping, safe serving, artifact UI, report/living-report preview surfaces, and security/preview tests. |
-| Report builder — structured HTML | Shipped and hardened | `report_design_report`, `build_report`, and `report_publish` form a typed design/build/publish flow with a v3 quality gate and receipt. |
+| Report builder — structured HTML | Shipped and hardened | Typed design/build/publish flow, resilient interactive-table rendering, safe narrative emphasis, meaningful navigation, and clear draft/designed/published UI states. |
 | Report builder — DOCX/static fidelity | Pending | DOCX conversion is best effort. Interactive sections need static fallbacks and conversion diagnostics before export fidelity can be promoted. |
 | Structured EDA P0–P4a | Shipped | EDA ledgers and tools, notebook evidence anchors, readiness, plan gates, skills, `loop_index`, and multiplicity/selection floors. |
 | Structured EDA P5 | Shipped | Full deterministic review checklist, rerun handling, plan-gate sync, and unresolved-review-risk living-report surfacing. |
 | Structured EDA P6 | Shipped | Registered bounded `analysis-reviewer`, structured capped context, rubric rendering from the current skill, JSON finding persistence, and explicit fallback labels. |
 | Dedicated Findings/Review UI (P7) | Pending | Review REST routes and tool-result data exist; no dedicated frontend Findings/Review view was found. |
 | Golden/live evaluation harness (P8) | Pending | Deterministic unit/contract tests exist; no committed `evals/` runner, live tier scoring, or judge report exists. |
-| OpenClaw tool contracts | Shipped | Manifest regenerated from the live registry; shared fixture checks canonical and `dataclaw_...` alias schema parity. |
+| OpenClaw tool contracts and sync | Shipped and verified | Manifest regenerated from the live registry; the installed extension and snapshot both contain 67 tools with no drift. |
 
 ## Report-builder milestone
 
@@ -52,6 +54,9 @@ Completed insights / typed analyses
 - Rubric v3 with live fail conditions for raw/unstructured output, oversized payloads, plain-chart stacks/dumps, missing required explorer/insight structure, and stale installed skills; warnings disclose weaker evidence, captions, runtime, contrast, and portability conditions.
 - Bounded critique that may add only safe context/caveats and records its changes rather than inventing evidence.
 - `report_publish` as the dedicated fail-closed boundary, writing a quality result and publish receipt. It attempts a Playwright browser smoke test and records `passed`, `failed`, or `skipped`; a skipped browser check is disclosed as a warning, never represented as a pass.
+- Interactive tables accept either keyed records or value arrays aligned with `columns`; normalized object rows prevent the blank-cell failure seen in the live report. The browser smoke also detects rendered blank tables and generic contents labels.
+- `narrative_band` accepts `title` or `heading` and permits only safe inline `<b>/<strong>`, `<i>/<em>`, and `<code>` emphasis after escaping all other HTML.
+- Low-level `report_add_section` results are visibly labeled **Draft · publish required**. Structured design results are **Designed · publish required**; only `report_publish` returns **Published**. The report-design tool is rendered as a report card and is included in the app report surface.
 - Raw HTML normalization, evidence-registry resolution, and source preservation.
 - OpenClaw manifest regeneration from the live tool registry, including `report_design_report` and the expanded report section schema.
 - UI coverage for the published report result/preview path in the Playwright preview-surface suite.
@@ -69,7 +74,7 @@ Completed insights / typed analyses
 
 | Phase | Delivered behavior |
 |---|---|
-| P0 — Plans gates | `ready_for_validation` gate enforcement, audit events, and explicit `accept_gate_risk` approval path. |
+| P0 — Plans gates | `ready_for_validation` gate enforcement, audit events, explicit `accept_gate_risk`, review policy for report/dashboard/artifact steps, and automatic readiness revocation when an automatic review fails. |
 | P1 — EDA ledgers | Append-only hypothesis/finding stores, eight EDA tools, router, hooks, validation floors, and plan-step attribution. |
 | P2 — Evidence | Notebook `cell_id` and source-hash anchors plus stale-evidence handling. |
 | P3 — Readiness | Purpose/mode policies, hypothesis rollups, deferred-vs-unresolved distinction, and artifact/living-report readiness outputs. |
@@ -109,7 +114,7 @@ The shared acceptance fixtures are already present and exercised: canonical/alia
 2. Add P8’s committed golden runner before treating the methodology as externally benchmarked.
 3. Produce one end-to-end real-data structured EDA report, retain its storyboard/receipt, and use it as the release evidence example.
 4. Keep DOCX fidelity as a separate report-builder follow-up unless static fallbacks and conversion verification land.
-5. Keep the generated OpenClaw manifest/installed extension synchronized whenever report or EDA tools change; refresh a chat session after tool-schema changes so its tool filter is rebuilt.
+5. Keep the generated OpenClaw manifest/installed extension synchronized whenever report or EDA tools change. The installer now uses `openclaw config unset` for an orphan channel section on OpenClaw 2026.6, and installer tests isolate their snapshot so they cannot corrupt the user’s real drift status. Refresh a chat session after tool-schema changes so its tool filter is rebuilt.
 6. Keep the UI preview/report renderer lazy-loaded and monitor the existing Vite vendor-bundle warning as a separate frontend hardening task.
 
 ## Verification basis
@@ -118,12 +123,13 @@ The latest local checks recorded for this branch and report-builder milestone we
 
 | Check | Result |
 |---|---|
-| Workspace report-builder tests | 48 passed |
-| Structured EDA/skill/tool-contract/PRD fixture suite | 41 passed |
-| OpenClaw install-service tests | 23 passed |
+| Workspace report-builder tests | 37 passed |
+| Plans gate tests | 30 passed |
+| Analysis-review lifecycle tests | 22 passed |
+| OpenClaw plugin and install-service tests | 36 passed |
 | UI build | `npm run build` passed |
 | UI preview/report Playwright suite | 3 passed |
-| OpenClaw plugin | Generated manifest and installed extension matched; plugin enabled after gateway restart. Gateway remote probing still requires pairing/scope approval. |
+| OpenClaw plugin | Enabled on OpenClaw 2026.6.10; generated manifest, installed extension, and persisted sync snapshot match the 67-tool live registry. Gateway remote probing still requires pairing/scope approval. |
 
 These are implementation signals, not substitutes for P8’s live-model evaluation or a release evidence package.
 
