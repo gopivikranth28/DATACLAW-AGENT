@@ -343,6 +343,34 @@ async def test_build_report_preserves_existing_typed_report(cfg):
 
 
 @pytest.mark.asyncio
+async def test_build_report_restores_plotly_for_typed_chart_source(cfg):
+    section = report_renderer.render_report_section(
+        "chart",
+        {
+            "title": "Runtime check",
+            "figure": {"data": [{"type": "bar", "x": ["A"], "y": [1]}]},
+        },
+    )
+    source_html = _report_shell(title="Runtime check", first_section=section, include_plotly=False)
+
+    rebuilt = await build_report(
+        cfg=cfg,
+        html=source_html,
+        output_path="reports/preserved-chart.html",
+        quality_gate="warn",
+    )
+
+    rendered = Path(rebuilt["html_path"]).read_text()
+    assert rebuilt["normalization"]["mode"] == "typed_preservation"
+    assert 'data-dc-runtime="plotly"' in rendered
+    assert "plotly_runtime" not in {
+        check["check"]
+        for check in rebuilt["quality"]["runtime_smoke"]["checks"]
+    }
+    assert Path(rebuilt["source_html_path"]).read_text() == source_html
+
+
+@pytest.mark.asyncio
 async def test_report_publish_records_docx_export_failure(cfg, monkeypatch):
     await report_design_report(
         cfg=cfg,
@@ -1024,6 +1052,9 @@ def test_report_shell_parts_can_be_called_independently():
     with_runtime = _ensure_plotly_runtime(without_runtime)
     assert with_runtime.count("data-dc-runtime=\"plotly\"") == 1
     assert _ensure_plotly_runtime(with_runtime).count("data-dc-runtime=\"plotly\"") == 1
+
+    auto_runtime = _ensure_report_shell_context(without_runtime)
+    assert auto_runtime.count("data-dc-runtime=\"plotly\"") == 1
 
 
 def test_existing_report_shell_context_upgrade_is_idempotent():

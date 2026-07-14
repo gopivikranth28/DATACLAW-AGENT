@@ -1348,6 +1348,23 @@ def ensure_plotly_runtime(doc: str) -> str:
     return runtime + "\n" + doc
 
 
+def _document_requires_plotly_runtime(doc: str) -> bool:
+    """Return whether an existing report has charts that need Plotly.
+
+    Typed reports can be preserved from historical source without appending a
+    new chart section, so their existing section metadata and chart mounts must
+    also trigger self-contained runtime injection.
+    """
+    if "r-chart-target" in doc or "renderFigureById" in doc or "initFilterableChart" in doc:
+        return True
+    if re.search(r"\bPlotly\.(?:newPlot|react)\b", doc):
+        return True
+    return any(
+        clean_text(section.get("kind") or "") in CHART_SECTION_KINDS
+        for section in _extract_section_meta(doc)
+    )
+
+
 def ensure_report_shell_context(doc: str) -> str:
     """Upgrade existing report HTML with the current shell CSS/JS affordances."""
     migrated = doc
@@ -1394,6 +1411,8 @@ def ensure_report_shell_context(doc: str) -> str:
             migrated = BODY_CLOSE_RE.sub(script + r"\g<0>", migrated, count=1)
         else:
             migrated += "\n" + script
+    if _document_requires_plotly_runtime(migrated):
+        migrated = ensure_plotly_runtime(migrated)
     return migrated
 
 
@@ -2108,6 +2127,9 @@ def _runtime_smoke_failures(doc: str, sections: list[dict[str, Any]]) -> list[di
     failures: list[dict[str, str]] = []
     if REPORT_SHELL_SCRIPT_ATTR not in doc:
         failures.append({"check": "report_shell_script", "detail": "missing report runtime script"})
+
+    if any(clean_text(section.get("kind") or "") in CHART_SECTION_KINDS for section in sections) and not PLOTLY_RUNTIME_RE.search(doc):
+        failures.append({"check": "plotly_runtime", "detail": "chart sections require an embedded Plotly runtime"})
 
     target_ids = set(re.findall(r"\bid=[\"']([^\"']+)[\"']", doc, re.IGNORECASE))
     target_ids.update(re.findall(r"\bdata-dc-section-id=[\"']([^\"']+)[\"']", doc, re.IGNORECASE))

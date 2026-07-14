@@ -419,7 +419,18 @@ async def build_report(
         audience=audience,
     )
     storyboard, critique = _critique_report_storyboard(storyboard)
-    rendered_html = html if normalization.get("render_from_source") else _render_report_from_storyboard(storyboard, title=title or None)
+    # Typed source remains byte-for-byte preserved except for a missing Plotly
+    # bundle. A source report can retain chart mounts and their render queue
+    # while lacking the runtime needed to execute them.
+    if normalization.get("render_from_source"):
+        has_chart = any(
+            str(section.get("section_type") or section.get("kind") or "").strip().lower() in CHART_SECTION_KINDS
+            for section in storyboard.get("section_plan", [])
+            if isinstance(section, dict)
+        )
+        rendered_html = _ensure_plotly_runtime(html) if has_chart else html
+    else:
+        rendered_html = _render_report_from_storyboard(storyboard, title=title or None)
     stale_skills = [] if quality_gate == "off" else stale_installed_library_skills()
     quality = _analyze_report_quality(rendered_html, stale_skills=stale_skills) if quality_gate != "off" else {"status": "off", "warnings": []}
     if quality_gate == "fail" and quality.get("status") == "fail":

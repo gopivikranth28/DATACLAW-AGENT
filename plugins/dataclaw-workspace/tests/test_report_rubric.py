@@ -180,12 +180,16 @@ def test_static_runtime_and_contrast_checks_detect_broken_shell_wiring():
     storyboard = report_renderer.design_report_storyboard(
         report_goal="Explain the result",
         insights=[{"title": "Result", "detail": "A completed finding.", "finding_id": "finding-1"}],
+        analyses=[{"title": "Supporting chart", "figure": {"data": [{"type": "bar", "x": ["A"], "y": [1]}]}}],
     )
     storyboard, _ = report_renderer.critique_report_storyboard(storyboard)
     doc = report_renderer.render_report_from_storyboard(storyboard)
 
     broken_runtime = report_renderer.analyze_report_quality(doc.replace("data-dc-report-shell-script", "data-dc-runtime-missing"))
     assert "runtime_smoke_failed" in {warning["code"] for warning in broken_runtime["warnings"]}
+
+    missing_plotly = report_renderer.analyze_report_quality(doc.replace(report_renderer.plotly_script_tag(), ""))
+    assert "runtime_smoke_failed" in {warning["code"] for warning in missing_plotly["warnings"]}
 
     broken_contrast = report_renderer.analyze_report_quality(doc.replace("--dc-muted: #667085", "--dc-muted: #eeeeee", 1))
     assert "contrast_below_aa" in {warning["code"] for warning in broken_contrast["warnings"]}
