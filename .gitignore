@@ -51,10 +51,6 @@ ui/build/
 
 *.zip
 
-# Local-only planning, research, and PRD notes
+# Local-only planning, research, and documentation
 .local-planning/
-docs/*-prd.md
-# Committed specs are exempted explicitly (eda-findings-prd.md was tracked before this rule)
-!docs/structured-eda-prd.md
-docs/prd-portfolio.md
-docs/release3-branch-progress-report.md
+docs/
