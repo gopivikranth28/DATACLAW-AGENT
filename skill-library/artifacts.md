@@ -62,8 +62,12 @@ source and report that artifact publication is unavailable. Do not claim an
    event handlers, `report_add_section` CDN fallbacks, and oversized
    published/exported payloads. Fix obvious issues before calling the tool.
 3. **Publish.** Call:
-   `publish_artifact(title, description?, source_path?, html?, artifact_id?, label?, base_version?)`
-   with exactly one of `source_path` or `html`.
+   `publish_artifact(title, description?, source_path?, html?, report_receipt_path?, artifact_id?, label?, base_version?)`
+   with exactly one of `source_path` or `html`. For report-builder HTML (typed
+   section metadata), pass the `receipt_path` returned by `report_publish` or
+   keep its default sibling `<report>.publish.json`; publication verifies the
+   receipt against the exact HTML bytes and rejects stale or analytically blocked
+   reports.
 4. **Confirm the result.** Expect `{artifact_id, version, session_id, url}`.
    Mention the artifact title and version briefly; the UI renders the same
    version inline and in the Artifact Library.

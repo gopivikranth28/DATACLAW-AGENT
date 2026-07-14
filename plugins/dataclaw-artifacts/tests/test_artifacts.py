@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from pathlib import Path
 
@@ -46,6 +48,89 @@ def _workspace(session_id: str) -> Path:
     root = paths.workspaces_dir() / session_id
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+def _structured_report_html() -> str:
+    return """<!doctype html><html><body>
+    <section data-dc-section="text"><h1>Structured report</h1><p>Published report body.</p></section>
+    <script type="application/json" data-dc-section-meta>{"kind":"text","section_id":"sec-report"}</script>
+    </body></html>"""
+
+
+def _write_publish_receipt(path: Path, html: str, *, required: bool = False, accepted: bool = False) -> None:
+    findings = [{
+        "id": "missing_baseline_comparison",
+        "severity": "required",
+        **({"lifecycle_status": "accepted_with_rationale"} if accepted else {}),
+    }] if required else []
+    path.write_text(json.dumps({
+        "publish_receipt_schema": 2,
+        "status": "published",
+        "html_sha256": hashlib.sha256(html.encode("utf-8")).hexdigest(),
+        "analytical_review": {"status": "attention_required" if required else "pass", "findings": findings},
+    }), encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_structured_report_requires_current_publish_receipt():
+    session_id = "structured-receipt"
+    report = _workspace(session_id) / "reports" / "structured.html"
+    report.parent.mkdir(parents=True)
+    html = _structured_report_html()
+    report.write_text(html, encoding="utf-8")
+
+    missing = await publish_artifact(
+        title="Structured Report",
+        source_path="reports/structured.html",
+        session_id=session_id,
+    )
+    assert missing["success"] is False
+    assert missing["error"]["code"] == "report_publish_receipt_missing"
+
+    receipt = report.with_suffix(".publish.json")
+    _write_publish_receipt(receipt, html)
+    published = await publish_artifact(
+        title="Structured Report",
+        source_path="reports/structured.html",
+        session_id=session_id,
+    )
+    assert published["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_structured_report_rejects_stale_or_blocked_receipt():
+    session_id = "structured-stale"
+    report = _workspace(session_id) / "reports" / "structured.html"
+    report.parent.mkdir(parents=True)
+    html = _structured_report_html()
+    report.write_text(html, encoding="utf-8")
+    receipt = report.with_suffix(".publish.json")
+    _write_publish_receipt(receipt, "<html><body>old report</body></html>")
+
+    stale = await publish_artifact(
+        title="Structured Report",
+        source_path="reports/structured.html",
+        session_id=session_id,
+    )
+    assert stale["success"] is False
+    assert stale["error"]["code"] == "report_publish_receipt_stale"
+
+    _write_publish_receipt(receipt, html, required=True)
+    blocked = await publish_artifact(
+        title="Structured Report",
+        source_path="reports/structured.html",
+        session_id=session_id,
+    )
+    assert blocked["success"] is False
+    assert blocked["error"]["code"] == "report_publish_review_blocked"
+
+    _write_publish_receipt(receipt, html, required=True, accepted=True)
+    accepted = await publish_artifact(
+        title="Structured Report",
+        source_path="reports/structured.html",
+        session_id=session_id,
+    )
+    assert accepted["success"] is True
 
 
 @pytest.mark.asyncio

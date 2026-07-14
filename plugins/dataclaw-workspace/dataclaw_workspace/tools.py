@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +38,8 @@ from dataclaw_workspace.report_renderer import (
     report_shell as _report_shell,
     report_shell_css as _report_shell_css,
     report_shell_script as _report_shell_script,
+    review_storyboard_design as _review_storyboard_design,
+    review_storyboard_analysis as _review_storyboard_analysis,
     typed_report_section as _typed_report_section,
 )
 
@@ -77,6 +80,246 @@ def _resolve_path(workspace_id: str, path: str) -> Path:
     except ValueError as exc:
         raise ValueError(f"Path must be inside workspace directory: {base}") from exc
     return resolved
+
+
+def _stable_json_sha256(value: Any) -> str:
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+_REPORT_REVIEW_ACTOR = "report_critique"
+_REPORT_REVIEW_SCOPE = "artifact"
+_REPORT_REVIEW_CATEGORY = {
+    "model_validation": "modeling_comparability",
+    "uncertainty": "modeling_comparability",
+    "assumption_sensitivity": "modeling_comparability",
+    "evidence": "reproducibility_gap",
+    "export": "security_export_risk",
+    "presentation": "misleading_visualization",
+}
+
+
+def _sync_report_review_lifecycle(
+    analytical_review: dict[str, Any],
+    *,
+    html_sha256: str,
+    session_id: str,
+) -> dict[str, Any]:
+    """Persist report-critique findings in the shared review lifecycle.
+
+    The renderer deliberately has no storage dependency.  The workspace layer
+    materializes its deterministic findings here so existing review tools can
+    resolve them or, with explicit user approval, accept a documented risk.
+    Repeated critiques reuse open/accepted findings by signature and close open
+    findings that are no longer emitted.
+    """
+    target_id = f"report:{html_sha256}"
+    try:
+        from dataclaw_analysis_review.store import (
+            append_finding_resolution,
+            append_review_finding,
+            append_review_run,
+            fold_review_findings,
+            new_finding_id,
+            new_review_id,
+            now_iso,
+        )
+        from dataclaw_analysis_review.tools import _compute_review_gate
+    except ImportError:
+        return {
+            "available": False,
+            "status": "unavailable",
+            "scope": _REPORT_REVIEW_SCOPE,
+            "target_id": target_id,
+            "findings": [],
+            "note": "dataclaw-analysis-review is not installed; report findings remain in the storyboard and publish receipt.",
+        }
+
+    try:
+        emitted = [
+            finding for finding in analytical_review.get("findings", [])
+            if isinstance(finding, dict) and str(finding.get("id") or "").strip()
+        ]
+        existing = [
+            finding
+            for finding in fold_review_findings(session_id)
+            if finding.get("scope") == _REPORT_REVIEW_SCOPE
+            and finding.get("target_id") == target_id
+            and finding.get("actor") == _REPORT_REVIEW_ACTOR
+        ]
+        by_signature = {
+            str(finding.get("signature") or ""): finding
+            for finding in existing
+            if str(finding.get("signature") or "")
+        }
+        review_id = new_review_id()
+        active_signatures: set[str] = set()
+        active_records: list[dict[str, Any]] = []
+
+        for finding in emitted:
+            finding_id = str(finding.get("id") or "").strip()
+            signature = f"report_critique:{finding_id}"
+            active_signatures.add(signature)
+            previous = by_signature.get(signature)
+            previous_status = str((previous or {}).get("status") or "")
+            if previous and previous_status in {"open", "accepted_with_rationale"}:
+                active_records.append(previous)
+                continue
+
+            record = {
+                "finding_id": new_finding_id(),
+                "review_id": review_id,
+                "scope": _REPORT_REVIEW_SCOPE,
+                "target_id": target_id,
+                "session_id": session_id,
+                "signature": signature,
+                "source": _REPORT_REVIEW_ACTOR,
+                "actor": _REPORT_REVIEW_ACTOR,
+                "status": "open",
+                "severity": str(finding.get("severity") or "warning"),
+                "category": _REPORT_REVIEW_CATEGORY.get(
+                    str(finding.get("category") or ""),
+                    "reproducibility_gap",
+                ),
+                "claim": str(finding.get("claim") or finding_id),
+                "recommendation": str(finding.get("recommendation") or ""),
+                "report_finding_id": finding_id,
+                "created_at": now_iso(),
+            }
+            append_review_finding(record, session_id)
+            active_records.append(record)
+
+        for finding in existing:
+            signature = str(finding.get("signature") or "")
+            if signature in active_signatures or str(finding.get("status") or "") != "open":
+                continue
+            append_finding_resolution(
+                {
+                    "finding_id": finding.get("finding_id"),
+                    "status": "resolved",
+                    "rationale": "No longer emitted by the current bounded report critique.",
+                    "evidence_link": "",
+                    "created_at": now_iso(),
+                    "actor": _REPORT_REVIEW_ACTOR,
+                },
+                session_id,
+            )
+
+        append_review_run(
+            {
+                "review_id": review_id,
+                "scope": _REPORT_REVIEW_SCOPE,
+                "target_id": target_id,
+                "session_id": session_id,
+                "status": "completed",
+                "reviewer_type": "checklist",
+                "require_subagent": False,
+                "finding_ids": [str(record.get("finding_id") or "") for record in active_records],
+                "findings_summary": {
+                    "total": len(active_records),
+                    "by_severity": {
+                        severity: sum(1 for record in active_records if record.get("severity") == severity)
+                        for severity in ("info", "warning", "required")
+                    },
+                    "by_status": {
+                        status: sum(1 for record in active_records if record.get("status") == status)
+                        for status in ("open", "resolved", "accepted_with_rationale", "dismissed_as_not_applicable")
+                    },
+                },
+                "created_at": now_iso(),
+                "actor": _REPORT_REVIEW_ACTOR,
+            },
+            session_id,
+        )
+        current = {
+            str(finding.get("signature") or ""): finding
+            for finding in fold_review_findings(session_id)
+            if finding.get("scope") == _REPORT_REVIEW_SCOPE
+            and finding.get("target_id") == target_id
+            and finding.get("actor") == _REPORT_REVIEW_ACTOR
+        }
+        lifecycle_findings = []
+        for finding in emitted:
+            signature = f"report_critique:{str(finding.get('id') or '').strip()}"
+            stored = current.get(signature, {})
+            lifecycle_findings.append({
+                "report_finding_id": finding.get("id"),
+                "finding_id": stored.get("finding_id", ""),
+                "status": stored.get("status", "open"),
+                "rationale": stored.get("resolution_rationale", ""),
+            })
+        gate = _compute_review_gate(
+            scope=_REPORT_REVIEW_SCOPE,
+            target_id=target_id,
+            session_id=session_id,
+        )
+        return {
+            "available": True,
+            "status": "synced",
+            "scope": _REPORT_REVIEW_SCOPE,
+            "target_id": target_id,
+            "review_id": review_id,
+            "gate": gate,
+            "findings": lifecycle_findings,
+        }
+    except Exception as exc:
+        return {
+            "available": True,
+            "status": "error",
+            "scope": _REPORT_REVIEW_SCOPE,
+            "target_id": target_id,
+            "findings": [],
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def _attach_review_lifecycle(
+    analytical_review: dict[str, Any],
+    lifecycle: dict[str, Any],
+) -> dict[str, Any]:
+    """Add lifecycle IDs/statuses without changing the renderer's findings."""
+    review = json.loads(json.dumps(analytical_review, default=str))
+    by_report_id = {
+        str(finding.get("report_finding_id") or ""): finding
+        for finding in lifecycle.get("findings", [])
+        if isinstance(finding, dict)
+    }
+    for finding in review.get("findings", []):
+        if not isinstance(finding, dict):
+            continue
+        lifecycle_finding = by_report_id.get(str(finding.get("id") or ""))
+        if lifecycle_finding:
+            finding["review_finding_id"] = lifecycle_finding.get("finding_id", "")
+            finding["lifecycle_status"] = lifecycle_finding.get("status", "open")
+    return review
+
+
+def _attach_rendered_layout_review(design_review: dict[str, Any], runtime_smoke: dict[str, Any]) -> dict[str, Any]:
+    """Carry browser layout failures into the non-mutating design review."""
+    review = json.loads(json.dumps(design_review, default=str)) if isinstance(design_review, dict) else {}
+    findings = review.get("findings") if isinstance(review.get("findings"), list) else []
+    review["findings"] = findings
+    review["rendered_layout"] = runtime_smoke
+    if runtime_smoke.get("status") == "failed":
+        checks = runtime_smoke.get("checks") if isinstance(runtime_smoke.get("checks"), list) else []
+        findings.append({
+            "id": "rendered_layout_smoke_failed",
+            "severity": "warning",
+            "claim": "Responsive browser layout checks found a rendered report defect.",
+            "recommendation": "Fix the named desktop or mobile layout check, redesign the report, and publish the regenerated artifact.",
+            "sections": [],
+            "checks": checks,
+        })
+        review["status"] = "attention_required"
+    elif runtime_smoke.get("status") == "skipped":
+        findings.append({
+            "id": "rendered_layout_review_skipped",
+            "severity": "info",
+            "claim": "Responsive browser layout review was not available in this publish environment.",
+            "recommendation": "Run publication where Playwright Chromium is available before relying on the desktop/mobile layout evidence.",
+            "sections": [],
+        })
+    return review
 
 
 async def _run_report_runtime_smoke(report_path: Path) -> dict[str, Any]:
@@ -136,6 +379,58 @@ const target = process.argv[1];
       document.querySelectorAll('.r-empty-state').forEach(node => failures.push({check: 'empty_state', detail: node.textContent.trim()}));
       return failures;
     });
+    async function inspectViewport(name, width, height) {
+      await page.setViewportSize({ width, height });
+      await page.waitForTimeout(180);
+      const layoutChecks = await page.evaluate(({ name }) => {
+        const failures = [];
+        const viewportWidth = window.innerWidth;
+        if (document.documentElement.scrollWidth > viewportWidth + 1) {
+          failures.push({check: 'horizontal_overflow', detail: name + ' viewport scrolls horizontally (' + document.documentElement.scrollWidth + 'px > ' + viewportWidth + 'px)'});
+        }
+        document.querySelectorAll('.r-diagnostic-pair').forEach((pair, index) => {
+          const sections = Array.from(pair.querySelectorAll(':scope > .r-section'));
+          const tracks = getComputedStyle(pair).gridTemplateColumns.trim().split(/\\s+/).filter(Boolean).length;
+          if (viewportWidth > 720 && sections.length >= 2 && tracks < 2) {
+            failures.push({check: 'diagnostic_pair_desktop', detail: name + ' diagnostic pair ' + index + ' is not two-column'});
+          }
+          if (viewportWidth <= 720 && tracks !== 1) {
+            failures.push({check: 'diagnostic_pair_mobile', detail: name + ' diagnostic pair ' + index + ' does not collapse to one column'});
+          }
+          const pairRect = pair.getBoundingClientRect();
+          sections.forEach((section, childIndex) => {
+            const rect = section.getBoundingClientRect();
+            if (rect.left < -1 || rect.right > viewportWidth + 1 || rect.left < pairRect.left - 1 || rect.right > pairRect.right + 1) {
+              failures.push({check: 'diagnostic_pair_overflow', detail: name + ' diagnostic pair ' + index + ' child ' + childIndex + ' overflows its grid'});
+            }
+          });
+        });
+        document.querySelectorAll('.r-section.is-floating-kpis').forEach((kpis, index) => {
+          const hero = kpis.previousElementSibling;
+          const visibleHeading = kpis.querySelector('h2:not(.sr-only), .r-section-kicker');
+          if (visibleHeading) {
+            failures.push({check: 'floating_kpi_chrome', detail: name + ' KPI row ' + index + ' renders a visible section heading or kicker'});
+          }
+          if (!hero || !hero.classList.contains('r-hero')) {
+            failures.push({check: 'floating_kpi_anchor', detail: name + ' KPI row ' + index + ' is not directly anchored to the hero'});
+          } else {
+            const heroRect = hero.getBoundingClientRect();
+            const kpiRect = kpis.getBoundingClientRect();
+            if (kpiRect.top >= heroRect.bottom) {
+              failures.push({check: 'floating_kpi_overlap', detail: name + ' KPI row ' + index + ' does not overlap the hero'});
+            }
+          }
+        });
+        return failures;
+      }, { name });
+      const screenshot = await page.screenshot({ type: 'png' });
+      if (!screenshot || screenshot.length < 1024) {
+        layoutChecks.push({check: 'viewport_screenshot', detail: name + ' viewport did not produce a usable compositor screenshot'});
+      }
+      return layoutChecks;
+    }
+    checks.push(...await inspectViewport('desktop', 1440, 900));
+    checks.push(...await inspectViewport('mobile', 390, 844));
     checks.push(...pageErrors.map(detail => ({check: 'browser_error', detail})));
     console.log(JSON.stringify({status: checks.length ? 'failed' : 'passed', checks}));
   } catch (error) {
@@ -430,6 +725,17 @@ async def build_report(
     storyboard["normalization"] = normalization
     storyboard["critique"] = critique
     storyboard["quality"] = quality
+    storyboard["rendered_html_sha256"] = hashlib.sha256(rendered_html.encode("utf-8")).hexdigest()
+    storyboard["analysis_contract_sha256"] = _stable_json_sha256(storyboard.get("analysis_contract", {}))
+    review_lifecycle = _sync_report_review_lifecycle(
+        critique.get("analytical_review", {}),
+        html_sha256=storyboard["rendered_html_sha256"],
+        session_id=workspace_id,
+    )
+    analytical_review = _attach_review_lifecycle(critique.get("analytical_review", {}), review_lifecycle)
+    critique["analytical_review"] = analytical_review
+    storyboard["analytical_review"] = analytical_review
+    storyboard["review_lifecycle"] = review_lifecycle
     resolved_html.write_text(rendered_html, encoding="utf-8")
     resolved_storyboard = _resolve_path(workspace_id, storyboard_path)
     resolved_storyboard.parent.mkdir(parents=True, exist_ok=True)
@@ -460,6 +766,9 @@ async def build_report(
         "source_html_path": str(resolved_source),
         "normalization": normalization,
         "critique": critique,
+        "design_review": critique.get("design_review", storyboard.get("design_review", {})),
+        "analytical_review": analytical_review,
+        "review_lifecycle": review_lifecycle,
         "quality": quality,
         "size": resolved_html.stat().st_size,
         "created": True,
@@ -497,6 +806,38 @@ async def report_publish(
         raise ValueError(f"Report file not found: {report_path}")
 
     doc = resolved_html.read_text(encoding="utf-8", errors="replace")
+    resolved_storyboard = _resolve_path(workspace_id, storyboard_path)
+    if not resolved_storyboard.is_file():
+        raise ValueError(f"Storyboard file not found: {storyboard_path}")
+    try:
+        storyboard = json.loads(resolved_storyboard.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Storyboard is not valid JSON: {storyboard_path}") from exc
+    if not isinstance(storyboard, dict) or not isinstance(storyboard.get("section_plan"), list):
+        raise ValueError(
+            "Storyboard must be a report-design JSON object with a section_plan; "
+            "recreate it with report_design_report or build_report before publishing."
+        )
+    expected_html_hash = str(storyboard.get("rendered_html_sha256") or "").strip().lower()
+    actual_html_hash = hashlib.sha256(doc.encode("utf-8")).hexdigest()
+    if not expected_html_hash:
+        raise ValueError(
+            "Storyboard has no rendered HTML hash; recreate the report with report_design_report or build_report before publishing."
+        )
+    if expected_html_hash != actual_html_hash:
+        raise ValueError(
+            "Report publish integrity gate failed: the HTML does not match the storyboard's rendered output; redesign or rebuild the report before publishing."
+        )
+    expected_contract_hash = str(storyboard.get("analysis_contract_sha256") or "").strip().lower()
+    actual_contract_hash = _stable_json_sha256(storyboard.get("analysis_contract", {}))
+    if not expected_contract_hash:
+        raise ValueError(
+            "Storyboard has no analytical-contract hash; recreate the report with report_design_report or build_report before publishing."
+        )
+    if expected_contract_hash != actual_contract_hash:
+        raise ValueError(
+            "Report publish integrity gate failed: the analytical review contract changed after rendering; redesign the report before publishing."
+        )
     runtime_smoke = await _run_report_runtime_smoke(resolved_html)
     quality = _analyze_report_quality(
         doc,
@@ -510,18 +851,54 @@ async def report_publish(
             if warning.get("severity") == "fail"
         )
         raise ValueError(f"Report publish gate failed: {codes}")
-
-    resolved_storyboard = _resolve_path(workspace_id, storyboard_path)
-    if not resolved_storyboard.is_file():
-        raise ValueError(f"Storyboard file not found: {storyboard_path}")
-    try:
-        storyboard = json.loads(resolved_storyboard.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Storyboard is not valid JSON: {storyboard_path}") from exc
-    if not isinstance(storyboard, dict) or not isinstance(storyboard.get("section_plan"), list):
+    # Design validation is recomputed from the current storyboard rather than
+    # trusting the saved result. Unlike the design-time critique, this pass is
+    # read-only: publication must never repair a plan after the rendered HTML
+    # hash has been verified.
+    design_review = _attach_rendered_layout_review(
+        _review_storyboard_design(storyboard),
+        runtime_smoke,
+    )
+    storyboard["design_review"] = design_review
+    design_blockers = [
+        finding for finding in design_review.get("findings", [])
+        if isinstance(finding, dict) and str(finding.get("severity") or "").strip().lower() == "warning"
+    ]
+    if design_blockers:
+        finding_ids = ", ".join(str(finding.get("id") or "unknown").strip() for finding in design_blockers)
         raise ValueError(
-            "Storyboard must be a report-design JSON object with a section_plan; "
-            "recreate it with report_design_report or build_report before publishing."
+            "Report publish design-review gate failed: "
+            f"{finding_ids}. Redesign the report with the supplied assets, then publish the regenerated artifact."
+        )
+    # Recompute instead of trusting the stored critique. A storyboard may have
+    # been edited after design, and publication must not accept a stale pass.
+    analytical_review = _review_storyboard_analysis(storyboard)
+    review_lifecycle = _sync_report_review_lifecycle(
+        analytical_review,
+        html_sha256=actual_html_hash,
+        session_id=workspace_id,
+    )
+    if review_lifecycle.get("status") == "error":
+        raise ValueError(
+            "Report publish review-lifecycle gate failed: "
+            f"{review_lifecycle.get('error') or 'unable to persist review findings'}"
+        )
+    analytical_review = _attach_review_lifecycle(analytical_review, review_lifecycle)
+    storyboard["analytical_review"] = analytical_review
+    storyboard["review_lifecycle"] = review_lifecycle
+    resolved_storyboard.write_text(json.dumps(storyboard, indent=2, default=str), encoding="utf-8")
+    required_review_findings = [
+        finding
+        for finding in analytical_review.get("findings", [])
+        if isinstance(finding, dict)
+        and str(finding.get("severity") or "").strip().lower() == "required"
+        and str(finding.get("lifecycle_status") or "open") != "accepted_with_rationale"
+    ]
+    if required_review_findings:
+        finding_ids = ", ".join(str(finding.get("id") or "unknown").strip() for finding in required_review_findings)
+        raise ValueError(
+            "Report publish analytical-review gate failed: "
+            f"{finding_ids}. Complete the declared work, then redesign the report."
         )
 
     if receipt_path is None:
@@ -562,13 +939,18 @@ async def report_publish(
         docx_export = {"requested": False, "status": "skipped"}
 
     receipt = {
-        "publish_receipt_schema": 1,
+        "publish_receipt_schema": 2,
         "published_at": datetime.now(timezone.utc).isoformat(),
         "status": "published",
         "html_path": str(resolved_html),
         "storyboard_path": str(resolved_storyboard),
         "storyboard_schema": storyboard.get("storyboard_schema"),
+        "html_sha256": actual_html_hash,
+        "storyboard_sha256": hashlib.sha256(resolved_storyboard.read_bytes()).hexdigest(),
         "quality": quality,
+        "design_review": design_review,
+        "analytical_review": analytical_review,
+        "review_lifecycle": review_lifecycle,
         "runtime_smoke": runtime_smoke,
         "docx_export": docx_export,
     }
@@ -585,6 +967,9 @@ async def report_publish(
         "storyboard_path": str(resolved_storyboard),
         "receipt_path": str(resolved_receipt),
         "quality": quality,
+        "design_review": design_review,
+        "analytical_review": analytical_review,
+        "review_lifecycle": review_lifecycle,
         "runtime_smoke": runtime_smoke,
         "docx_export": docx_export,
         "size": resolved_html.stat().st_size,
@@ -606,6 +991,7 @@ async def report_design_report(
     storyboard_path: str = "report_storyboard.json",
     title: str = "Analysis Report",
     quality_gate: str = "fail",
+    design_passes: int = 5,
     workspace_id: str = "default",
     **_: Any,
 ) -> dict[str, Any]:
@@ -624,8 +1010,12 @@ async def report_design_report(
         raise ValueError("analyses must be a list of analysis asset dictionaries")
     if requirements is not None and not isinstance(requirements, dict):
         raise ValueError("requirements must be a dictionary")
+    if requirements is not None and "analysis_review" in requirements and not isinstance(requirements["analysis_review"], dict):
+        raise ValueError("requirements.analysis_review must be a dictionary")
     if quality_gate not in {"warn", "fail", "off"}:
         raise ValueError("quality_gate must be one of: warn, fail, off")
+    if not isinstance(design_passes, int) or not 1 <= design_passes <= 5:
+        raise ValueError("design_passes must be an integer from 1 to 5")
 
     if not report_path.endswith(".html"):
         report_path = report_path.rsplit(".", 1)[0] + ".html"
@@ -639,6 +1029,7 @@ async def report_design_report(
         audience=audience,
         title=title,
         requirements=requirements or {},
+        max_design_passes=design_passes,
     )
     storyboard, critique = _critique_report_storyboard(storyboard)
     doc = _render_report_from_storyboard(storyboard, title=title)
@@ -649,6 +1040,17 @@ async def report_design_report(
         raise ValueError(f"Report quality gate failed: {codes}")
 
     storyboard["quality"] = quality
+    storyboard["rendered_html_sha256"] = hashlib.sha256(doc.encode("utf-8")).hexdigest()
+    storyboard["analysis_contract_sha256"] = _stable_json_sha256(storyboard.get("analysis_contract", {}))
+    review_lifecycle = _sync_report_review_lifecycle(
+        critique.get("analytical_review", {}),
+        html_sha256=storyboard["rendered_html_sha256"],
+        session_id=workspace_id,
+    )
+    analytical_review = _attach_review_lifecycle(critique.get("analytical_review", {}), review_lifecycle)
+    critique["analytical_review"] = analytical_review
+    storyboard["analytical_review"] = analytical_review
+    storyboard["review_lifecycle"] = review_lifecycle
 
     resolved_html = _resolve_path(workspace_id, report_path)
     resolved_html.parent.mkdir(parents=True, exist_ok=True)
@@ -669,6 +1071,9 @@ async def report_design_report(
         "interaction_count": len(storyboard.get("interaction_plan", [])),
         "quality": quality,
         "critique": critique,
+        "design_review": critique.get("design_review", storyboard.get("design_review", {})),
+        "analytical_review": analytical_review,
+        "review_lifecycle": review_lifecycle,
         "size": resolved_html.stat().st_size,
         "updated": True,
     }

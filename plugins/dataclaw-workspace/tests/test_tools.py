@@ -233,6 +233,13 @@ async def test_report_design_report_storyboards_then_renders_cohesive_html(cfg):
     assert "report_design" in result["type"]
     assert "\"mode\": \"whole_report\"" in storyboard
     assert "section_plan" in storyboard
+    assert result["design_review"]["passes"] == 5
+    assert result["design_review"]["status"] == "pass"
+    assert result["analytical_review"]["status"] == "attention_required"
+    assert "unresolved_evidence_anchors" in {
+        finding["id"] for finding in result["analytical_review"]["findings"]
+    }
+    assert "\"analytical_review\"" in storyboard
 
 
 @pytest.mark.asyncio
@@ -271,8 +278,203 @@ async def test_report_publish_regates_and_writes_receipt(cfg):
     assert published["runtime_smoke"]["status"] in {"passed", "skipped"}
     assert receipt["status"] == "published"
     assert receipt["quality"]["rubric_version"] == 3
+    assert receipt["analytical_review"] == published["analytical_review"]
+    assert published["analytical_review"]["status"] == "pass"
     assert receipt["runtime_smoke"] == published["runtime_smoke"]
     assert receipt["storyboard_path"] == published["storyboard_path"]
+
+
+@pytest.mark.asyncio
+async def test_report_publish_blocks_unresolved_design_review_findings(cfg):
+    designed = await report_design_report(
+        cfg=cfg,
+        report_goal="Explain the category evidence and let readers inspect the rows.",
+        report_path="reports/needs-design-repair.html",
+        storyboard_path="reports/needs-design-repair.storyboard.json",
+        insights=[{"title": "Category A leads", "detail": "The supplied aggregate is highest for category A."}],
+        analyses=[
+            {
+                "section_type": "entity_card_grid",
+                "title": "Categories",
+                "items": [{"title": "A"}, {"title": "B"}],
+            },
+            {
+                "title": "Central comparison",
+                "figure": {"data": [{"type": "bar", "x": ["A", "B"], "y": [2, 1]}]},
+                "caption": "The central category comparison.",
+                "interpretation": "Category A leads the supplied aggregate.",
+            },
+            {
+                "title": "Category explorer",
+                "rows": [{"category": "A", "value": 2}, {"category": "B", "value": 1}],
+                "columns": ["category", "value"],
+            },
+        ],
+        requirements={
+            "editorial_archetype": "taxonomy_explorer",
+            "methodology": [{"title": "Grain", "detail": "Supplied aggregate category rows."}],
+        },
+    )
+
+    assert "guided_visual_evidence_missing" in {
+        finding["id"] for finding in designed["design_review"]["findings"]
+    }
+    with pytest.raises(ValueError, match="design-review gate failed: guided_visual_evidence_missing"):
+        await report_publish(
+            cfg=cfg,
+            report_path="reports/needs-design-repair.html",
+            storyboard_path="reports/needs-design-repair.storyboard.json",
+            export_docx=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_report_publish_blocks_required_analytical_review_findings(cfg):
+    designed = await report_design_report(
+        cfg=cfg,
+        report_goal="Forecast the remaining tournament matches and champion probabilities.",
+        report_path="reports/needs-baseline.html",
+        storyboard_path="reports/needs-baseline.storyboard.json",
+        insights=[{
+            "title": "Spain lead the projection",
+            "detail": "Spain have the highest champion probability.",
+        }],
+    )
+
+    required = {
+        finding["id"] for finding in designed["analytical_review"]["findings"]
+        if finding["severity"] == "required"
+    }
+    assert required == {"missing_baseline_comparison"}
+
+    with pytest.raises(ValueError, match="analytical-review gate failed: missing_baseline_comparison"):
+        await report_publish(
+            cfg=cfg,
+            report_path="reports/needs-baseline.html",
+            storyboard_path="reports/needs-baseline.storyboard.json",
+            export_docx=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_report_review_lifecycle_supports_explicit_risk_acceptance(cfg):
+    from dataclaw_analysis_review.tools import resolve_review_finding
+
+    designed = await report_design_report(
+        cfg=cfg,
+        report_goal="Forecast the remaining tournament matches and champion probabilities.",
+        report_path="reports/accepted-risk.html",
+        storyboard_path="reports/accepted-risk.storyboard.json",
+        insights=[{
+            "title": "Spain lead the projection",
+            "detail": "Spain have the highest champion probability.",
+        }],
+    )
+    lifecycle = designed["review_lifecycle"]
+    baseline = next(
+        finding for finding in lifecycle["findings"]
+        if finding["report_finding_id"] == "missing_baseline_comparison"
+    )
+    assert lifecycle["gate"]["gate"] == "fail"
+
+    accepted = await resolve_review_finding(
+        finding_id=baseline["finding_id"],
+        status="accepted_with_rationale",
+        rationale="The stakeholder explicitly accepted the missing historical comparison for this exploratory forecast.",
+        session_id="default",
+    )
+    assert accepted["success"] is True
+    assert accepted["status"] == "accepted_with_rationale"
+
+    published = await report_publish(
+        cfg=cfg,
+        report_path="reports/accepted-risk.html",
+        storyboard_path="reports/accepted-risk.storyboard.json",
+        export_docx=False,
+    )
+    baseline_review = next(
+        finding for finding in published["analytical_review"]["findings"]
+        if finding["id"] == "missing_baseline_comparison"
+    )
+    assert baseline_review["lifecycle_status"] == "accepted_with_rationale"
+
+
+@pytest.mark.asyncio
+async def test_report_publish_recomputes_a_tampered_analytical_review(cfg):
+    designed = await report_design_report(
+        cfg=cfg,
+        report_goal="Forecast next-quarter demand.",
+        report_path="reports/tampered-review.html",
+        storyboard_path="reports/tampered-review.storyboard.json",
+        insights=[{"title": "Demand forecast", "detail": "Demand is projected to rise."}],
+    )
+    storyboard_path = Path(designed["storyboard_path"])
+    storyboard = json.loads(storyboard_path.read_text())
+    storyboard["analytical_review"] = {"status": "pass", "findings": []}
+    storyboard_path.write_text(json.dumps(storyboard), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="analytical-review gate failed: missing_baseline_comparison"):
+        await report_publish(
+            cfg=cfg,
+            report_path="reports/tampered-review.html",
+            storyboard_path="reports/tampered-review.storyboard.json",
+            export_docx=False,
+        )
+
+    refreshed = json.loads(storyboard_path.read_text())
+    assert refreshed["analytical_review"]["status"] == "attention_required"
+
+
+@pytest.mark.asyncio
+async def test_report_publish_rejects_html_from_a_different_storyboard(cfg):
+    designed = await report_design_report(
+        cfg=cfg,
+        report_goal="Explain retention by cohort.",
+        report_path="reports/hash-bound.html",
+        storyboard_path="reports/hash-bound.storyboard.json",
+        insights=[{"title": "Retention", "detail": "Retention is stable.", "finding_id": "finding-retention"}],
+    )
+    html_path = Path(designed["html_path"])
+    html_path.write_text("<!doctype html><html><body><h1>Different forecast</h1></body></html>", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="integrity gate failed"):
+        await report_publish(
+            cfg=cfg,
+            report_path="reports/hash-bound.html",
+            storyboard_path="reports/hash-bound.storyboard.json",
+            export_docx=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_report_publish_rejects_a_changed_analysis_contract(cfg):
+    designed = await report_design_report(
+        cfg=cfg,
+        report_goal="Forecast next-quarter demand.",
+        report_path="reports/contract-bound.html",
+        storyboard_path="reports/contract-bound.storyboard.json",
+        insights=[{"title": "Demand forecast", "detail": "Demand is projected to rise."}],
+    )
+    storyboard_path = Path(designed["storyboard_path"])
+    storyboard = json.loads(storyboard_path.read_text())
+    storyboard["analysis_contract"] = {
+        "mode": "predictive",
+        "baseline": {
+            "status": "complete",
+            "method": "Holdout comparison",
+            "result": "Improved log loss",
+            "evidence": {"kind": "notebook_cell", "ref": "cell-ablation"},
+        },
+    }
+    storyboard_path.write_text(json.dumps(storyboard), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="analytical review contract changed after rendering"):
+        await report_publish(
+            cfg=cfg,
+            report_path="reports/contract-bound.html",
+            storyboard_path="reports/contract-bound.storyboard.json",
+            export_docx=False,
+        )
 
 
 @pytest.mark.asyncio

@@ -182,13 +182,14 @@ class WorkspacePlugin:
                 "properties": {
                     "report_goal": {"type": "string", "description": "Decision question or objective the report must answer"},
                     "insights": {"type": "array", "description": "Completed findings/insights with title, summary/detail, evidence, caveat, metrics, ids", "items": {"type": "object"}},
-                    "analyses": {"type": "array", "description": "Analysis assets such as Plotly figures, aggregate records+chart specs, tables, cards, methods, or evidence", "items": {"type": "object"}, "default": []},
+                    "analyses": {"type": "array", "description": "Analysis assets such as Plotly figures, aggregate records+chart specs, tables, cards, methods, or evidence. For editorial control, an asset may declare editorial_role='hero', story_priority (lower is earlier), and diagnostic_group/comparison_group for a deliberate paired comparison.", "items": {"type": "object"}, "default": []},
                     "audience": {"type": "string", "description": "Target reader/audience", "default": ""},
-                    "requirements": {"type": "object", "description": "Optional report requirements: metrics, filters, methodology, hypotheses, checks, titles", "default": {}},
+                    "requirements": {"type": "object", "description": "Optional report requirements: metrics, filters, methodology, hypotheses, checks, titles, evidence_registry, analysis_review, and editorial_archetype. Use editorial_archetype='taxonomy_explorer' for category cards → evidence → explorer, or 'guided_explorer' for the same paced evidence/explorer flow without taxonomy cards. For forecasts, analysis_review can declare mode, baseline, uncertainty, sensitivity, decision_path, outcome_distribution, assumptions, and export_runtime; critique returns durable findings for anything missing.", "default": {}},
                     "report_path": {"type": "string", "description": "Output report HTML path", "default": "report.html"},
                     "storyboard_path": {"type": "string", "description": "Output storyboard JSON path", "default": "report_storyboard.json"},
                     "title": {"type": "string", "description": "Report title", "default": "Analysis Report"},
                     "quality_gate": {"type": "string", "description": "Report-quality behavior: warn and write, fail on required quality regressions, or off", "enum": ["warn", "fail", "off"], "default": "fail"},
+                    "design_passes": {"type": "integer", "description": "Bounded storyboard refinement passes (1-5); default 5 preserves context while improving layout, adjacent evidence, and local data notes", "minimum": 1, "maximum": 5, "default": 5},
                 },
                 "required": ["report_goal", "insights"],
             },
@@ -199,6 +200,7 @@ class WorkspacePlugin:
             description=(
                 "Publish a storyboard-backed report after re-running the current report rubric at "
                 "fail severity. Writes a durable publish receipt and records the DOCX export result. "
+                "The receipt binds the exact rendered HTML and analytical-review contract for artifact publication. "
                 "Use after report_design_report or a structured build_report result; "
                 "low-confidence preserved source must be redesigned before publishing."
             ),

@@ -56,6 +56,8 @@ __all__ = [
     "report_shell",
     "report_shell_css",
     "report_shell_script",
+    "review_storyboard_design",
+    "review_storyboard_analysis",
     "typed_report_section",
 ]
 
@@ -293,6 +295,7 @@ body {
   body.has-rail .r-page { margin: 0 auto 0 max(224px, calc((100vw - 1100px) / 2)); }
 }
 .r-page { max-width: 1100px; margin: 0 auto; padding: 30px 22px 48px; }
+.sr-only, .r-section h2.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .r-hero {
   position: relative;
   overflow: hidden;
@@ -319,6 +322,18 @@ body {
 .r-kicker { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--accent); font-weight: 760; }
 .r-hero h1 { position: relative; margin: 8px 0 10px; max-width: 850px; font-size: clamp(30px, 5vw, 54px); line-height: 1.02; letter-spacing: 0; }
 .r-hero p { position: relative; max-width: 790px; margin: 0; color: var(--muted); font-size: 16px; }
+.r-hero-subtitle { margin-bottom: 8px !important; }
+.r-hero-abstract { font-size: 17px !important; line-height: 1.5; }
+.r-hero-scope { display: block; margin-bottom: 7px; color: inherit; font-size: 13px; font-weight: 700; letter-spacing: .01em; }
+.r-hero.is-editorial-dark {
+  background: radial-gradient(circle at 87% 18%, rgba(45, 212, 191, .26), transparent 32%), linear-gradient(135deg, #0f172a, #312e81 58%, #0f766e);
+  color: #f8fafc;
+  border-color: transparent;
+  padding: 50px 42px 62px;
+}
+.r-hero.is-editorial-dark .r-kicker { color: #99f6e4; }
+.r-hero.is-editorial-dark h1 { color: #fff; }
+.r-hero.is-editorial-dark .r-hero-subtitle, .r-hero.is-editorial-dark .r-hero-abstract { color: rgba(241, 245, 249, .88); }
 .r-section {
   position: relative;
   background: var(--paper);
@@ -352,6 +367,10 @@ main { counter-reset: story-step; }
 .r-section h3 { font-size: 16px; color: var(--muted); font-weight: 650; }
 .r-section-dek { max-width: 760px; margin: 0 0 12px; color: var(--muted); font-size: 14px; }
 .r-section-context { display: grid; gap: 10px; margin: 0 0 14px; }
+.r-data-note { margin: 0; padding: 9px 11px; border-left: 3px solid var(--dc-accent-3); border-radius: 0 10px 10px 0; background: color-mix(in srgb, var(--dc-accent-3) 7%, var(--dc-surface-muted)); color: var(--muted); font-size: 12px; }
+.r-adjacent-insights { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin-top: 2px; }
+.r-adjacent-insights .r-insight-card { padding: 12px; box-shadow: none; }
+.r-adjacent-insights .r-insight-card h3 { font-size: 14px; }
 .r-pill-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .r-method-note {
   border-left: 3px solid var(--dc-accent-2);
@@ -372,6 +391,17 @@ main { counter-reset: story-step; }
   border-color: transparent;
   box-shadow: none;
   padding: 6px 0;
+}
+.r-hero + .r-section.is-floating-kpis {
+  position: relative;
+  z-index: 2;
+  margin: -42px 22px 20px;
+  padding: 0;
+}
+.r-hero + .r-section.is-floating-kpis .r-metrics { padding: 0; }
+.r-hero + .r-section.is-floating-kpis .r-metric {
+  background: linear-gradient(180deg, rgba(255,255,255,.98), var(--dc-surface-raised));
+  box-shadow: 0 12px 28px rgba(15, 23, 42, .14);
 }
 .r-section[data-dc-section="metric_row"]::before, .r-section[data-dc-section="insight_grid"]::before { display: none; }
 .r-section[data-dc-section="chart"], .r-section[data-dc-section="chart_interpretation"], .r-section[data-dc-section="filterable_chart"], .r-section[data-dc-section="chart_table_explorer"], .r-section[data-dc-section="interactive_table"] { background: linear-gradient(180deg, var(--dc-surface), var(--dc-surface-muted)); }
@@ -494,6 +524,8 @@ main { counter-reset: story-step; }
   text-align: center;
 }
 .r-explorer-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 380px); gap: 16px; align-items: start; }
+.r-diagnostic-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin: 18px 0; }
+.r-diagnostic-pair .r-section { height: 100%; margin: 0; }
 .r-table-tools { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
 .r-table-tools input { max-width: 260px; }
 .r-interactive-table-wrap { width: 100%; overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--dc-surface); }
@@ -545,6 +577,13 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .r-section.is-hero h2 { font-size: 28px; }
 .r-section.is-hero .r-chart-target { min-height: 470px; }
 .r-section.is-narrow { max-width: 860px; margin-left: auto; margin-right: auto; }
+.r-section.is-report-epilogue {
+  max-width: 900px;
+  margin: 30px auto 0;
+  border-left-color: color-mix(in srgb, var(--dc-accent-3) 65%, var(--line));
+  box-shadow: none;
+  background: color-mix(in srgb, var(--dc-accent-3) 6%, var(--dc-surface));
+}
 .r-conclusion {
   margin: 10px 2px 0;
   padding-left: 12px;
@@ -598,7 +637,9 @@ a.r-evidence-chip:hover { border-color: color-mix(in srgb, var(--dc-accent) 45%,
   .r-page { padding: 16px 12px 28px; }
   .r-hero { padding: 24px; border-radius: 14px; }
   .r-hero h1 { font-size: 26px; }
-  .r-grid.cols-2, .r-chart-story-grid, .r-evidence-layout, .r-explorer-grid { grid-template-columns: 1fr; }
+  .r-grid.cols-2, .r-chart-story-grid, .r-evidence-layout, .r-explorer-grid, .r-diagnostic-pair { grid-template-columns: 1fr; }
+  .r-hero.is-editorial-dark { padding: 34px 24px 48px; }
+  .r-hero + .r-section.is-floating-kpis { margin: -28px 10px 18px; }
   .r-interpretation-panel, .r-evidence-rail { position: static; }
 }
 """
@@ -2010,9 +2051,16 @@ def normalize_raw_html_report(
 def critique_report_storyboard(
     storyboard: dict[str, Any],
     *,
-    max_passes: int = 2,
+    max_passes: int = 5,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Apply bounded, non-fabricating improvements to a structured storyboard."""
+    """Apply bounded, non-fabricating improvements and review a storyboard.
+
+    The repair pass may safely add presentational context, but it must never
+    manufacture analytical evidence.  The review record is deliberately
+    separate: it makes missing validation, uncertainty, sensitivity, and
+    decision-path work visible to the caller as durable findings instead of
+    silently leaving those gaps for a later chat turn to rediscover.
+    """
     working = copy.deepcopy(storyboard)
     section_plan = working.get("section_plan")
     if not isinstance(section_plan, list):
@@ -2058,18 +2106,300 @@ def critique_report_storyboard(
             converged = True
             break
 
+    design_review = _critique_editorial_design(working, max_passes=max_passes)
+    working["design_review"] = design_review
     registry = build_evidence_registry(working)
     working["evidence_registry"] = registry
+    analytical_review = review_storyboard_analysis(working, registry=registry)
+    working["analytical_review"] = analytical_review
     critique = {
         "critique_schema": 1,
         "max_passes": max(1, max_passes),
         "passes": passes,
         "converged": converged,
         "applied": applied,
+        "design_review": design_review,
+        "analytical_review": analytical_review,
         "guardrail": "No evidence identifiers, citations, numbers, or claims were invented during critique.",
     }
     working["critique"] = critique
     return working, critique
+
+
+_PREDICTIVE_REVIEW_TERMS = (
+    "forecast",
+    "prediction",
+    "predictive",
+    "predict ",
+    "projected",
+    "projection",
+    "win probability",
+    "advance probability",
+    "champion odds",
+)
+_BASELINE_REVIEW_TERMS = (
+    "baseline",
+    "ablation",
+    "out-of-sample",
+    "holdout",
+    "cross-validation",
+    "cross validation",
+    "log-loss",
+    "log loss",
+    "brier",
+    "backtest",
+)
+_UNCERTAINTY_REVIEW_TERMS = (
+    "uncertainty",
+    "credible interval",
+    "confidence interval",
+    "bootstrap",
+    "standard error",
+    "prediction interval",
+    "confidence band",
+)
+_SENSITIVITY_REVIEW_TERMS = (
+    "sensitivity",
+    "scenario",
+    "robustness",
+    "robust to",
+    "alternate pairing",
+    "alternative pairing",
+)
+_ASSUMPTION_REVIEW_TERMS = (
+    "assumption",
+    "assumed",
+    "inferred",
+    "estimate",
+    "estimated",
+    "placeholder",
+)
+_TOURNAMENT_REVIEW_TERMS = (
+    "tournament",
+    "knockout",
+    "bracket",
+    "quarter-final",
+    "quarterfinal",
+    "semi-final",
+    "semifinal",
+)
+_DECISION_PATH_REVIEW_TERMS = ("bracket", "tree", "decision path")
+_MATCH_DISTRIBUTION_REVIEW_TERMS = ("scoreline", "heatmap", "outcome distribution", "score distribution")
+
+
+def review_storyboard_analysis(
+    storyboard: dict[str, Any],
+    *,
+    registry: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Recompute the analytical-completeness review for a storyboard.
+
+    This public entry point is used by both the design critique and the publish
+    gate so a stored, stale review record cannot be treated as an approval.
+    """
+    return _review_storyboard_analysis(storyboard, registry or build_evidence_registry(storyboard))
+
+
+def _review_storyboard_analysis(storyboard: dict[str, Any], registry: dict[str, Any]) -> dict[str, Any]:
+    """Return durable, conservative analytical-review findings for a report.
+
+    This is intentionally a completeness review, not a model evaluator.  It
+    relies on an optional ``requirements.analysis_review`` contract plus the
+    supplied storyboard text.  The latter lets legacy callers get useful
+    warnings, while the contract lets new callers state exactly which analysis
+    checks were completed without asking the renderer to infer or recompute
+    scientific results.
+    """
+    contract = storyboard.get("analysis_contract")
+    contract = dict(contract) if isinstance(contract, dict) else {}
+    text = _storyboard_review_text(storyboard)
+    delivered_text = _storyboard_review_text(storyboard, include_context=False)
+    mode = clean_text(contract.get("mode") or "").lower()
+    is_predictive = mode in {"forecast", "forecasting", "predictive", "prediction", "simulation"}
+    if not is_predictive:
+        is_predictive = _contains_any(text, _PREDICTIVE_REVIEW_TERMS)
+
+    findings: list[dict[str, Any]] = []
+
+    def add(
+        finding_id: str,
+        *,
+        category: str,
+        severity: str,
+        claim: str,
+        recommendation: str,
+        evidence: list[dict[str, str]] | None = None,
+    ) -> None:
+        findings.append({
+            "id": finding_id,
+            "category": category,
+            "severity": severity,
+            "claim": claim,
+            "recommendation": recommendation,
+            "evidence": evidence or [],
+        })
+
+    targets = registry.get("targets", []) if isinstance(registry.get("targets"), list) else []
+    target_map = {
+        clean_text(target.get("id") or target.get("ref") or ""): target
+        for target in targets
+        if isinstance(target, dict) and clean_text(target.get("id") or target.get("ref") or "")
+    }
+
+    if is_predictive:
+        if not _baseline_review_complete(contract.get("baseline"), target_map):
+            add(
+                "missing_baseline_comparison",
+                category="model_validation",
+                severity="required",
+                claim="This predictive report has no completed, resolvable baseline comparison with a method and result.",
+                recommendation="Compare the production approach with a simple baseline on a shared holdout, report the primary metric plus the delta, and cite a registered evidence target for that output.",
+            )
+        if not _review_item_complete(contract.get("uncertainty")) and not _contains_any(delivered_text, _UNCERTAINTY_REVIEW_TERMS):
+            add(
+                "missing_uncertainty_quantification",
+                category="uncertainty",
+                severity="warning",
+                claim="This predictive report presents point estimates without a declared uncertainty method.",
+                recommendation="Add intervals or uncertainty bands derived from a stated method (for example bootstrap, posterior draws, or an appropriate analytical interval).",
+            )
+
+    assumptions_declared = _review_item_complete(contract.get("sensitivity"))
+    has_assumption = bool(_as_list(contract.get("assumptions"))) or _contains_any(delivered_text, _ASSUMPTION_REVIEW_TERMS)
+    if has_assumption and not assumptions_declared and not _contains_any(delivered_text, _SENSITIVITY_REVIEW_TERMS):
+        add(
+            "missing_assumption_sensitivity",
+            category="assumption_sensitivity",
+            severity="warning",
+            claim="The report includes an inferred or assumed input without a declared sensitivity analysis.",
+            recommendation="Run the material plausible alternatives and show whether the decision or ranking changes; otherwise label the assumption as unresolved.",
+        )
+
+    is_tournament = _contains_any(text, _TOURNAMENT_REVIEW_TERMS)
+    if is_tournament and is_predictive:
+        if not _review_item_complete(contract.get("decision_path")) and not _contains_any(delivered_text, _DECISION_PATH_REVIEW_TERMS):
+            add(
+                "missing_decision_path_visual",
+                category="presentation",
+                severity="warning",
+                claim="A tournament or knockout forecast has no declared bracket/tree decision-path visual.",
+                recommendation="Add a bracket or tree that shows each matchup and its advance probability so readers can follow how the final odds are formed.",
+            )
+        if _contains_any(text, ("match", "goal", "tie")) and not _review_item_complete(contract.get("outcome_distribution")) and not _contains_any(delivered_text, _MATCH_DISTRIBUTION_REVIEW_TERMS):
+            add(
+                "missing_outcome_distribution",
+                category="presentation",
+                severity="info",
+                claim="The forecast discusses match-level outcomes without a declared scoreline or outcome-distribution view.",
+                recommendation="Show the leading scorelines, draw/shootout probability, or a compact outcome heatmap for the decision-relevant matches.",
+            )
+
+    references = registry.get("references", []) if isinstance(registry.get("references"), list) else []
+    unresolved = _unresolved_evidence_refs([], target_map, references)
+    if unresolved:
+        add(
+            "unresolved_evidence_anchors",
+            category="evidence",
+            severity="warning",
+            claim="One or more supplied evidence references are not registered as present report targets.",
+            recommendation="Register each local evidence target with a stable id and kind, or replace it with a stable external reference; do not invent an anchor.",
+            evidence=unresolved[:20],
+        )
+
+    runtime = clean_text(contract.get("export_runtime") or contract.get("runtime") or "").lower()
+    if runtime in {"cdn", "remote", "external"}:
+        add(
+            "external_runtime_dependency",
+            category="export",
+            severity="required",
+            claim="The report declares a remote runtime even though DataClaw artifacts must remain self-contained.",
+            recommendation="Keep Plotly in the local/artifact runtime and reduce the report payload or export size without adding a CDN dependency.",
+        )
+
+    return {
+        "review_schema": 1,
+        "mode": mode or ("predictive" if is_predictive else "general"),
+        "status": "attention_required" if findings else "pass",
+        "findings": findings,
+        "guardrail": "Findings identify missing declared work; they do not assert that an uninspected analysis is wrong.",
+    }
+
+
+def _review_item_complete(value: Any) -> bool:
+    if value is True:
+        return True
+    if isinstance(value, str):
+        return clean_text(value).lower() in {"complete", "completed", "done", "pass", "passed", "validated", "included"}
+    if isinstance(value, dict):
+        status = clean_text(value.get("status") or "").lower()
+        if status in {"complete", "completed", "done", "pass", "passed", "validated", "included"}:
+            return True
+        return any(bool(value.get(key)) for key in ("method", "evidence", "result", "path", "summary"))
+    return bool(value) if isinstance(value, (list, tuple, set)) else False
+
+
+def _baseline_review_complete(value: Any, target_map: dict[str, dict[str, Any]]) -> bool:
+    """Require concrete, registered proof for the publish-blocking baseline check.
+
+    A mention of "baseline" in prose or a bare ``status: complete`` is only a
+    declaration.  The contract must identify a completed comparison, explain
+    its method and result, and point to a target already registered in the
+    report inputs.  This remains a completeness check, not an attempt to
+    independently re-run or certify the model.
+    """
+    if not isinstance(value, dict):
+        return False
+    status = clean_text(value.get("status") or "").lower()
+    if status not in {"complete", "completed", "done", "pass", "passed", "validated", "included"}:
+        return False
+    if not clean_text(value.get("method") or "") or not clean_text(value.get("result") or value.get("summary") or ""):
+        return False
+    evidence = value.get("evidence", value.get("evidence_refs"))
+    references = _evidence_refs_from_value(evidence)
+    return (
+        bool(references)
+        and all(reference["kind"] != "unknown" for reference in references)
+        and not _unresolved_evidence_refs([], target_map, references)
+    )
+
+
+def _storyboard_review_text(storyboard: dict[str, Any], *, include_context: bool = True) -> str:
+    """Collect prose fields only; numerical arrays and figure payloads are excluded."""
+    prose_keys = {
+        "title", "report_goal", "subtitle", "detail", "summary", "interpretation",
+        "conclusion", "caption", "dek", "kicker", "text", "note", "description",
+        "label", "name", "assumption", "method", "status",
+    }
+    chunks: list[str] = []
+
+    def walk(value: Any, key: str = "") -> None:
+        if isinstance(value, dict):
+            for child_key, child in value.items():
+                walk(child, str(child_key))
+        elif isinstance(value, list):
+            for child in value:
+                walk(child, key)
+        elif isinstance(value, str) and key in prose_keys:
+            text = clean_text(value)
+            if text:
+                chunks.append(text)
+
+    source = {
+        "section_plan": storyboard.get("section_plan", []),
+        "analysis_contract": storyboard.get("analysis_contract", {}),
+    }
+    if include_context:
+        source = {
+            "title": storyboard.get("title"),
+            "report_goal": storyboard.get("report_goal"),
+            **source,
+        }
+    walk(source)
+    return " ".join(chunks).lower()
+
+
+def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
+    return any(term in text for term in terms)
 
 
 def _chart_theme_failures(sections: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -2187,9 +2517,22 @@ def design_report_storyboard(
     audience: str = "",
     title: str = "Analysis Report",
     requirements: dict[str, Any] | None = None,
+    max_design_passes: int = 5,
 ) -> dict[str, Any]:
-    """Create a cohesive report plan from completed insights and analysis assets."""
+    """Create a cohesive report plan from completed insights and analysis assets.
+
+    The initial plan preserves every supplied insight and analysis object. A
+    bounded design-refinement pass then improves adjacency, local data notes,
+    and chart interpretation using only supplied material; it never invents a
+    conclusion, caveat, or analytical result.
+    """
     requirements = requirements or {}
+    analysis_contract = requirements.get("analysis_review", {})
+    if not isinstance(analysis_contract, dict):
+        raise ValueError("requirements.analysis_review must be a dictionary when supplied")
+    analysis_contract = dict(analysis_contract)
+    if "assumptions" not in analysis_contract and isinstance(requirements.get("assumptions"), list):
+        analysis_contract["assumptions"] = requirements["assumptions"]
     analyses = analyses or []
     clean_goal = clean_text(report_goal or title)
     clean_audience = clean_text(audience or requirements.get("audience") or "decision-maker")
@@ -2300,7 +2643,12 @@ def design_report_storyboard(
         {"phase": "trust", "purpose": "Close with methodology, hypothesis dispositions, and evidence trace.", "sections": ["methodology", "hypothesis_dispositions", "evidence_trace"]},
     ]
 
-    return {
+    editorial_architecture = _apply_editorial_architecture(section_plan, requirements)
+    if editorial_architecture["archetype"] in {"taxonomy_explorer", "guided_explorer"}:
+        storyboard_steps = editorial_architecture["narrative_acts"]
+        interaction_plan = _storyboard_interactions(section_plan)
+
+    storyboard = {
         "storyboard_schema": 1,
         "title": title,
         "report_goal": clean_goal,
@@ -2310,6 +2658,7 @@ def design_report_storyboard(
             "note": "Render from this storyboard after analysis is complete; do not rely on incremental report-cell appends for the final artifact.",
         },
         "storyboard": storyboard_steps,
+        "editorial_architecture": editorial_architecture,
         "layout_plan": _storyboard_layout(section_plan),
         "interaction_plan": interaction_plan,
         "data_contract": {
@@ -2320,6 +2669,12 @@ def design_report_storyboard(
             "methodology": requirements.get("methodology") or requirements.get("methods") or [],
             "checks": requirements.get("checks") or [],
         },
+        "source_context": {
+            "insights": copy.deepcopy(normalized_insights),
+            "analyses": copy.deepcopy(normalized_analyses),
+            "requirements": copy.deepcopy(requirements),
+        },
+        "analysis_contract": analysis_contract,
         "evidence_registry": requirements.get("evidence_registry", requirements.get("evidence_targets", [])),
         "quality_plan": {
             "gate": "run before publish",
@@ -2328,6 +2683,867 @@ def design_report_storyboard(
         },
         "section_plan": section_plan,
     }
+    return _refine_storyboard_design(storyboard, max_passes=max_design_passes)
+
+
+def _editorial_role(item: dict[str, Any]) -> str:
+    data = item.get("data") if isinstance(item.get("data"), dict) else {}
+    return clean_text(data.get("editorial_role") or data.get("story_role") or "").lower().replace("-", "_")
+
+
+def _editorial_priority(item: dict[str, Any], index: int) -> tuple[int, float, int]:
+    """Return a stable, caller-overridable ranking for visual prominence."""
+    data = item.get("data") if isinstance(item.get("data"), dict) else {}
+    role = _editorial_role(item)
+    explicit_hero = role == "hero" or data.get("hero") is True
+    inherited_hero = clean_text(data.get("emphasis") or "") == "hero"
+    has_priority = "story_priority" in data or "layout_priority" in data
+    raw_priority = data.get("story_priority", data.get("layout_priority", 10_000))
+    try:
+        priority = float(raw_priority)
+    except (TypeError, ValueError):
+        priority = 10_000.0
+    return (0 if explicit_hero else 1 if has_priority else 2 if inherited_hero else 3, priority, index)
+
+
+def _diagnostic_group(item: dict[str, Any]) -> str:
+    data = item.get("data") if isinstance(item.get("data"), dict) else {}
+    return clean_text(
+        data.get("diagnostic_group")
+        or data.get("comparison_group")
+        or data.get("story_group")
+        or ""
+    )
+
+
+def _materialize_taxonomy_card_grid(
+    section_plan: list[dict[str, Any]], analyses: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Use supplied selector items as orientation cards without losing the explorer.
+
+    Item-shaped inputs commonly infer a selector panel because they carry
+    filterable fields such as team or archetype.  A taxonomy report needs both
+    a scan-friendly category introduction and that later explorer.  This adds a
+    card-grid *view* of the same supplied aggregate items while preserving the
+    selector as the interactive payoff.
+    """
+    existing = next(
+        (item for item in analyses if clean_text(item.get("section_type") or "") == "entity_card_grid"),
+        None,
+    )
+    if existing:
+        return existing
+    selector = next(
+        (
+            item for item in analyses
+            if clean_text(item.get("section_type") or "") == "selector_panel"
+            and isinstance((item.get("data") or {}).get("items"), list)
+            and (item.get("data") or {}).get("items")
+        ),
+        None,
+    )
+    if not selector:
+        return None
+
+    source_data = selector.get("data") if isinstance(selector.get("data"), dict) else {}
+    source_role = clean_text(selector.get("layout_role") or "analysis_taxonomy")
+    source_id = clean_text(source_data.get("section_id") or source_role)
+    cards_data = copy.deepcopy(source_data)
+    cards_data["section_id"] = f"{source_id}-taxonomy"
+    cards_data["derived_from_section"] = source_role
+    cards_data["editorial_role"] = "taxonomy"
+    cards_data["layout_variant"] = "category_taxonomy"
+    cards_data["card_style"] = "categorical_accents"
+    cards_data.setdefault("kicker", "The taxonomy")
+    cards = {
+        "section_type": "entity_card_grid",
+        "layout_role": f"{source_role}_taxonomy_cards",
+        "rationale": "Use the supplied selector items as category cards before the reader reaches the detailed explorer.",
+        "data": cards_data,
+    }
+    section_plan.append(cards)
+    analyses.append(cards)
+    return cards
+
+
+def _selector_panel_looks_taxonomic(analyses: list[dict[str, Any]]) -> bool:
+    category_keys = {"archetype", "category", "segment", "persona", "cluster", "cohort", "type"}
+    for item in analyses:
+        if clean_text(item.get("section_type") or "") != "selector_panel":
+            continue
+        data = item.get("data") if isinstance(item.get("data"), dict) else {}
+        items = data.get("items")
+        if not isinstance(items, list):
+            continue
+        keys = {
+            clean_text(key).lower()
+            for entry in items if isinstance(entry, dict)
+            for key in entry
+        }
+        if keys & category_keys:
+            return True
+    return False
+
+
+def _apply_editorial_architecture(
+    section_plan: list[dict[str, Any]], requirements: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply an editorial page grammar when the supplied assets support one.
+
+    The taxonomy/explorer sequence is intentionally structural rather than a
+    cosmetic afterthought: it changes the order in which the reader encounters
+    classification, evidence, interpretation, and interaction.  It only
+    rearranges supplied sections and carries the existing readout into the
+    header; it does not manufacture an analytical result.
+    """
+    requested = clean_text(
+        requirements.get("editorial_archetype") or requirements.get("report_archetype") or "auto"
+    ).lower().replace("-", "_").replace(" ", "_")
+    analyses = [
+        item for item in section_plan
+        if isinstance(item, dict) and clean_text(item.get("layout_role") or "").startswith("analysis_")
+    ]
+    has_visual = any(
+        clean_text(item.get("section_type") or "") in CHART_SECTION_KINDS
+        and clean_text(item.get("section_type") or "") not in INTERACTIVE_SECTION_KINDS
+        for item in analyses
+    )
+    has_interaction = any(clean_text(item.get("section_type") or "") in INTERACTIVE_SECTION_KINDS for item in analyses)
+    requested_taxonomy = requested in {"taxonomy_explorer", "taxonomy", "archetype_explorer"}
+    requested_guided = requested in {"guided_argument", "guided_explorer", "editorial"}
+    existing_taxonomy = next(
+        (item for item in analyses if clean_text(item.get("section_type") or "") == "entity_card_grid"),
+        None,
+    )
+    taxonomy = existing_taxonomy or (
+        _materialize_taxonomy_card_grid(section_plan, analyses)
+        if has_visual and has_interaction and (requested_taxonomy or (requested in {"", "auto"} and _selector_panel_looks_taxonomic(analyses)))
+        else None
+    )
+    has_taxonomy = taxonomy is not None
+    use_taxonomy = (requested_taxonomy or requested in {"", "auto"}) and has_taxonomy and has_visual and has_interaction
+    use_guided = not use_taxonomy and (requested_guided or requested in {"", "auto"}) and has_visual and has_interaction
+
+    if not (use_taxonomy or use_guided):
+        reason = (
+            "The supplied asset set does not contain the taxonomy, visual evidence, and interactive explorer "
+            "needed for the taxonomy_explorer sequence."
+            if requested_taxonomy else
+            "Use the standard whole-report sequence for this asset set."
+        )
+        return {
+            "archetype": "standard",
+            "requested": requested or "auto",
+            "reason": reason,
+            "guardrail": "The architecture may reorder supplied sections but never creates analytical claims or evidence.",
+            "narrative_acts": [],
+        }
+
+    # The architecture may be re-applied during critique after a caller edits a
+    # plan. Remove only its generated epilogue here, after confirming an
+    # editorial archetype applies, so repair remains idempotent without
+    # changing a standard report.
+    section_plan[:] = [
+        item for item in section_plan
+        if not isinstance(item, dict) or clean_text(item.get("layout_role") or "") != "report_epilogue"
+    ]
+
+    by_role = {
+        clean_text(item.get("layout_role") or ""): item
+        for item in section_plan if isinstance(item, dict)
+    }
+    header = by_role.get("opening_context")
+    metrics = by_role.get("executive_kpis")
+    readout = by_role.get("executive_readout")
+    findings = by_role.get("primary_insights")
+    trust = [
+        by_role[role] for role in ("methodology", "hypothesis_dispositions", "evidence_trace")
+        if by_role.get(role)
+    ]
+
+    interactive = [
+        item for item in analyses
+        if item is not taxonomy and clean_text(item.get("section_type") or "") in INTERACTIVE_SECTION_KINDS
+    ]
+    static_visuals = [item for item in analyses
+        if item is not taxonomy
+        and item not in interactive
+        and clean_text(item.get("section_type") or "") in CHART_SECTION_KINDS
+    ]
+    indexed_visuals = list(enumerate(static_visuals))
+    indexed_visuals.sort(key=lambda pair: _editorial_priority(pair[1], pair[0]))
+    ordered_visuals = [item for _, item in indexed_visuals]
+    hero_visual = ordered_visuals[0] if ordered_visuals else None
+    diagnostics = ordered_visuals[1:] if hero_visual else ordered_visuals[:]
+    pair_group = ""
+    for candidate in diagnostics:
+        candidate_group = _diagnostic_group(candidate)
+        if candidate_group and sum(1 for item in diagnostics if _diagnostic_group(item) == candidate_group) >= 2:
+            pair_group = candidate_group
+            break
+    if pair_group:
+        paired = [item for item in diagnostics if _diagnostic_group(item) == pair_group][:2]
+        diagnostics = paired + [item for item in diagnostics if item not in paired]
+    else:
+        paired = diagnostics[:2]
+    # The generic planner may have promoted the first chart *or interactive*
+    # analysis before this architecture had enough context. Keep exactly one
+    # visual hero once the editorial sequence is known.
+    for candidate in analyses:
+        candidate_data = candidate.get("data") if isinstance(candidate.get("data"), dict) else {}
+        if candidate is not hero_visual and clean_text(candidate_data.get("emphasis") or "") == "hero":
+            candidate_data.pop("emphasis", None)
+            candidate["data"] = candidate_data
+    consumed = {id(item) for item in [taxonomy, hero_visual, *diagnostics, *interactive] if item is not None}
+    remaining_evidence = [item for item in analyses if id(item) not in consumed]
+
+    if header:
+        header_data = header.setdefault("data", {})
+        header_data["visual_treatment"] = "editorial_dark"
+        if readout:
+            readout_data = readout.get("data") if isinstance(readout.get("data"), dict) else {}
+            header_data["absorbed_readout"] = copy.deepcopy(readout_data)
+            if not clean_text(header_data.get("abstract") or ""):
+                header_data["abstract"] = clean_text(readout_data.get("summary") or "")
+    if metrics:
+        metrics.setdefault("data", {})["layout_variant"] = "floating_kpis"
+    if taxonomy:
+        taxonomy_data = taxonomy.setdefault("data", {})
+        taxonomy_data["layout_variant"] = "category_taxonomy"
+        taxonomy_data["card_style"] = "categorical_accents"
+        taxonomy_data.setdefault("kicker", "The taxonomy")
+    if hero_visual:
+        hero_data = hero_visual.setdefault("data", {})
+        hero_data["emphasis"] = "hero"
+        hero_data["layout_variant"] = "hero_visual"
+        hero_data["hero_selection"] = (
+            "explicit" if _editorial_role(hero_visual) == "hero" or hero_data.get("hero") is True
+            else "priority" if hero_data.get("story_priority", hero_data.get("layout_priority")) is not None
+            else "input_order"
+        )
+        hero_data.setdefault("kicker", "The landscape")
+    for index, diagnostic in enumerate(diagnostics):
+        diagnostic_data = diagnostic.setdefault("data", {})
+        diagnostic_data["layout_variant"] = "diagnostic"
+        diagnostic_data.setdefault("kicker", f"Diagnostic {index + 1:02d}")
+        if diagnostic in paired:
+            diagnostic["layout_group"] = "diagnostic_pair_1"
+            diagnostic_data["diagnostic_pair_source"] = "explicit_group" if pair_group else "input_order"
+    for item in interactive:
+        explorer_data = item.setdefault("data", {})
+        explorer_data["layout_variant"] = "reader_explorer"
+        explorer_data.setdefault("kicker", "Explore it yourself")
+    if findings:
+        findings.setdefault("data", {}).setdefault("kicker", "What the evidence says")
+
+    ordered: list[dict[str, Any]] = []
+    added: set[int] = set()
+
+    def append(*items: dict[str, Any] | None) -> None:
+        for item in items:
+            if item is not None and id(item) not in added:
+                ordered.append(item)
+                added.add(id(item))
+
+    # Orientation → summary → taxonomy → visual evidence → diagnostics →
+    # conclusions → reader-led exploration → provenance.
+    append(header, metrics, taxonomy if use_taxonomy else None, hero_visual)
+    append(*diagnostics, *remaining_evidence, findings, *interactive, *trust)
+    for item in section_plan:
+        if item is not readout:
+            append(item)
+
+    if trust:
+        footer_note = clean_text(requirements.get("footer_note") or "")
+        append({
+            "section_type": "narrative_band",
+            "layout_role": "report_epilogue",
+            "rationale": "End with the supplied scope, methodology, and provenance rather than another analytical claim.",
+            "data": {
+                "title": "Notes & provenance",
+                "kicker": "Epilogue",
+                "summary": footer_note or "See the methodology and evidence trace for scope, assumptions, and source references.",
+                "layout_variant": "report_epilogue",
+                "semantic_key": "report_epilogue",
+            },
+        })
+
+    section_plan[:] = ordered
+    narrative_acts = [
+        {"phase": "orientation", "purpose": "Frame the question before the reader encounters detail.", "sections": ["opening_context"]},
+        {"phase": "summary", "purpose": "Anchor the report with the headline KPIs.", "sections": ["executive_kpis"]},
+        {"phase": "evidence", "purpose": "Lead with the hero visual and pair diagnostic views in a shared grid.", "sections": [item.get("layout_role") for item in [hero_visual, *diagnostics, *remaining_evidence] if item]},
+        {"phase": "findings", "purpose": "State the conclusions after the supporting evidence.", "sections": ["primary_insights"]},
+        {"phase": "exploration", "purpose": "Let the reader inspect the supplied aggregate data after the guided argument.", "sections": [item.get("layout_role") for item in interactive]},
+        {"phase": "trust", "purpose": "Close with methodology, caveats, and provenance.", "sections": [item.get("layout_role") for item in [*trust] if item] + (["report_epilogue"] if trust else [])},
+    ]
+    if use_taxonomy:
+        narrative_acts.insert(2, {
+            "phase": "taxonomy",
+            "purpose": "Classify the categories or archetypes before asking the reader to interpret the evidence.",
+            "sections": [taxonomy.get("layout_role")] if taxonomy else [],
+        })
+    return {
+        "archetype": "taxonomy_explorer" if use_taxonomy else "guided_explorer",
+        "requested": requested or "auto",
+        "reason": (
+            "The supplied assets include category cards, visual evidence, and a reader-controlled explorer."
+            if use_taxonomy else
+            "The supplied assets include visual evidence and a reader-controlled explorer."
+        ),
+        "absorbed_sections": ["executive_readout"],
+        "guardrail": "The architecture reorders supplied sections and promotes the supplied readout into the hero; it never creates analytical claims or evidence.",
+        "narrative_acts": narrative_acts,
+    }
+
+
+_EDITORIAL_DESIGN_STAGES = (
+    "restore_editorial_sequence",
+    "complete_visual_hierarchy",
+    "anchor_visuals_to_local_context",
+    "recheck_evidence_and_explorer_pacing",
+    "audit_page_architecture",
+)
+
+
+def _critique_editorial_design(storyboard: dict[str, Any], *, max_passes: int = 5) -> dict[str, Any]:
+    """Run bounded page-architecture critique after the storyboard is designed.
+
+    This is deliberately separate from the analytical review. It evaluates the
+    reader's path through the supplied material and can make only reversible,
+    presentational repairs: reorder existing sections, restore layout metadata,
+    and place supplied context next to its visual. Missing assets remain
+    findings rather than invented charts, methods, or claims.
+    """
+    section_plan = storyboard.get("section_plan")
+    if not isinstance(section_plan, list):
+        return {
+            "review_schema": 1,
+            "status": "attention_required",
+            "findings": [{
+                "id": "page_architecture_unavailable",
+                "severity": "warning",
+                "claim": "The report has no structured section plan to review for page architecture.",
+                "recommendation": "Create a storyboard-backed report before requesting editorial critique.",
+                "sections": [],
+            }],
+            "max_passes": 0,
+            "passes": 0,
+            "stages": [],
+            "guardrail": "Design critique never invents content, analysis, or evidence.",
+        }
+
+    requirements = storyboard.get("source_context", {}).get("requirements", {})
+    if not isinstance(requirements, dict):
+        requirements = {}
+    architecture = storyboard.get("editorial_architecture")
+    architecture = dict(architecture) if isinstance(architecture, dict) else {}
+    is_editorial_story = clean_text(architecture.get("archetype") or "") in {"taxonomy_explorer", "guided_explorer"}
+    limit = max(1, min(int(max_passes or 5), len(_EDITORIAL_DESIGN_STAGES)))
+    stages: list[dict[str, Any]] = []
+    repairs: list[dict[str, Any]] = []
+
+    for pass_number, action in enumerate(_EDITORIAL_DESIGN_STAGES[:limit], start=1):
+        changed = False
+        if action in {"restore_editorial_sequence", "recheck_evidence_and_explorer_pacing"} and is_editorial_story:
+            before = copy.deepcopy(section_plan)
+            repaired_architecture = _apply_editorial_architecture(section_plan, requirements)
+            storyboard["editorial_architecture"] = repaired_architecture
+            if repaired_architecture.get("archetype") in {"taxonomy_explorer", "guided_explorer"}:
+                storyboard["storyboard"] = repaired_architecture.get("narrative_acts", [])
+                storyboard["layout_plan"] = _storyboard_layout(section_plan)
+                storyboard["interaction_plan"] = _storyboard_interactions(section_plan)
+            is_editorial_story = repaired_architecture.get("archetype") in {"taxonomy_explorer", "guided_explorer"}
+            changed = section_plan != before
+        elif action == "complete_visual_hierarchy" and is_editorial_story:
+            changed = _repair_editorial_hierarchy(section_plan)
+        elif action == "anchor_visuals_to_local_context":
+            paired = _add_adjacent_story_insights(section_plan)
+            noted = _add_local_data_notes(section_plan)
+            interpreted = _complete_chart_context_from_adjacent_insights(section_plan)
+            changed = paired or noted or interpreted
+
+        stages.append({"pass": pass_number, "action": action, "changed": changed})
+        if changed:
+            repairs.append({"pass": pass_number, "action": action})
+
+    review = _review_editorial_design(storyboard)
+    review.update({
+        "max_passes": limit,
+        "passes": limit,
+        "stages": stages,
+        "repairs": repairs,
+        "guardrail": "Design critique may only reorder supplied sections or restore presentation and local context; it never invents content, analysis, or evidence.",
+    })
+    return review
+
+
+def _repair_editorial_hierarchy(section_plan: list[dict[str, Any]]) -> bool:
+    """Restore existing taxonomy/explorer hierarchy metadata without new prose."""
+    changed = False
+    by_role = {
+        clean_text(item.get("layout_role") or ""): item
+        for item in section_plan if isinstance(item, dict)
+    }
+    header = by_role.get("opening_context")
+    if header:
+        data = header.get("data") if isinstance(header.get("data"), dict) else {}
+        if clean_text(data.get("visual_treatment") or "") != "editorial_dark":
+            data["visual_treatment"] = "editorial_dark"
+            changed = True
+        if not clean_text(data.get("abstract") or "") and isinstance(data.get("absorbed_readout"), dict):
+            abstract = clean_text(data["absorbed_readout"].get("summary") or "")
+            if abstract:
+                data["abstract"] = abstract
+                changed = True
+        header["data"] = data
+
+    metrics = by_role.get("executive_kpis")
+    if metrics:
+        data = metrics.get("data") if isinstance(metrics.get("data"), dict) else {}
+        if clean_text(data.get("layout_variant") or "") != "floating_kpis":
+            data["layout_variant"] = "floating_kpis"
+            metrics["data"] = data
+            changed = True
+
+    for item in section_plan:
+        if not isinstance(item, dict):
+            continue
+        section_type = clean_text(item.get("section_type") or "")
+        data = item.get("data") if isinstance(item.get("data"), dict) else {}
+        if section_type == "entity_card_grid":
+            if clean_text(data.get("layout_variant") or "") != "category_taxonomy":
+                data["layout_variant"] = "category_taxonomy"
+                changed = True
+            if clean_text(data.get("card_style") or "") != "categorical_accents":
+                data["card_style"] = "categorical_accents"
+                changed = True
+        elif clean_text(data.get("layout_variant") or "") == "hero_visual":
+            if clean_text(data.get("emphasis") or "") != "hero":
+                data["emphasis"] = "hero"
+                changed = True
+        item["data"] = data
+    return changed
+
+
+def _review_editorial_design(storyboard: dict[str, Any]) -> dict[str, Any]:
+    """Return non-fabricating findings about the rendered story structure."""
+    section_plan = storyboard.get("section_plan")
+    section_plan = section_plan if isinstance(section_plan, list) else []
+    architecture = storyboard.get("editorial_architecture")
+    architecture = architecture if isinstance(architecture, dict) else {}
+    archetype = clean_text(architecture.get("archetype") or "standard")
+    findings: list[dict[str, Any]] = []
+
+    def add(
+        finding_id: str,
+        *,
+        severity: str,
+        claim: str,
+        recommendation: str,
+        sections: list[str] | None = None,
+    ) -> None:
+        findings.append({
+            "id": finding_id,
+            "severity": severity,
+            "claim": claim,
+            "recommendation": recommendation,
+            "sections": sections or [],
+        })
+
+    indexed = [item for item in section_plan if isinstance(item, dict)]
+    roles = [clean_text(item.get("layout_role") or "") for item in indexed]
+
+    def position(role: str) -> int | None:
+        try:
+            return roles.index(role)
+        except ValueError:
+            return None
+
+    def data_at(role: str) -> dict[str, Any]:
+        index = position(role)
+        if index is None:
+            return {}
+        value = indexed[index].get("data")
+        return value if isinstance(value, dict) else {}
+
+    def item_data(item: dict[str, Any]) -> dict[str, Any]:
+        value = item.get("data")
+        return value if isinstance(value, dict) else {}
+
+    visual_sections = [
+        item for item in indexed
+        if clean_text(item.get("section_type") or "") in CHART_SECTION_KINDS
+    ]
+    contextless_visuals = []
+    unevidenced_guided_visuals = []
+    for item in visual_sections:
+        data = item_data(item)
+        section_type = clean_text(item.get("section_type") or "")
+        variant = clean_text(data.get("layout_variant") or "")
+        has_caption = bool(clean_text(data.get("caption") or data.get("dek") or ""))
+        has_interpretation = bool(clean_text(data.get("interpretation") or data.get("conclusion") or data.get("insight") or ""))
+        has_note = bool(clean_text(data.get("data_note") or ""))
+        guided_visual = variant in {"hero_visual", "diagnostic"} or section_type in {"chart", "chart_interpretation"}
+        if not (has_caption and (has_interpretation if guided_visual else (has_interpretation or has_note))):
+            contextless_visuals.append(clean_text(item.get("layout_role") or ""))
+        if guided_visual and not _evidence_ref_keys(data):
+            unevidenced_guided_visuals.append(clean_text(item.get("layout_role") or ""))
+    if contextless_visuals:
+        add(
+            "visual_context_incomplete",
+            severity="warning",
+            claim="One or more visual sections lack a local caption plus interpretation or data note.",
+            recommendation="Supply a concise interpretation and caveat, or retain the local data note; do not make the reader infer the conclusion from a chart alone.",
+            sections=contextless_visuals,
+        )
+    if unevidenced_guided_visuals:
+        add(
+            "guided_visual_evidence_missing",
+            severity="warning",
+            claim="One or more guided visuals make an interpretation without a supplied evidence reference.",
+            recommendation="Attach the completed analysis cell, artifact, or finding reference to each hero and diagnostic visual; do not rely on a chart title as evidence.",
+            sections=unevidenced_guided_visuals,
+        )
+
+    if archetype not in {"taxonomy_explorer", "guided_explorer"}:
+        return {
+            "review_schema": 1,
+            "archetype": archetype,
+            "status": "attention_required" if findings else "pass",
+            "findings": findings,
+        }
+
+    is_taxonomy_explorer = archetype == "taxonomy_explorer"
+    header = data_at("opening_context")
+    if clean_text(header.get("visual_treatment") or "") != "editorial_dark" or not clean_text(header.get("abstract") or ""):
+        add(
+            "hero_hierarchy_incomplete",
+            severity="warning",
+            claim="The editorial hero is missing its dark hierarchy treatment or supplied explanatory abstract.",
+            recommendation="Keep the kicker, title, and supplied abstract together in the hero before the report body.",
+            sections=["opening_context"],
+        )
+
+    metric_position = position("executive_kpis")
+    if metric_position is None:
+        add(
+            "headline_kpis_unavailable",
+            severity="info",
+            claim="The editorial story has no supplied metric row to bridge the hero and the body.",
+            recommendation="Provide two to five decision-relevant aggregate metrics when they exist; do not invent headline numbers.",
+            sections=[],
+        )
+    elif clean_text(data_at("executive_kpis").get("layout_variant") or "") != "floating_kpis":
+        add(
+            "kpi_continuity_missing",
+            severity="warning",
+            claim="The supplied KPI row is not visually connected to the hero.",
+            recommendation="Use the floating KPI layout so the reader moves from orientation into the report body without a hard visual break.",
+            sections=["executive_kpis"],
+        )
+
+    taxonomy_index = next(
+        (index for index, item in enumerate(indexed) if clean_text(item.get("section_type") or "") == "entity_card_grid"),
+        None,
+    )
+    hero_index = next(
+        (index for index, item in enumerate(indexed)
+         if clean_text(item_data(item).get("layout_variant") or "") == "hero_visual"),
+        None,
+    )
+    finding_index = position("primary_insights")
+    explorer_indices = [
+        index for index, item in enumerate(indexed)
+        if clean_text(item_data(item).get("layout_variant") or "") == "reader_explorer"
+    ]
+    evidence_indices = [
+        index for index, item in enumerate(indexed)
+        if clean_text(item.get("layout_role") or "").startswith("analysis_")
+        and clean_text(item_data(item).get("layout_variant") or "") != "reader_explorer"
+    ]
+
+    if hero_index is None:
+        add(
+            "hero_visual_missing",
+            severity="warning",
+            claim="The declared editorial story is missing a dedicated hero visualization.",
+            recommendation="Provide a non-interactive visual for the central argument or use the standard report sequence instead of declaring this archetype.",
+            sections=[],
+        )
+    elif is_taxonomy_explorer and taxonomy_index is None:
+        add(
+            "taxonomy_missing",
+            severity="warning",
+            claim="The declared taxonomy/explorer story is missing category cards.",
+            recommendation="Provide category cards or an archetype selector with supplied items, or use the guided explorer archetype.",
+            sections=[],
+        )
+    elif is_taxonomy_explorer and not (taxonomy_index < hero_index):
+        add(
+            "taxonomy_precedes_evidence_broken",
+            severity="warning",
+            claim="The category system no longer appears before the hero evidence visual.",
+            recommendation="Restore the taxonomy → hero visualization order so readers know how to interpret the evidence.",
+            sections=[roles[taxonomy_index], roles[hero_index]],
+        )
+
+    diagnostics = [
+        item for item in indexed
+        if clean_text(item_data(item).get("layout_variant") or "") == "diagnostic"
+    ]
+    if len(diagnostics) >= 2:
+        first_two = diagnostics[:2]
+        first_roles = [clean_text(item.get("layout_role") or "") for item in first_two]
+        groups = [clean_text(item.get("layout_group") or "") for item in first_two]
+        positions = [roles.index(role) for role in first_roles]
+        if not groups[0] or groups[0] != groups[1] or positions[1] != positions[0] + 1:
+            add(
+                "diagnostic_pair_unresolved",
+                severity="warning",
+                claim="The first two diagnostic views are not a contiguous, shared visual comparison.",
+                recommendation="Pair the diagnostics in one two-column group so their contrast is visible without scrolling between them.",
+                sections=first_roles,
+            )
+        pair_source = clean_text(item_data(first_two[0]).get("diagnostic_pair_source") or "")
+        if pair_source == "input_order":
+            add(
+                "diagnostic_pair_inferred",
+                severity="info",
+                claim="The diagnostic pair was selected from input order rather than a declared comparison group.",
+                recommendation="Set the same diagnostic_group or comparison_group on charts that should be read side by side.",
+                sections=first_roles,
+            )
+
+    if hero_index is not None:
+        hero_source = clean_text(item_data(indexed[hero_index]).get("hero_selection") or "")
+        if hero_source == "input_order":
+            add(
+                "hero_selected_from_input_order",
+                severity="info",
+                claim="The hero visualization was selected from input order rather than a declared editorial priority.",
+                recommendation="Set editorial_role='hero' or a lower story_priority on the visual that should carry the report's central argument.",
+                sections=[roles[hero_index]],
+            )
+
+    if finding_index is not None and evidence_indices and finding_index < max(evidence_indices):
+        add(
+            "findings_precede_evidence",
+            severity="warning",
+            claim="The primary findings appear before the supplied visual evidence is complete.",
+            recommendation="Move findings after the hero and diagnostics so the report alternates evidence with interpretation rather than announcing conclusions first.",
+            sections=["primary_insights"],
+        )
+
+    if explorer_indices and finding_index is not None and min(explorer_indices) < finding_index:
+        add(
+            "explorer_precedes_conclusions",
+            severity="warning",
+            claim="The interactive explorer appears before the guided findings.",
+            recommendation="Keep the explorer after the evidence and key findings so it becomes the reader's payoff rather than an unframed data dump.",
+            sections=[roles[min(explorer_indices)], "primary_insights"],
+        )
+    elif not explorer_indices:
+        add(
+            "reader_explorer_missing",
+            severity="warning",
+            claim="The editorial story has no reader-controlled explorer after its findings.",
+            recommendation="Provide an interactive table, selector, or filterable chart from the supplied aggregate data, or use the standard story archetype.",
+            sections=[],
+        )
+
+    trust_indices = [
+        position(role) for role in ("methodology", "hypothesis_dispositions", "evidence_trace", "report_epilogue")
+        if position(role) is not None
+    ]
+    final_content_index = max(explorer_indices + ([finding_index] if finding_index is not None else []) + evidence_indices, default=-1)
+    if not trust_indices:
+        add(
+            "methodology_or_provenance_missing",
+            severity="warning",
+            claim="The report ends without a supplied methodology, provenance section, or footer note.",
+            recommendation="Provide methodology, evidence targets, or a scoped footer note so the report closes with caveat and provenance rather than another analytic claim.",
+            sections=[],
+        )
+    elif min(trust_indices) < final_content_index:
+        add(
+            "trust_section_precedes_explorer",
+            severity="warning",
+            claim="Methodology or provenance interrupts the evidence-to-explorer sequence.",
+            recommendation="Move methodology and provenance after the reader explorer to preserve the report's guided pacing.",
+            sections=[roles[index] for index in trust_indices],
+        )
+
+    return {
+        "review_schema": 1,
+        "archetype": archetype,
+        "status": "attention_required" if any(item["severity"] == "warning" for item in findings) else "pass",
+        "findings": findings,
+    }
+
+
+def review_storyboard_design(storyboard: dict[str, Any]) -> dict[str, Any]:
+    """Re-evaluate the current storyboard architecture without mutating it."""
+    return _review_editorial_design(storyboard)
+
+
+def _refine_storyboard_design(storyboard: dict[str, Any], *, max_passes: int = 5) -> dict[str, Any]:
+    """Run bounded, non-fabricating layout refinement over a complete plan."""
+    working = copy.deepcopy(storyboard)
+    section_plan = working.get("section_plan")
+    if not isinstance(section_plan, list):
+        return working
+    limit = max(1, min(int(max_passes or 5), 5))
+    applied: list[dict[str, Any]] = []
+    pass_labels = (
+        "pair_insights_with_evidence",
+        "place_local_data_notes",
+        "complete_chart_context_from_supplied_findings",
+        "apply_visual_emphasis_plan",
+        "final_context_coverage_check",
+    )
+
+    for pass_number in range(1, limit + 1):
+        action = pass_labels[pass_number - 1]
+        changed = False
+        if action == "pair_insights_with_evidence":
+            changed = _add_adjacent_story_insights(section_plan)
+        elif action == "place_local_data_notes":
+            changed = _add_local_data_notes(section_plan)
+        elif action == "complete_chart_context_from_supplied_findings":
+            changed = _complete_chart_context_from_adjacent_insights(section_plan)
+        elif action == "apply_visual_emphasis_plan":
+            changed = _apply_visual_emphasis_plan(section_plan)
+        if changed:
+            applied.append({"pass": pass_number, "action": action})
+
+    working["design_iterations"] = {
+        "max_passes": limit,
+        "passes": limit,
+        "applied": applied,
+        "guardrail": "Design refinement may reorganize and annotate supplied context, but never creates analytical claims or evidence.",
+    }
+    working["source_context"] = {
+        "insights": copy.deepcopy(working.get("source_context", {}).get("insights", [])),
+        "analyses": copy.deepcopy(working.get("source_context", {}).get("analyses", [])),
+        "requirements": copy.deepcopy(working.get("source_context", {}).get("requirements", {})),
+    }
+    return working
+
+
+def _add_adjacent_story_insights(section_plan: list[dict[str, Any]]) -> bool:
+    insight_section = next(
+        (
+            item for item in section_plan
+            if isinstance(item, dict) and item.get("layout_role") == "primary_insights"
+        ),
+        None,
+    )
+    insight_data = insight_section.get("data", {}) if isinstance(insight_section, dict) else {}
+    insights = insight_data.get("items", []) if isinstance(insight_data, dict) else []
+    if not isinstance(insights, list):
+        return False
+    by_anchor: dict[str, list[dict[str, Any]]] = {}
+    for insight in insights:
+        if not isinstance(insight, dict):
+            continue
+        anchor = clean_text(insight.get("evidence_anchor") or "")
+        if not anchor:
+            continue
+        by_anchor.setdefault(anchor, []).append({
+            key: copy.deepcopy(insight[key])
+            for key in (
+                "title", "detail", "status", "severity", "confidence", "caveat",
+                "limitation", "next_action", "action", "metrics", "evidence_anchor",
+            )
+            if key in insight
+        })
+    changed = False
+    for planned in section_plan:
+        if not isinstance(planned, dict):
+            continue
+        data = planned.get("data") if isinstance(planned.get("data"), dict) else {}
+        section_id = clean_text(data.get("section_id") or "")
+        adjacent = by_anchor.get(section_id, [])
+        if adjacent and data.get("adjacent_insights") != adjacent[:2]:
+            data["adjacent_insights"] = adjacent[:2]
+            planned["data"] = data
+            changed = True
+    return changed
+
+
+def _add_local_data_notes(section_plan: list[dict[str, Any]]) -> bool:
+    changed = False
+    for planned in section_plan:
+        if not isinstance(planned, dict):
+            continue
+        data = planned.get("data") if isinstance(planned.get("data"), dict) else {}
+        if clean_text(data.get("data_note") or ""):
+            continue
+        records = data.get("records", data.get("rows"))
+        if isinstance(records, list):
+            data["data_note"] = (
+                f"Data note: {len(records):,} supplied aggregate row{'s' if len(records) != 1 else ''}; "
+                "use the local controls or table to inspect the underlying slice."
+            )
+        elif isinstance(data.get("figure"), dict) or data.get("figure_json"):
+            data["data_note"] = "Data note: interactive figure supplied from the completed analysis; hover for the plotted values."
+        else:
+            continue
+        planned["data"] = data
+        changed = True
+    return changed
+
+
+def _complete_chart_context_from_adjacent_insights(section_plan: list[dict[str, Any]]) -> bool:
+    changed = False
+    for planned in section_plan:
+        if not isinstance(planned, dict):
+            continue
+        section_type = clean_text(planned.get("section_type") or "")
+        if section_type not in {"chart_interpretation", "filterable_chart", "chart_table_explorer"}:
+            continue
+        data = planned.get("data") if isinstance(planned.get("data"), dict) else {}
+        adjacent = data.get("adjacent_insights", [])
+        if not isinstance(adjacent, list) or not adjacent:
+            continue
+        lead = adjacent[0] if isinstance(adjacent[0], dict) else {}
+        section_changed = False
+        if not clean_text(data.get("interpretation") or data.get("insight") or data.get("summary") or ""):
+            detail = clean_text(lead.get("detail") or "")
+            if detail:
+                data["interpretation"] = detail
+                section_changed = True
+        if not clean_text(data.get("caveat") or data.get("limitation") or ""):
+            caveat = clean_text(lead.get("caveat") or lead.get("limitation") or "")
+            if caveat:
+                data["caveat"] = caveat
+                section_changed = True
+        if section_changed:
+            planned["data"] = data
+            changed = True
+    return changed
+
+
+def _apply_visual_emphasis_plan(section_plan: list[dict[str, Any]]) -> bool:
+    """Add renderable emphasis metadata from supplied hierarchy, without style invention."""
+    changed = False
+    for planned in section_plan:
+        if not isinstance(planned, dict):
+            continue
+        section_type = clean_text(planned.get("section_type") or "")
+        data = planned.get("data") if isinstance(planned.get("data"), dict) else {}
+        section_changed = False
+        if section_type == "entity_card_grid" and "card_style" not in data:
+            data["card_style"] = "categorical_accents"
+            section_changed = True
+        if section_type in {"chart_interpretation", "filterable_chart", "chart_table_explorer"} and "layout_variant" not in data:
+            data["layout_variant"] = "evidence_with_interpretation"
+            section_changed = True
+        if section_changed:
+            planned["data"] = data
+            changed = True
+    return changed
 
 
 def render_report_from_storyboard(storyboard: dict[str, Any], *, title: str | None = None) -> str:
@@ -2338,6 +3554,7 @@ def render_report_from_storyboard(storyboard: dict[str, Any], *, title: str | No
 
     html_sections: list[str] = []
     include_plotly = False
+    active_group = ""
     for index, planned in enumerate(section_plan):
         if not isinstance(planned, dict):
             continue
@@ -2349,7 +3566,16 @@ def render_report_from_storyboard(storyboard: dict[str, Any], *, title: str | No
         data.setdefault("semantic_key", planned.get("layout_role") or f"section-{index}")
         typed = typed_report_section(section_type, data)
         include_plotly = include_plotly or typed.get("kind") in CHART_SECTION_KINDS
+        group = clean_text(planned.get("layout_group") or "")
+        if group != active_group:
+            if active_group:
+                html_sections.append("    </div>")
+            if group:
+                html_sections.append(f'    <div class="r-diagnostic-pair" data-dc-layout-group="{_esc(group)}">')
+            active_group = group
         html_sections.append(render_report_section(section_type, data, typed))
+    if active_group:
+        html_sections.append("    </div>")
 
     registry = build_evidence_registry(storyboard)
     return report_shell(
@@ -2710,7 +3936,18 @@ def _storyboard_layout(section_plan: list[dict[str, Any]]) -> list[dict[str, str
     for item in section_plan:
         section_type = clean_text(item.get("section_type") or "")
         role = clean_text(item.get("layout_role") or section_type)
-        if section_type in {"chart_interpretation", "chart_table_explorer", "filterable_chart"}:
+        variant = clean_text((item.get("data") or {}).get("layout_variant") or "") if isinstance(item.get("data"), dict) else ""
+        if clean_text(item.get("layout_group") or ""):
+            pattern = "two-column diagnostic pair"
+        elif variant == "floating_kpis":
+            pattern = "floating KPI row"
+        elif variant == "hero_visual":
+            pattern = "hero visualization"
+        elif variant == "reader_explorer":
+            pattern = "interactive reader explorer"
+        elif variant == "report_epilogue":
+            pattern = "methodology and provenance footer"
+        elif section_type in {"chart_interpretation", "chart_table_explorer", "filterable_chart"}:
             pattern = "chart plus interpretation rail"
         elif section_type in {"interactive_table", "selector_panel"}:
             pattern = "controls adjacent to evidence"
@@ -2744,10 +3981,18 @@ def render_report_section(section_type: str, data: dict[str, Any], typed: dict[s
         classes.append("is-hero")
     if st in NARROW_SECTION_KINDS:
         classes.append("is-narrow")
+    variant = clean_text(data.get("layout_variant") or "")
+    if st == "metric_row" and variant == "floating_kpis":
+        classes.append("is-floating-kpis")
+    if st == "narrative_band" and variant == "report_epilogue":
+        classes.append("is-report-epilogue")
+    if st == "header" and clean_text(data.get("visual_treatment") or "") == "editorial_dark":
+        classes.append("is-editorial-dark")
     if classes:
-        html = html.replace('class="r-section"', f'class="r-section {" ".join(classes)}"', 1)
+        wrapper = "r-hero" if st == "header" else "r-section"
+        html = html.replace(f'class="{wrapper}"', f'class="{wrapper} {" ".join(classes)}"', 1)
     kicker = clean_text(data.get("kicker") or "")
-    if kicker and st != "header":
+    if kicker and st != "header" and not (st == "metric_row" and variant == "floating_kpis"):
         html = re.sub(r"(<h2>)", f'<p class="r-section-kicker">{_esc(kicker)}</p>\\1', html, count=1)
     return html
 
@@ -2759,15 +4004,24 @@ def _render_section_body(section_type: str, data: dict[str, Any], typed: dict[st
     if st == "header":
         title = _esc(data.get("title", "Analysis Report"))
         kicker = _esc(data.get("kicker", "Dataclaw report"))
-        subtitle = _esc(data.get("subtitle", data.get("summary", "")))
+        subtitle = clean_text(data.get("subtitle", data.get("summary", "")))
+        abstract = clean_text(data.get("abstract", ""))
+        hero_copy = ""
+        if subtitle and abstract:
+            hero_copy = f'<p class="r-hero-abstract"><span class="r-hero-scope">{_esc(subtitle)}</span>{_esc(abstract)}</p>'
+        elif subtitle:
+            hero_copy = f'<p class="r-hero-abstract">{_esc(subtitle)}</p>'
+        elif abstract:
+            hero_copy = f'<p class="r-hero-abstract">{_esc(abstract)}</p>'
         return f"""    <section class="r-hero" {attrs}>
       <div class="r-kicker">{kicker}</div>
       <h1>{title}</h1>
-      {f'<p>{subtitle}</p>' if subtitle else ''}
+      {hero_copy}
       {meta}
     </section>"""
 
     if st == "metric_row":
+        floating = clean_text(data.get("layout_variant") or "") == "floating_kpis"
         metrics = data.get("metrics", [])
         cards = []
         for m in metrics if isinstance(metrics, list) else []:
@@ -2782,19 +4036,24 @@ def _render_section_body(section_type: str, data: dict[str, Any], typed: dict[st
         {spark}
       </div>""")
         return f"""    <section class="r-section" {attrs}>
-      {f'<h2>{_esc(data.get("title", ""))}</h2>' if data.get("title") else ''}
-      {_section_context(data)}
+      {f'<h2 class="sr-only">{_esc(data.get("title", "Headline metrics"))}</h2>' if floating else f'<h2>{_esc(data.get("title", ""))}</h2>' if data.get("title") else ''}
+      {'' if floating else _section_context(data)}
       <div class="r-metrics">{''.join(cards)}</div>
       {meta}
     </section>"""
 
     if st in {"chart", "chart_interpretation"}:
         chart_id = f"chart-{clean_text(typed.get('section_id') or uuid.uuid4().hex[:10])}"
-        figure = data.get("figure")
+        figure = copy.deepcopy(data.get("figure"))
         if not figure and data.get("figure_json"):
             figure = json.loads(str(data["figure_json"]))
         if not isinstance(figure, dict):
             raise ValueError(f"{st} section requires 'figure' dict or 'figure_json'")
+        palette = data.get("palette") or data.get("colorway")
+        if isinstance(palette, list) and palette:
+            layout = figure.setdefault("layout", {})
+            if isinstance(layout, dict) and not layout.get("colorway"):
+                layout["colorway"] = palette
         figure_json = _json_for_script({"figure": figure})
         title = _esc(data.get("title", figure.get("layout", {}).get("title", {}).get("text", "Chart") if isinstance(figure.get("layout"), dict) else "Chart"))
         caption = _esc(data.get("caption", ""))
@@ -3296,6 +4555,9 @@ def _section_context(data: dict[str, Any]) -> str:
     caption = clean_text(data.get("caption") or "")
     if caption:
         parts.append(f'<p class="r-section-dek">{_esc(caption)}</p>')
+    data_note = clean_text(data.get("data_note") or "")
+    if data_note:
+        parts.append(f'<p class="r-data-note">{_esc(data_note)}</p>')
     supports = data.get("supports")
     if isinstance(supports, list) and supports:
         links = []
@@ -3317,6 +4579,11 @@ def _section_context(data: dict[str, Any]) -> str:
     bullets = data.get("bullets") or data.get("key_points") or data.get("takeaways")
     if bullets:
         parts.append(_render_bullet_list(bullets))
+    adjacent_insights = data.get("adjacent_insights")
+    if isinstance(adjacent_insights, list) and adjacent_insights:
+        cards = "".join(_render_insight_card(item) for item in adjacent_insights[:2])
+        if cards:
+            parts.append(f'<div class="r-adjacent-insights">{cards}</div>')
     rendered = "".join(part for part in parts if part)
     return f'<div class="r-section-context">{rendered}</div>' if rendered else ""
 
@@ -3406,13 +4673,24 @@ def _metric_bar_pct(metric: dict[str, Any] | None, value: Any) -> float | None:
     return None
 
 
+def _safe_css_color(value: Any) -> str:
+    color = clean_text(value or "")
+    if re.fullmatch(r"#[0-9a-fA-F]{3,8}", color):
+        return color
+    if re.fullmatch(r"var\(--[A-Za-z0-9-]+\)", color):
+        return color
+    return ""
+
+
 def _render_entity_card(item: Any, index: int, *, selector: bool = False) -> str:
     selector_attr = (
         f' data-dc-selector-card="{_esc(_selector_key(item, index))}" role="button" tabindex="0" aria-pressed="false"'
         if selector
         else ""
     )
-    accent_style = f' style="--card-accent: var(--dc-cat-{(index % 8) + 1})"'
+    accent = _safe_css_color(item.get("accent_color") or item.get("color")) if isinstance(item, dict) else ""
+    accent = accent or f"var(--dc-cat-{(index % 8) + 1})"
+    accent_style = f' style="--card-accent: {accent}"'
     if not isinstance(item, dict):
         return f'<article class="r-entity-card"{selector_attr}{accent_style}><h3>{_esc(item)}</h3></article>'
     title = _item_title(item, f"Entity {index + 1}")
@@ -3564,6 +4842,8 @@ def _render_insight_card(item: Any) -> str:
         return f'<article class="r-insight-card"><p>{_esc(item)}</p></article>'
     status = item.get("severity") or item.get("disposition") or item.get("status") or item.get("confidence")
     status_class = _status_class(status)
+    accent = _safe_css_color(item.get("accent_color") or item.get("color"))
+    accent_style = f' style="border-top-color:{accent}"' if accent else ""
     chips = [
         _chip(status, status_class),
         _chip(item.get("confidence"), "neutral") if item.get("confidence") and item.get("confidence") != status else "",
@@ -3581,7 +4861,7 @@ def _render_insight_card(item: Any) -> str:
         if evidence_anchor
         else ""
     )
-    return f"""<article class="r-insight-card {status_class}">
+    return f"""<article class="r-insight-card {status_class}"{accent_style}>
       <div class="r-meta-row">{''.join(chips)}</div>
       <h3>{_esc(_item_title(item))}</h3>
       {f'<p>{_esc(_item_detail(item))}</p>' if _item_detail(item) else ''}

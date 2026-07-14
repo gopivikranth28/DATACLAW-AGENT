@@ -1,4 +1,4 @@
-import { Button, Tag } from 'antd'
+import { Alert, Button, Tag } from 'antd'
 import { FileTextOutlined, EyeOutlined, PrinterOutlined, ExportOutlined, DownloadOutlined } from '@ant-design/icons'
 import { API } from '../../api'
 import { reportDocumentUrl, reportPreviewUrl } from '../reportPreview'
@@ -10,9 +10,39 @@ interface ReportData {
   created?: boolean
   publication_status?: 'draft' | 'designed' | 'published'
   publish_required?: boolean
+  design_review?: DesignReview
+  analytical_review?: AnalyticalReview
   // legacy fields from old PDF-based tool
   path?: string
   format?: string
+}
+
+interface AnalyticalReviewFinding {
+  id?: string
+  severity?: 'required' | 'warning' | 'info' | string
+  claim?: string
+  recommendation?: string
+  review_finding_id?: string
+  lifecycle_status?: 'open' | 'resolved' | 'accepted_with_rationale' | 'dismissed_as_not_applicable' | string
+}
+
+interface AnalyticalReview {
+  status?: 'pass' | 'attention_required' | string
+  findings?: AnalyticalReviewFinding[]
+}
+
+interface DesignReviewFinding {
+  id?: string
+  severity?: 'warning' | 'info' | string
+  claim?: string
+  recommendation?: string
+  sections?: string[]
+}
+
+interface DesignReview {
+  status?: 'pass' | 'attention_required' | string
+  findings?: DesignReviewFinding[]
+  passes?: number
 }
 
 export default function ReportDisplay({ data, onFileClick }: {
@@ -24,6 +54,14 @@ export default function ReportDisplay({ data, onFileClick }: {
   const previewUrl = htmlPath ? reportPreviewUrl(htmlPath) : ''
   const documentUrl = htmlPath ? reportDocumentUrl(htmlPath, data.size !== undefined ? String(data.size) : undefined) : ''
   const publication = publicationLabel(data)
+  const reviewFindings = data.analytical_review?.findings || []
+  const acceptedFindings = reviewFindings.filter(finding => finding.lifecycle_status === 'accepted_with_rationale')
+  const requiredFindings = reviewFindings.filter(
+    finding => finding.severity === 'required' && finding.lifecycle_status !== 'accepted_with_rationale',
+  )
+  const warningFindings = reviewFindings.filter(finding => finding.severity === 'warning')
+  const designFindings = data.design_review?.findings || []
+  const designWarnings = designFindings.filter(finding => finding.severity === 'warning')
 
   const handleView = () => {
     if (!htmlPath) return
@@ -72,6 +110,43 @@ export default function ReportDisplay({ data, onFileClick }: {
           )}
         </div>
       </div>
+      {reviewFindings.length > 0 && (
+        <Alert
+          showIcon
+          type={requiredFindings.length > 0 ? 'error' : 'warning'}
+          style={{ marginBottom: 12 }}
+          message={`Analytical review: ${requiredFindings.length} required, ${warningFindings.length} warning${warningFindings.length === 1 ? '' : 's'}${acceptedFindings.length ? `, ${acceptedFindings.length} accepted risk${acceptedFindings.length === 1 ? '' : 's'}` : ''}`}
+          description={
+            <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+              {reviewFindings.map((finding, index) => (
+                <li key={`${finding.id || 'finding'}-${index}`}>
+                  {finding.claim || finding.id || 'Review finding'}
+                  {finding.recommendation ? ` ${finding.recommendation}` : ''}
+                  {finding.lifecycle_status === 'accepted_with_rationale' ? ' (accepted risk)' : ''}
+                </li>
+              ))}
+            </ul>
+          }
+        />
+      )}
+      {designFindings.length > 0 && (
+        <Alert
+          showIcon
+          type={designWarnings.length > 0 ? 'warning' : 'info'}
+          style={{ marginBottom: 12 }}
+          message={`Design critique: ${designWarnings.length} architecture warning${designWarnings.length === 1 ? '' : 's'}${data.design_review?.passes ? ` · ${data.design_review.passes} passes` : ''}`}
+          description={
+            <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+              {designFindings.map((finding, index) => (
+                <li key={`${finding.id || 'design-finding'}-${index}`}>
+                  {finding.claim || finding.id || 'Design finding'}
+                  {finding.recommendation ? ` ${finding.recommendation}` : ''}
+                </li>
+              ))}
+            </ul>
+          }
+        />
+      )}
       {documentUrl && (
         <iframe
           src={documentUrl}
