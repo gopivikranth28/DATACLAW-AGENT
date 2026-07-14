@@ -1,7 +1,8 @@
+import { useEffect, useRef, useState } from 'react'
 import { Alert, Button, Tag } from 'antd'
 import { FileTextOutlined, EyeOutlined, PrinterOutlined, ExportOutlined, DownloadOutlined } from '@ant-design/icons'
 import { API } from '../../api'
-import { reportDocumentUrl, reportPreviewUrl } from '../reportPreview'
+import { reportDocumentUrl } from '../reportPreview'
 
 interface ReportData {
   html_path?: string
@@ -45,13 +46,10 @@ interface DesignReview {
   passes?: number
 }
 
-export default function ReportDisplay({ data, onFileClick }: {
-  data: ReportData
-  onFileClick?: (path: string) => void
-}) {
+export default function ReportDisplay({ data }: { data: ReportData }) {
+  const [inlinePreviewOpen, setInlinePreviewOpen] = useState(false)
   const htmlPath = data.html_path || data.path
   const name = htmlPath?.split('/').pop() || 'report.html'
-  const previewUrl = htmlPath ? reportPreviewUrl(htmlPath) : ''
   const documentUrl = htmlPath ? reportDocumentUrl(htmlPath, data.size !== undefined ? String(data.size) : undefined) : ''
   const publication = publicationLabel(data)
   const reviewFindings = data.analytical_review?.findings || []
@@ -63,20 +61,16 @@ export default function ReportDisplay({ data, onFileClick }: {
   const designFindings = data.design_review?.findings || []
   const designWarnings = designFindings.filter(finding => finding.severity === 'warning')
 
-  const handleView = () => {
-    if (!htmlPath) return
-    if (onFileClick) onFileClick(htmlPath)
-    else handleOpenNewTab()
-  }
-
   const handlePrint = () => {
     if (!htmlPath) return
-    window.open(reportPreviewUrl(htmlPath, { print: true }), '_blank')
+    window.open(reportDocumentUrl(htmlPath, undefined, { print: true }), '_blank', 'noopener,noreferrer')
   }
 
   const handleOpenNewTab = () => {
-    if (!htmlPath) return
-    window.open(previewUrl, '_blank')
+    if (!documentUrl) return
+    // The document route is sandboxed by CSP but is a top-level browser page,
+    // so the report uses normal page scrolling rather than a nested scrollbox.
+    window.open(documentUrl, '_blank', 'noopener,noreferrer')
   }
 
   const handleDownloadDocx = async () => {
@@ -102,9 +96,9 @@ export default function ReportDisplay({ data, onFileClick }: {
           <span style={{ color: '#999', fontSize: 11 }}>({formatSize(data.size)})</span>
         )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-          <Button size="small" icon={<EyeOutlined />} onClick={handleView}>View</Button>
+          {documentUrl && <Button size="small" icon={<EyeOutlined />} onClick={() => setInlinePreviewOpen(value => !value)}>{inlinePreviewOpen ? 'Hide report' : 'Show full report'}</Button>}
           <Button size="small" icon={<PrinterOutlined />} onClick={handlePrint}>Print</Button>
-          <Button size="small" icon={<ExportOutlined />} onClick={handleOpenNewTab}>New Tab</Button>
+          <Button size="small" icon={<ExportOutlined />} onClick={handleOpenNewTab}>Open</Button>
           {data.docx_path && (
             <Button size="small" icon={<DownloadOutlined />} onClick={handleDownloadDocx}>Word</Button>
           )}
@@ -147,14 +141,39 @@ export default function ReportDisplay({ data, onFileClick }: {
           }
         />
       )}
-      {documentUrl && (
-        <iframe
-          src={documentUrl}
-          sandbox="allow-scripts allow-forms allow-popups allow-modals"
-          style={{ width: '100%', minHeight: 500, border: '1px solid #f0f0f0', borderRadius: 8, background: '#fff' }}
-        />
-      )}
+      {inlinePreviewOpen && documentUrl && <AutoHeightReportFrame documentUrl={documentUrl} title={name} />}
     </div>
+  )
+}
+
+function AutoHeightReportFrame({ documentUrl, title }: { documentUrl: string; title: string }) {
+  const frameRef = useRef<HTMLIFrameElement | null>(null)
+  const [height, setHeight] = useState(680)
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.source !== frameRef.current?.contentWindow) return
+      const payload = event.data
+      if (!payload || payload.type !== 'dataclaw:report-height') return
+      const nextHeight = Number(payload.height)
+      if (!Number.isFinite(nextHeight)) return
+      // The report document is sandboxed; accept only a bounded presentation
+      // hint and let the surrounding chat page handle all scrolling.
+      setHeight(Math.max(480, Math.min(Math.ceil(nextHeight), 30000)))
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [])
+
+  return (
+    <iframe
+      data-testid="inline-report-preview-frame"
+      ref={frameRef}
+      src={documentUrl}
+      title={title}
+      sandbox="allow-scripts allow-forms allow-popups allow-modals"
+      style={{ display: 'block', width: '100%', height, border: '1px solid #f0f0f0', borderRadius: 8, background: '#fff' }}
+    />
   )
 }
 

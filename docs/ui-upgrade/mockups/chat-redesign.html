@@ -1,11 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dataclaw Chat — redesign mock</title>
 <style>
 /* ============ tokens (mocks the app's light theme; deliberately single-theme) ============ */
 :root{
-  --ink:#1a222e; --muted:#667085; --faint:#98a2b3; --line:#e7ebf0; --line-soft:#f0f3f7;
+  --ink:#1a222e; --muted:#667085; --faint:#667085; --line:#e7ebf0; --line-soft:#f0f3f7;
   --bg:#ffffff; --bg-soft:#f7f8fa; --rail:#10151e; --rail-ink:#e8ecf2; --rail-muted:#8b95a3;
-  --accent:#1677ff; --accent-soft:#eef4ff; --bad:#d92d20; --bad-soft:#fef3f2;
-  --good:#16a34a; --warn:#d97706; --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --accent:#0b63ce; --accent-soft:#eef4ff; --bad:#b42318; --bad-soft:#fef3f2;
+  --good:#137333; --warn:#8a5a00; --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   --shadow:0 1px 2px rgba(16,24,40,.05), 0 8px 24px -8px rgba(16,24,40,.12);
 }
 *{box-sizing:border-box}
@@ -37,7 +42,9 @@ button{font:inherit;color:inherit;background:none;border:none;padding:0;cursor:p
 .chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:4px 11px;font-size:12px;color:var(--muted);white-space:nowrap;background:var(--bg)}
 .chip:hover{border-color:#cfd7e1;background:var(--bg-soft)}
 .chip .k{font-family:var(--mono);font-size:11px}
-.chip.branch{color:var(--muted)}
+.chip.context{max-width:170px;overflow:hidden}
+.chip.context .k{color:var(--faint);font-size:9.5px;letter-spacing:.05em}
+.chip.context b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:550}
 .chip.plan{color:var(--ink)}
 .chip.plan .dot{width:7px;height:7px;border-radius:50%;background:var(--good)}
 .chip.plan .dot.run{background:var(--accent);animation:pulse 1.2s infinite}
@@ -48,7 +55,8 @@ button{font:inherit;color:inherit;background:none;border:none;padding:0;cursor:p
 .chip.plan .pcount{font:600 10px var(--mono);color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:1px 6px;margin-left:2px}
 body.panel-open .chip.plan{border-color:var(--accent);background:var(--accent-soft)}
 .topbar .sp{flex:1}
-.topbar .auto{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--faint)}
+.auto-toggle{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--faint);border-radius:6px;padding:4px}
+.auto-toggle:hover{background:var(--bg-soft);color:var(--muted)}
 .sw{width:26px;height:15px;border-radius:999px;background:#d6dde6;position:relative;flex-shrink:0}
 .sw::after{content:"";position:absolute;top:2px;left:2px;width:11px;height:11px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2)}
 .topbar .kebab{color:var(--muted);font-size:16px;padding:2px 8px;border-radius:6px}
@@ -69,7 +77,7 @@ body.panel-open .chip.plan{border-color:var(--accent);background:var(--accent-so
 .umsg .tools button:hover{background:var(--bg-soft);color:var(--ink)}
 /* narrative = markdown cells on the shared notebook rail */
 .cell.md{margin:12px 0 6px}
-.cell.md .body{border:none;border-left:3px solid var(--line-soft);border-radius:0;background:transparent;padding:2px 16px;font-size:14.5px;line-height:1.65;max-width:76ch}
+.cell.md .body{border:none;border-radius:0;background:transparent;padding:2px 0;font-size:14.5px;line-height:1.65;max-width:76ch}
 .cell.md .body p{margin:0 0 10px}
 .cell.md .body p:last-child{margin-bottom:0}
 .cell.md .body h4{font-size:15px;font-weight:650;letter-spacing:-.01em;margin:0 0 8px}
@@ -90,10 +98,10 @@ body.panel-open .chip.plan{border-color:var(--accent);background:var(--accent-so
 .prov{position:relative;display:flex;align-items:center;gap:6px;font:11px var(--mono);color:var(--faint);margin-top:9px;padding-top:8px;border-top:1px solid var(--line-soft)}
 .prov .pexp{font:11px var(--mono);color:var(--accent);background:none;border:none;cursor:pointer;padding:0}
 .prov-src{margin-top:6px}
-.metric-prov{font:11px var(--mono);color:var(--faint);padding-left:70px;margin:4px 0 0}
+.metric-prov{font:11px var(--mono);color:var(--faint);margin:4px 0 0}
 .olink{margin-left:6px;font-size:10.5px;color:var(--accent);background:none;border:none;cursor:pointer;padding:0 3px}
 .flash{animation:flashbg 1.6s ease-out}
-@keyframes flashbg{0%{box-shadow:0 0 0 3px #1677ff55}100%{box-shadow:0 0 0 3px transparent}}
+@keyframes flashbg{0%{box-shadow:0 0 0 3px #0b63ce55}100%{box-shadow:0 0 0 3px transparent}}
 /* approval strip + queue pause */
 .astrip{display:flex;align-items:center;gap:10px;border:1px solid #f0d29a;background:#fff8ec;border-radius:10px;padding:8px 12px;margin-bottom:8px;font-size:12.5px}
 .astrip[hidden]{display:none}
@@ -110,13 +118,48 @@ body.panel-open .chip.plan{border-color:var(--accent);background:var(--accent-so
   .split{position:relative}
   .panel{position:absolute;top:0;bottom:0;right:46px;z-index:30;box-shadow:-16px 0 36px rgba(16,24,40,.14)}
 }
+/* compact desktop: preserve the chat width; opening the panel becomes a sheet */
+@media (max-width:1160px){
+  .rail{width:56px;padding:14px 8px}
+  .rail .logo{justify-content:center;padding:4px 0 16px;font-size:0}
+  .rail .logo::before{content:"D";font:700 16px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+  .rail .logo .mock,.rail .group,.rail a.sub{display:none}
+  .rail a{justify-content:center;padding:9px 0;font-size:0}
+  .rail a .svgi{width:17px;height:17px}
+  body.panel-open .split .panel{width:calc(100vw - 102px)}
+}
+/* tablet / phone: the panel is a full console sheet; low-priority chrome folds away */
+@media (max-width:760px){
+  .rail{display:none}
+  .thread{padding:20px 16px 10px}
+  .composer{padding:10px 16px 12px}
+  .topbar{padding:0 12px;gap:7px}
+  .topbar .sp{display:none}
+  .topbar .title{flex:1;min-width:0}
+  #scopeChip,.auto-toggle,.chip.plan .frac,.chip.plan .pcount{display:none}
+  .chip.plan{padding:4px 9px;gap:5px}
+  .chip.plan b{max-width:88px}
+  .chip.context{max-width:126px;padding:4px 9px}
+  .chip.context .k{display:none}
+  body.panel-open .split .panel{right:46px;width:calc(100vw - 46px)}
+  .act{margin-left:0}
+  .cell,.metric-row{max-width:none}
+}
+@media (max-width:480px){
+  .topbar .title{display:none}
+  .chip.plan b{max-width:76px}
+  .chip.context{max-width:104px}
+  .cell{gap:8px}
+  .cell .gut{width:48px}
+  .metric-row,.metric-prov{padding-left:0}
+}
 .fab.left{right:auto;left:18px;background:#8a6d1f}
 .sysline{display:flex;justify-content:center;margin:16px 0}
 .sysline span{font-size:11.5px;color:var(--faint);background:var(--bg-soft);border:1px solid var(--line-soft);border-radius:999px;padding:4px 14px}
 .sysline .ok{color:var(--good);margin-right:4px}
 
 /* ============ activity log (turn-grouped) ============ */
-.act{margin:6px 0 14px 70px;max-width:860px}
+.act{margin:6px 0 14px;max-width:860px}
 .act-head{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);padding:5px 8px 5px 4px;border-radius:8px;user-select:none;width:100%;text-align:left}
 .act-head:hover{background:var(--bg-soft)}
 .act-head .chev{font-size:9px;color:var(--faint);transition:transform .15s;width:10px}
@@ -124,19 +167,19 @@ body.panel-open .chip.plan{border-color:var(--accent);background:var(--accent-so
 .act-head .sum{font-weight:550;color:var(--ink)}
 .act-head .meta{color:var(--faint);font-variant-numeric:tabular-nums}
 .act-head .err-note{color:var(--bad)}
-.act-body{display:none;border-left:2px solid var(--line);margin:2px 0 0 8px;padding:4px 0 2px 16px}
+.act-body{display:none;margin:2px 0 0;padding:4px 0 2px 18px}
 .act.open .act-body{display:block}
 .step{font-size:12.5px;color:var(--muted);padding:3.5px 6px;border-radius:6px;display:flex;align-items:baseline;gap:8px}
-.step .t{color:#c2cad4;font-family:var(--mono);font-size:10.5px;min-width:34px;text-align:right;flex-shrink:0;font-variant-numeric:tabular-nums}
+.step .t{display:none}
 .step .mono{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
-.step.exp{cursor:pointer}
+.step.exp{cursor:pointer;border:0;background:none;text-align:left;width:100%}
 .step.exp:hover{background:var(--bg-soft);color:var(--ink)}
 .step.exp .more{color:var(--faint);font-size:10px;margin-left:2px}
 .step.bad, .step.bad .mono{color:var(--bad)}
 .step.live{color:var(--ink)}
 .step .pulse{width:7px;height:7px;border-radius:50%;background:var(--accent);flex-shrink:0;align-self:center;animation:pulse 1.2s infinite}
 @keyframes pulse{0%,100%{opacity:.35;transform:scale(.85)}50%{opacity:1;transform:scale(1)}}
-.step-detail{display:none;margin:4px 0 8px 44px}
+.step-detail{display:none;margin:4px 0 8px}
 .step.open + .step-detail{display:block}
 .spin{width:11px;height:11px;border:2px solid var(--accent);border-top-color:transparent;border-radius:50%;animation:rot 1s linear infinite;flex-shrink:0}
 @keyframes rot{to{transform:rotate(360deg)}}
@@ -150,15 +193,14 @@ body.panel-open .chip.plan{border-color:var(--accent);background:var(--accent-so
 .code .morebtn{display:block;width:100%;text-align:center;font-size:11px;color:var(--accent);padding:5px;border-top:1px solid var(--line-soft);background:#fbfcfd}
 .code.bad{background:var(--bad-soft);border-color:#fecdca}
 .code.bad pre{color:#912018}
-.code .kw{color:#9333ea}.code .st{color:#0e7a4d}.code .fn{color:#1361d8}.code .cm{color:#98a2b3;font-style:italic}.code .nm{color:#b54708}
+.code .kw{color:#9333ea}.code .st{color:#0e7a4d}.code .fn{color:#1361d8}.code .cm{color:var(--faint);font-style:italic}.code .nm{color:#b54708}
 
 /* ============ inline evidence (notebook-flavored) ============ */
-.cell{display:flex;gap:12px;margin:14px 0;max-width:960px}
-.cell .gut{flex-shrink:0;width:58px;text-align:right;font:10.5px/1.4 var(--mono);color:var(--faint);padding-top:8px}
-.cell .gut a{color:var(--faint);text-decoration:none;border-bottom:1px dotted #cfd7e1}
-.cell .body{flex:1;min-width:0;border:1px solid var(--line);border-left:3px solid var(--line);border-radius:8px;background:var(--bg);padding:14px 16px}
+.cell{display:block;margin:14px 0;max-width:960px}
+.cell .gut{display:none}
+.cell .body{min-width:0;border:1px solid var(--line);border-radius:8px;background:var(--bg);padding:14px 16px}
 .cell .cap{font-size:12px;color:var(--muted);margin-top:10px;max-width:70ch}
-.metric-row{display:flex;gap:12px;flex-wrap:wrap;margin:14px 0 4px;max-width:960px;padding-left:70px}
+.metric-row{display:flex;gap:12px;flex-wrap:wrap;margin:14px 0 4px;max-width:960px}
 .tile{flex:1;min-width:180px;border:1px solid var(--line);border-radius:10px;padding:12px 16px;background:var(--bg)}
 .tile .lb{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);font-weight:600}
 .tile .v{font-size:24px;font-weight:650;letter-spacing:-.01em;margin:3px 0 1px;font-variant-numeric:tabular-nums}
@@ -196,8 +238,9 @@ table.df .foot a{color:var(--accent);text-decoration:none}
 .qchip .x{color:var(--faint);padding:1px 6px;border-radius:50%}
 .qchip .x:hover{background:#e9edf2;color:var(--ink)}
 .crow{display:flex;gap:10px;align-items:flex-end}
-.cbox{flex:1;border:1px solid var(--line);border-radius:12px;padding:10px 14px;min-height:20px;font-size:14px;color:var(--faint);background:var(--bg)}
+.cbox{flex:1;border:1px solid var(--line);border-radius:12px;padding:10px 14px;height:44px;min-height:20px;resize:none;font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;color:var(--ink);background:var(--bg)}
 .cbox:hover{border-color:#cfd7e1}
+.cbox::placeholder{color:var(--faint);opacity:1}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border-radius:10px;font-size:13px;font-weight:550;padding:9px 14px;flex-shrink:0}
 .btn.primary{background:var(--accent);color:#fff}
 .btn.stop{border:1px solid #fecdca;color:var(--bad);background:var(--bg)}
@@ -277,7 +320,8 @@ body.panel-open .etab.on{color:var(--accent);background:var(--accent-soft)}
 .panel-hint{font-size:11.5px;color:var(--faint);margin-top:14px;line-height:1.5}
 
 /* ============ design notes ============ */
-.fab{position:fixed;bottom:18px;right:18px;z-index:60;background:var(--rail);color:#fff;border-radius:999px;padding:9px 16px;font-size:12.5px;font-weight:550;box-shadow:var(--shadow);display:flex;gap:7px;align-items:center}
+.fab{position:fixed;bottom:18px;right:18px;z-index:60;background:var(--rail);color:#fff;border-radius:999px;padding:9px 16px;font-size:12.5px;font-weight:550;box-shadow:var(--shadow);display:none;gap:7px;align-items:center}
+.review-mode .fab{display:flex}
 .badge{display:none;position:absolute;z-index:50;width:18px;height:18px;border-radius:50%;background:#e8b339;color:#10151e;font:700 10.5px/18px var(--mono);text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.25)}
 body.notes .badge{display:block}
 .notes-drawer{display:none;position:fixed;bottom:64px;right:18px;z-index:60;width:360px;max-height:min(520px,70vh);overflow-y:auto;background:var(--bg);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:14px 16px}
@@ -287,17 +331,21 @@ body.notes .notes-drawer{display:block}
 .notes-drawer li{display:flex;gap:9px;font-size:12px;color:var(--muted);padding:6px 0;border-top:1px solid var(--line-soft)}
 .notes-drawer li b{color:var(--ink);font-weight:600}
 .notes-drawer .n{flex-shrink:0;width:18px;height:18px;border-radius:50%;background:#e8b339;color:#10151e;font:700 10.5px/18px var(--mono);text-align:center}
-.hint-chip{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:60;display:flex;align-items:center;gap:10px;background:var(--rail);color:#dfe6ee;font-size:12px;border-radius:999px;padding:8px 10px 8px 16px;box-shadow:var(--shadow);max-width:min(620px,90vw)}
+.hint-chip{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:60;display:none;align-items:center;gap:10px;background:var(--rail);color:#dfe6ee;font-size:12px;border-radius:999px;padding:8px 10px 8px 16px;box-shadow:var(--shadow);max-width:min(620px,90vw)}
+.review-mode .hint-chip{display:flex}
 .hint-chip .x{color:#8b95a3;padding:2px 8px;border-radius:50%}
 .hint-chip .x:hover{color:#fff}
 .toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:70;background:var(--rail);color:#fff;font-size:12.5px;border-radius:10px;padding:9px 16px;box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:opacity .2s}
 .toast.show{opacity:1}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 /* line icons (AntD-outline style), inherit currentColor */
 .svgi{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
 .tools .svgi, .btn .svgi{width:12px;height:12px}
 .ftree .svgi{width:12px;height:12px;vertical-align:-2px;margin-right:6px}
 .etab .svgi{width:15px;height:15px}
 </style>
+</head>
+<body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
 <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
 <symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/></symbol>
@@ -317,21 +365,21 @@ body.notes .notes-drawer{display:block}
 </defs></svg>
 
 <div class="app">
-  <!-- left rail: the ONLY nav (project tab bar removed) -->
+  <!-- left rail: a Chats destination and Projects destination; session lists stay in their own context -->
   <nav class="rail" style="position:relative">
     <span class="badge" style="top:10px;right:6px">8</span>
     <div class="logo">Dataclaw <span class="mock">MOCK</span></div>
+    <div class="group">Chats</div>
+    <a href="#"><svg class="svgi"><use href="#i-chat"/></svg> Independent chats</a>
     <div class="group">Projects</div>
-    <a href="#" class="sub">test</a>
-    <a href="#" class="sub" style="color:var(--rail-ink)">New Chat</a>
+    <a href="#" class="sub on" aria-current="page" title="Current project">FIFA 2026 research</a>
+    <a href="#" class="sub">All projects</a>
     <a href="#" class="sub">＋ New Project</a>
-    <div class="group">Workspace</div>
-    <a href="#" class="on"><svg class="svgi"><use href="#i-chat"/></svg> Chat</a>
+    <div class="group">Resources</div>
     <a href="#"><svg class="svgi"><use href="#i-db"/></svg> Data</a>
     <a href="#"><svg class="svgi"><use href="#i-team"/></svg> Subagents</a>
     <a href="#"><svg class="svgi"><use href="#i-tool"/></svg> Tools</a>
     <a href="#"><svg class="svgi"><use href="#i-bulb"/></svg> Skills</a>
-    <a href="#"><svg class="svgi"><use href="#i-flask"/></svg> Experiments</a>
     <div style="flex:1"></div>
     <a href="#"><svg class="svgi"><use href="#i-gear"/></svg> Config</a>
   </nav>
@@ -342,13 +390,14 @@ body.notes .notes-drawer{display:block}
       <button class="back" aria-label="Back to sessions">←</button>
       <span class="title">which team has the best team composition?</span>
       <span class="sp"></span>
+      <button class="chip context" id="projectChip" title="This is a chat session inside the FIFA 2026 research project"><span class="k">PROJECT</span><b>FIFA 2026 research</b></button>
       <span style="position:relative"><span class="badge" style="top:-7px;left:-10px">3</span>
         <button class="chip plan" id="planPill" title="Active plan — click to open; browse all plans from the Plans rail tab"><span class="dot run"></span> Plan <b>Weights Sensitivity</b> <span class="frac">1/3</span> running <span class="pcount">+1</span></button>
       </span>
       <span style="position:relative"><span class="badge" style="top:-7px;left:-10px">6</span>
         <button class="chip" id="scopeChip" title="Session scope — datasets, tools, skills, subagents & guardrails. Opens the Scope tab.">Scope · All</button>
       </span>
-      <span class="auto"><span class="sw" role="switch" aria-checked="false" aria-label="Auto mode"></span> Auto</span>
+      <button class="auto-toggle" id="autoToggle" type="button" role="switch" aria-checked="false" aria-label="Auto mode"><span class="sw" aria-hidden="true"></span><span>Auto</span></button>
       <button class="kebab" aria-label="Session settings">⋯</button>
     </header>
 
@@ -356,7 +405,7 @@ body.notes .notes-drawer{display:block}
       <div class="console">
         <div class="thread" style="position:relative">
           <span class="badge" style="top:12px;left:12px">7</span>
-          <div class="thread-in">
+          <div class="thread-in" id="threadContent">
 
             <!-- user turn 1 -->
             <div class="umsg">
@@ -372,8 +421,8 @@ body.notes .notes-drawer{display:block}
             </div></div>
             <div class="act" style="position:relative">
               <span class="badge" style="top:2px;left:-24px">1</span>
-              <button class="act-head"><span class="chev">▶</span><span class="sum">Planned</span><span class="meta">3 steps · 12s</span></button>
-              <div class="act-body">
+              <button class="act-head" type="button" aria-expanded="false" aria-controls="turn-planned"><span class="chev">▶</span><span class="sum">Planned</span><span class="meta">3 steps · 12s</span></button>
+              <div class="act-body" id="turn-planned" hidden>
                 <div class="step"><span class="t">+0:02</span><span>Profiled <span class="mono">fifa_world_cup_2026_player_performance.csv</span> — 54,600 rows · 75 cols · 42% bench/DNP rows</span></div>
                 <div class="step"><span class="t">+0:05</span><span>Loaded skill <span class="mono">dataclaw_data_science</span></span></div>
                 <div class="step"><span class="t">+0:12</span><span>Submitted plan <b>WC2026 — Best Team Composition</b> for review</span></div>
@@ -386,12 +435,12 @@ body.notes .notes-drawer{display:block}
             <div class="cell md"><div class="gut"></div><div class="body">
               <p>Building player ratings and line strengths, then the composite index.</p>
             </div></div>
-            <div class="act open">
-              <button class="act-head"><span class="chev">▶</span><span class="sum">Worked</span><span class="meta">14 steps · 4m 32s ·</span><span class="err-note">1 error fixed</span></button>
-              <div class="act-body">
+            <div class="act">
+              <button class="act-head" type="button" aria-expanded="false" aria-controls="turn-worked"><span class="chev">▶</span><span class="sum">Worked</span><span class="meta">14 steps · 4m 32s ·</span><span class="err-note">1 error fixed</span></button>
+              <div class="act-body" id="turn-worked" hidden>
                 <div class="step"><span class="t">+0:04</span><span>Updated plan — step 1 <i>Build player-level ratings</i> started</span></div>
-                <div class="step exp" role="button" tabindex="0"><span class="t">+0:11</span><span>Added code cell <span class="mono">[4]</span> · 38 lines</span><span class="more">▸ source</span></div>
-                <div class="step-detail">
+                <button class="step exp" type="button" aria-expanded="false" aria-controls="step-code4"><span class="t">+0:11</span><span>Added code cell <span class="mono">[4]</span> · 38 lines</span><span class="more">▸ source</span></button>
+                <div class="step-detail" id="step-code4" hidden>
                   <div class="code" id="code4">
                     <pre><span class="kw">import</span> pandas <span class="kw">as</span> pd
 
@@ -418,8 +467,8 @@ agg[<span class="st">"rating"</span>] = w * agg.quality + (<span class="nm">1</s
                 <div class="step"><span class="t">+0:26</span><span>Added code cell <span class="mono">[5]</span> · 24 lines — line strengths GK/DEF/MID/FWD</span></div>
                 <div class="step"><span class="t">+0:27</span><span>Ran cell <span class="mono">[5]</span> · 0.8s</span></div>
                 <div class="step"><span class="t">+0:41</span><span>Loaded skill <span class="mono">visualization</span></span></div>
-                <div class="step bad exp" role="button" tabindex="0"><span class="t">+1:02</span><span>Ran cell <span class="mono">[6]</span> · <span class="mono">KeyError: 'market_value_eur'</span></span><span class="more">▸ traceback</span></div>
-                <div class="step-detail">
+                <button class="step bad exp" type="button" aria-expanded="false" aria-controls="step-error6"><span class="t">+1:02</span><span>Ran cell <span class="mono">[6]</span> · <span class="mono">KeyError: 'market_value_eur'</span></span><span class="more">▸ traceback</span></button>
+                <div class="step-detail" id="step-error6" hidden>
                   <div class="code bad"><pre>KeyError: 'market_value_eur'
   cell [6], line 3:
     ratings["value_m"] = agg["market_value_eur"] / 1e6
@@ -442,7 +491,7 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
               <div class="tile"><div class="lb">Teams ranked</div><div class="v">48</div><div class="d">54,600 player-match rows</div></div>
               <div class="tile"><div class="lb">Rating correlation</div><div class="v">0.93</div><div class="d">vs performance_score · Pearson</div></div>
             </div>
-            <div class="metric-prov">values from cell <span class="mono2">[6]</span> · reported at +2:52</div>
+            <div class="metric-prov">values from cell <span class="mono2">[7]</span> · reported at +2:52</div>
 
             <!-- evidence: chart, notebook-flavored -->
             <div class="cell chart" style="position:relative">
@@ -459,7 +508,7 @@ columns present: ['market_value_eur_m', 'performance_score', ...]</pre></div>
                     <line class="grid" x1="571" y1="4" x2="571" y2="288"/>
                     <g><title>Netherlands — TCI 81.9 · XI 88 · balance 84 · depth 86</title>
                       <text class="yl" x="108" y="24" text-anchor="end" font-weight="600">Netherlands</text>
-                      <path class="bar" fill="#1677ff" d="M116 12 h462 q4 0 4 4 v8 q0 4 -4 4 h-462 z"/>
+                      <path class="bar" fill="var(--accent)" d="M116 12 h462 q4 0 4 4 v8 q0 4 -4 4 h-462 z"/>
                       <text class="vl" x="590" y="24" font-weight="600" fill="#1a222e">81.9</text></g>
                     <g><title>Panama — TCI 79.4 · XI 80 · balance 88 · depth 78</title>
                       <text class="yl" x="108" y="52" text-anchor="end">Panama</text>
@@ -557,9 +606,9 @@ fig.<span class="fn">show</span>()</pre></div>
             <div class="sysline"><span><span class="ok">✓</span> Plan Weights Sensitivity approved · rev 1 · 9:12 AM</span></div>
 
             <!-- assistant turn 3: running -->
-            <div class="act open">
-              <button class="act-head"><span class="spin" role="status" aria-label="Working"></span><span class="sum">Working</span><span class="meta">4 steps · 41s</span></button>
-              <div class="act-body">
+            <div class="act open" aria-live="polite">
+              <button class="act-head" type="button" aria-expanded="true" aria-controls="turn-working"><span class="spin" aria-hidden="true"></span><span class="sum" role="status">Working</span><span class="meta">4 steps · 41s</span></button>
+              <div class="act-body" id="turn-working">
                 <div class="step"><span class="t">+0:02</span><span>Updated plan — step 1 <i>Weight perturbation grid</i> started</span></div>
                 <div class="step"><span class="t">+0:06</span><span>Added code cell <span class="mono">[9]</span> — weight perturbation grid, ±50% per component</span></div>
                 <div class="step"><span class="t">+0:10</span><span>Ran cell <span class="mono">[9]</span> · 3.8s</span></div>
@@ -568,18 +617,18 @@ fig.<span class="fn">show</span>()</pre></div>
             </div>
 
             <!-- queued messages live in the transcript, in dispatch order -->
-            <div class="umsg queued" style="position:relative">
+            <div class="umsg queued" data-queue-message style="position:relative" role="status">
               <span class="badge" style="top:-8px;left:-26px">4</span>
               <div class="tools" role="toolbar">
-                <button><svg class="svgi"><use href="#i-pencil"/></svg> Edit</button>
+                <button class="editqueue" type="button"><svg class="svgi"><use href="#i-pencil"/></svg> Edit</button>
                 <button class="unqueue">× Remove</button>
               </div>
               <div class="bubble"><span class="qtag">Queued · next</span>Also chart the age curves for the top-5 squads</div>
             </div>
-            <div class="umsg queued">
+            <div class="umsg queued" data-queue-message role="status">
               <div class="tools" role="toolbar">
                 <button class="bump">⬆ Send next</button>
-                <button><svg class="svgi"><use href="#i-pencil"/></svg> Edit</button>
+                <button class="editqueue" type="button"><svg class="svgi"><use href="#i-pencil"/></svg> Edit</button>
                 <button class="unqueue">× Remove</button>
               </div>
               <div class="bubble"><span class="qtag">Queued · 2nd</span>And flag any top-10 team whose rank flips under ±25% weight changes</div>
@@ -602,9 +651,9 @@ fig.<span class="fn">show</span>()</pre></div>
             </div>
             <div class="qpause" id="qpause" hidden>⏸ Queue paused — 2 messages held, nothing sent<span style="flex:1"></span><button class="smore" id="resumeQ">Resume queue</button></div>
             <div class="crow">
-              <div class="cbox" id="cbox">Message Dataclaw — sends when the current run finishes…</div>
+              <textarea class="cbox" id="cbox" rows="1" aria-label="Message Dataclaw" placeholder="Message Dataclaw — sends when the current run finishes…"></textarea>
               <button class="btn stop" id="stopBtn"><svg class="svgi"><use href="#i-stop"/></svg> Stop</button>
-              <button class="btn primary">Queue ↵</button>
+              <button class="btn primary" id="queueBtn" type="button">Queue ↵</button>
             </div>
             <div class="chint">⏎ send — queues during a run · ⇧⏎ newline</div>
           </div>
@@ -612,7 +661,7 @@ fig.<span class="fn">show</span>()</pre></div>
       </div>
 
       <!-- right panel: read-only home for plans / files / reports -->
-      <aside class="panel" aria-label="Session panel">
+      <aside class="panel" id="sessionPanel" role="dialog" aria-modal="true" aria-label="Session panel" aria-hidden="true" inert>
         <div class="panel-head">
           <span class="panel-title" id="panelTitle">Plans</span>
           <button class="close" id="panelClose" aria-label="Close panel">✕</button>
@@ -756,7 +805,7 @@ fig.<span class="fn">show</span>()</pre></div>
               <div class="dir"><svg class="svgi"><use href="#i-folder"/></svg>reports/</div>
               <div class="d1">wc26_composition.html <span class="sz">96K</span></div>
             </div>
-            <div class="panel-hint">Workspace for this session. Click any file to preview; heavy outputs live here instead of inside the transcript.</div>
+            <div class="panel-hint"><b>Project workspace · FIFA 2026 research.</b> Click any file to preview; heavy outputs live here instead of inside the transcript. The transcript, plans, queue, and report history remain owned by this session.</div>
           </div>
           <div class="ptab" id="tab-reports">
             <div class="rep-card">
@@ -766,31 +815,43 @@ fig.<span class="fn">show</span>()</pre></div>
             </div>
             <div class="panel-hint">Reports the agent builds with <code>report_add_section</code> collect here — read-only, publishable. (Artifacts layer lands later; this tab is its future home.)</div>
           </div>
-          <div class="ptab" id="tab-scope">
-            <div class="plist-cap">Everything available to this session · restricting anything turns the top-bar chip amber</div>
+          <div class="ptab" id="tab-datasets">
+            <div class="plist-cap"><b>Project session · FIFA 2026 research.</b> Choose the datasets available to this session.</div>
             <div class="sgroup open">
-              <button class="sgroup-h"><span class="chev">▶</span>Datasets <span class="cnt">1</span><span class="state">all on</span></button>
+              <button class="sgroup-h"><span class="chev">▶</span>Datasets <span class="cnt">1</span><span class="state">all enabled</span></button>
               <div class="sgroup-b">
-                <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span>Football FIFA</span><span class="sub2">local_file · 54,600 × 75</span></div>
+                <div class="srow"><button class="sw on" type="button" role="switch" aria-checked="true" aria-label="Enable Football FIFA"></button><span>Football FIFA</span><span class="sub2">local_file · 54,600 × 75</span></div>
               </div>
             </div>
+            <div class="panel-hint">Dataset selection is session-only. It narrows the data available from the next agent run without changing the project catalog.</div>
+          </div>
+          <div class="ptab" id="tab-experiments">
+            <div class="rep-card">
+              <div class="nm2">Bootstrap rank stability</div>
+              <div class="pth">MLflow run · 5c014b7e</div>
+              <div class="row"><span>FINISHED · accuracy 0.9182</span><a href="#" class="open">View run ↗</a></div>
+            </div>
+            <div class="panel-hint">MLflow runs belong to this chat session and record the parameters, metrics, and artifacts behind its experiments.</div>
+          </div>
+          <div class="ptab" id="tab-scope">
+            <div class="plist-cap"><b>Project session · FIFA 2026 research.</b> These are project defaults for this chat; changes here are session-only overrides.</div>
             <div class="sgroup">
-              <button class="sgroup-h"><span class="chev">▶</span>Tools <span class="cnt">12</span><span class="state">all on</span></button>
+              <button class="sgroup-h"><span class="chev">▶</span>Tools <span class="cnt">12</span><span class="state">project default</span></button>
               <div class="sgroup-b">
-                <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span class="mono2">execute_cell</span><span class="sub2">notebooks</span></div>
-                <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span class="mono2">insert_cell</span><span class="sub2">notebooks</span></div>
-                <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span class="mono2">data_query</span><span class="sub2">data</span></div>
-                <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span class="mono2">report_add_section</span><span class="sub2">reports</span></div>
+                <div class="srow"><button class="sw on" type="button" role="switch" aria-checked="true" aria-label="Enable execute_cell"></button><span class="mono2">execute_cell</span><span class="sub2">notebooks</span></div>
+                <div class="srow"><button class="sw on" type="button" role="switch" aria-checked="true" aria-label="Enable insert_cell"></button><span class="mono2">insert_cell</span><span class="sub2">notebooks</span></div>
+                <div class="srow"><button class="sw on" type="button" role="switch" aria-checked="true" aria-label="Enable data_query"></button><span class="mono2">data_query</span><span class="sub2">notebooks</span></div>
+                <div class="srow"><button class="sw on" type="button" role="switch" aria-checked="true" aria-label="Enable report_add_section"></button><span class="mono2">report_add_section</span><span class="sub2">reports</span></div>
                 <button class="smore">Show 8 more…</button>
                 <div class="bulkrow"><button class="smore">Enable all</button><button class="smore">Disable all</button></div>
               </div>
             </div>
             <div class="sgroup">
-              <button class="sgroup-h"><span class="chev">▶</span>Skills <span class="cnt">8</span><span class="state">all on</span></button>
+              <button class="sgroup-h"><span class="chev">▶</span>Skills <span class="cnt">8</span><span class="state">project default</span></button>
               <div class="sgroup-b">
-                <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span>dashboarding</span></div>
-                <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span>visualization</span></div>
-                <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span>structured_eda</span></div>
+                <div class="srow"><button class="sw on" type="button" role="switch" aria-checked="true" aria-label="Enable dashboarding"></button><span>dashboarding</span></div>
+                <div class="srow"><button class="sw on" type="button" role="switch" aria-checked="true" aria-label="Enable visualization"></button><span>visualization</span></div>
+                <div class="srow"><button class="sw on" type="button" role="switch" aria-checked="true" aria-label="Enable structured EDA"></button><span>structured_eda</span></div>
                 <button class="smore">Show 5 more…</button>
                 <div class="bulkrow"><button class="smore">Enable all</button><button class="smore">Disable all</button></div>
               </div>
@@ -800,25 +861,27 @@ fig.<span class="fn">show</span>()</pre></div>
               <div class="sgroup-b"><div class="srow"><span class="sub2">No subagents in this workspace — define them on the Subagents page.</span></div></div>
             </div>
             <div class="sgroup open">
-              <button class="sgroup-h"><span class="chev">▶</span>Guardrails <span class="cnt">4</span><span class="state">4 active</span></button>
+              <button class="sgroup-h"><span class="chev">▶</span>Guardrails <span class="cnt">4</span><span class="state">project default</span></button>
               <div class="sgroup-b">
-                <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span>pii scan</span><span class="end"><span class="ptag">pre-run</span><span class="ptag">auto</span></span></div>
-                <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span>cost limit</span><span class="end"><span class="ptag">pre-run</span><span class="ptag">auto</span></span></div>
-                <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span>destructive ops</span><span class="end"><span class="ptag">pre-tool</span><span class="ptag run">approval</span></span></div>
-                <div class="srow"><span class="sw on" role="switch" aria-checked="true"></span><span>export review</span><span class="end"><span class="ptag">post-run</span><span class="ptag run">approval</span></span></div>
+                <div class="srow"><button class="sw on" type="button" role="switch" aria-checked="true" aria-label="Enable PII scan"></button><span>pii scan</span><span class="end"><span class="ptag">pre-run</span><span class="ptag">auto</span></span></div>
+                <div class="srow"><button class="sw on" type="button" role="switch" aria-checked="true" aria-label="Enable cost limit"></button><span>cost limit</span><span class="end"><span class="ptag">pre-run</span><span class="ptag">auto</span></span></div>
+                <div class="srow"><button class="sw on" type="button" role="switch" aria-checked="true" aria-label="Enable destructive operations review"></button><span>destructive ops</span><span class="end"><span class="ptag">pre-tool</span><span class="ptag run">approval</span></span></div>
+                <div class="srow"><button class="sw on" type="button" role="switch" aria-checked="true" aria-label="Enable export review"></button><span>export review</span><span class="end"><span class="ptag">post-run</span><span class="ptag run">approval</span></span></div>
               </div>
             </div>
-            <div class="panel-hint">Scope is session settings, not content review — editing here is fine; plan and report approvals still happen only in the composer. Persisted per session. Changes apply from the <b>next</b> run; the current run keeps its scope.</div>
+            <div class="panel-hint">Project defaults seed this session; changing a toggle creates a session-only override. Scope is settings, not content review — plan and report approvals still happen only in the composer. Changes apply from the <b>next</b> run; the current run keeps its scope.</div>
           </div>
         </div>
       </aside>
 
-      <!-- edge rail: panel tabs, always visible -->
+      <!-- edge rail: session panels, always visible -->
       <nav class="edge" aria-label="Session panel tabs" style="position:relative">
         <span class="badge" style="top:-4px;left:-4px">8</span>
         <button class="etab on" data-tab="plans" title="Plans — 2 in this session, one running"><span class="edot run"></span><span class="ecount">2</span><svg class="svgi"><use href="#i-doc"/></svg><span class="elb">Plans</span></button>
         <button class="etab" data-tab="files" title="Files"><svg class="svgi"><use href="#i-folder"/></svg><span class="elb">Files</span></button>
         <button class="etab" data-tab="reports" title="Reports"><span class="ecount">1</span><svg class="svgi"><use href="#i-chart"/></svg><span class="elb">Reports</span></button>
+        <button class="etab" data-tab="datasets" title="Datasets"><svg class="svgi"><use href="#i-db"/></svg><span class="elb">Datasets</span></button>
+        <button class="etab" data-tab="experiments" title="Experiments"><svg class="svgi"><use href="#i-flask"/></svg><span class="elb">Experiments</span></button>
         <button class="etab" data-tab="scope" title="Scope — everything available to this session"><svg class="svgi"><use href="#i-filter"/></svg><span class="elb">Scope</span></button>
       </nav>
     </div>
@@ -831,36 +894,60 @@ fig.<span class="fn">show</span>()</pre></div>
   <h4>What changed & why</h4>
   <ol>
     <li><span class="n">1</span><span><b>Turn-grouped activity log</b> (Codex) with one-line steps that expand in place (Claude). Success is monochrome — only the fixed error wears color. Collapsed, a 14-step turn costs one line.</span></li>
-    <li><span class="n">2</span><span><b>Notebook feeling, kept — inside chat.</b> Narrative renders as <b>md</b> cells and evidence as <b>Out [n]</b> cells on one shared gutter rail, with real markdown formatting (headings, lists, inline code). No embedded notebook documents, heights capped — full outputs open from Files.</span></li>
+    <li><span class="n">2</span><span><b>Notebook feeling, kept — inside chat.</b> Narrative and evidence share one clean reading edge, with real markdown formatting (headings, lists, inline code). No embedded notebook documents, heights capped — full outputs open from Files.</span></li>
     <li><span class="n">3</span><span><b>One plan entry point.</b> The status pill replaces the banner, popover, and auto-focus choreography. Click → read-only doc on the right; approvals and feedback stay in the composer (act left, read right).</span></li>
     <li><span class="n">4</span><span><b>Queue in the thread.</b> Typing is never disabled; mid-run messages join the transcript as ordered ghost bubbles (edit / remove / bump). <b>Stop pauses the queue</b> — nothing sends until you resume — and messages that dispatched from the queue carry a "sent from queue" tag (see the second user message).</span></li>
     <li><span class="n">5</span><span><b>Plan approval, act-left.</b> A pending plan raises a slim strip above the composer — Approve / Deny / View plan — and the composer doubles as the feedback field. Reading stays on the right; deciding stays at the input. Try <b>"Simulate plan review"</b> (bottom left). Forking was considered and cut.</span></li>
-    <li><span class="n">6</span><span><b>Scope moved into the panel.</b> The five toolbar chips and five modals become one <b>Scope</b> rail tab — collapsible groups for datasets, tools, skills, subagents, and guardrails, editable in place (settings, not content review). The top-bar chip is its status shortcut and turns amber with counts when anything is restricted.</span></li>
+    <li><span class="n">6</span><span><b>Session settings moved into the panel.</b> <b>Datasets</b> has its own rail tab; <b>Scope</b> holds tools, skills, subagents, and guardrails. Both are editable session settings, not content review.</span></li>
     <li><span class="n">7</span><span><b>Console maximized:</b> 1000px column, one row of chrome, standalone-alert removed.</span></li>
-    <li><span class="n">8</span><span><b>One nav, persistent panel tabs.</b> The project tab bar merges into the left rail; Plans / Files / Reports stay visible as a slim edge rail on the right at all times — panel content opens on demand.</span></li>
+    <li><span class="n">8</span><span><b>Two session contexts, one clear boundary.</b> Independent chats are reached from the Chats destination; project sessions are reached from their project, not mixed into a global left-rail list. This example is a project session — the top-bar chip and Files/Scope copy name its project, while plans, queue, and transcript remain session-owned.</span></li>
     <li><span class="n">9</span><span><b>Many plans, one list.</b> The Plans tab opens list-first: every plan as a card with status, progress bar, and updated time — active sorts to top. The pill always deep-links to the plan needing attention (<b>+n</b> counts the rest); revisions live inside each plan as <b>rev</b> chips, so the list never fills with near-duplicates.</span></li>
     <li><span class="n">10</span><span><b>Provenance on every result.</b> Evidence cells carry a footer — <b>cell [n] · ran at +t · duration</b> — with expandable source; the producing step links "↓ output"; metric tiles cite the cell their values came from. Step times are run-relative (+m:ss), syslines are wall-clock.</span></li>
   </ol>
 </div>
-<div class="hint-chip" id="hintChip"><span>Clickable mock — try the activity headers, “↓ output” links, plan pill, Stop, “Simulate plan review” ↙ and “Design notes” ↘</span><button class="x" aria-label="Dismiss">×</button></div>
-<div class="toast" id="toast"></div>
+<div class="hint-chip" id="hintChip"><span>Review mode — try the activity headers, “↓ output” links, plan pill, Stop, “Simulate plan review” ↙ and “Design notes” ↘</span><button class="x" aria-label="Dismiss">×</button></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
-// activity groups
-$$('.act-head').forEach(h=>h.addEventListener('click',()=>h.parentElement.classList.toggle('open')));
+const panel=$('#sessionPanel');
+let panelTrigger=null;
+const setPanelState=open=>{
+  document.body.classList.toggle('panel-open',open);
+  panel.inert=!open;
+  panel.setAttribute('aria-hidden',String(!open));
+  $$('.etab').forEach(b=>b.setAttribute('aria-expanded',String(open&&b.classList.contains('on'))));
+};
+const closePanel=()=>{
+  if(!document.body.classList.contains('panel-open'))return;
+  setPanelState(false);
+  panelTrigger?.focus();
+};
+const openPanel=trigger=>{
+  panelTrigger=trigger;
+  setPanelState(true);
+  requestAnimationFrame(()=>$('#panelClose').focus());
+};
+// activity groups: completed turns start collapsed; the running turn stays open
+$$('.act-head').forEach(h=>{
+  const group=h.parentElement, detail=$('#'+h.getAttribute('aria-controls'));
+  const setOpen=open=>{group.classList.toggle('open',open);h.setAttribute('aria-expanded',String(open));detail.hidden=!open};
+  setOpen(group.classList.contains('open'));
+  h.addEventListener('click',()=>setOpen(!group.classList.contains('open')));
+});
 // expandable steps
 $$('.step.exp').forEach(s=>{
-  const go=()=>s.classList.toggle('open');
-  s.addEventListener('click',go);
-  s.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go()}});
+  const detail=$('#'+s.getAttribute('aria-controls'));
+  const setOpen=open=>{s.classList.toggle('open',open);s.setAttribute('aria-expanded',String(open));detail.hidden=!open};
+  setOpen(false);
+  s.addEventListener('click',()=>setOpen(!s.classList.contains('open')));
 });
 // code show-all
-$$('.morebtn').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const c=b.closest('.code');c.classList.toggle('full');b.textContent=c.classList.contains('full')?'Collapse':'Show all 38 lines'}));
+$$('.morebtn').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const c=b.closest('.code'),full=!c.classList.contains('full');c.classList.toggle('full',full);b.setAttribute('aria-expanded',String(full));b.textContent=full?'Collapse':'Show all 38 lines'}));
 // edge rail ↔ panel (tabs always visible; content on demand)
 const setTab=t=>{
   $('#panelTitle').textContent=t[0].toUpperCase()+t.slice(1);
-  $$('.etab').forEach(x=>x.classList.toggle('on',x.dataset.tab===t));
+  $$('.etab').forEach(x=>{const on=x.dataset.tab===t;x.classList.toggle('on',on);x.setAttribute('aria-pressed',String(on));x.setAttribute('aria-controls','sessionPanel')});
   $$('.ptab').forEach(p=>p.classList.toggle('on',p.id==='tab-'+t));
 };
 // plans: master list ↔ per-plan doc
@@ -869,35 +956,46 @@ const showPlan=n=>{$('#planList').hidden=true;$$('.plan-view').forEach(v=>v.hidd
 $$('.pcard').forEach(c=>c.addEventListener('click',()=>showPlan(c.dataset.plan)));
 $$('.pback').forEach(b=>b.addEventListener('click',showPlanList));
 $$('.etab').forEach(b=>b.addEventListener('click',()=>{
-  if(document.body.classList.contains('panel-open')&&b.classList.contains('on')){document.body.classList.remove('panel-open');return}
+  if(document.body.classList.contains('panel-open')&&b.classList.contains('on')){closePanel();return}
   setTab(b.dataset.tab);
   if(b.dataset.tab==='plans')showPlanList();   // rail = browse all plans
-  document.body.classList.add('panel-open');
+  openPanel(b);
 }));
 $('#planPill').addEventListener('click',()=>{
-  if(document.body.classList.contains('panel-open')&&$('.etab.on')?.dataset.tab==='plans'){document.body.classList.remove('panel-open');return}
+  if(document.body.classList.contains('panel-open')&&$('.etab.on')?.dataset.tab==='plans'){closePanel();return}
   setTab('plans');showPlan('2');               // pill = deep-link to the active plan
-  document.body.classList.add('panel-open');
+  openPanel($('#planPill'));
 });
-$('#panelClose').addEventListener('click',()=>document.body.classList.remove('panel-open'));
+$('#panelClose').addEventListener('click',closePanel);
 $('#scopeChip').addEventListener('click',()=>{
-  if(document.body.classList.contains('panel-open')&&$('.etab.on')?.dataset.tab==='scope'){document.body.classList.remove('panel-open');return}
-  setTab('scope');document.body.classList.add('panel-open');
+  if(document.body.classList.contains('panel-open')&&$('.etab.on')?.dataset.tab==='scope'){closePanel();return}
+  setTab('scope');openPanel($('#scopeChip'));
 });
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closePanel()});
 const toast=m=>{const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),2600)};
 // scope groups + toggles; chip reflects restriction
 const scopeChipEl=$('#scopeChip');
 const refreshScope=()=>{const off=$$('#tab-scope .sw').filter(s=>!s.classList.contains('on')).length;
   scopeChipEl.textContent=off?`Scope · ${off} off`:'Scope · All';
   scopeChipEl.classList.toggle('warn',off>0)};
-$$('.sgroup-h').forEach(h=>h.addEventListener('click',()=>h.parentElement.classList.toggle('open')));
-$$('#tab-scope .sw').forEach(s=>s.addEventListener('click',()=>{s.classList.toggle('on');s.setAttribute('aria-checked',s.classList.contains('on'));refreshScope()}));
+const setSwitch=(s,on)=>{s.classList.toggle('on',on);s.setAttribute('aria-checked',String(on))};
+$$('.sgroup-h').forEach((h,i)=>{const body=h.nextElementSibling;body.id||=`scope-group-${i}`;h.setAttribute('aria-controls',body.id);h.setAttribute('aria-expanded',String(h.parentElement.classList.contains('open')));h.addEventListener('click',()=>{const open=!h.parentElement.classList.contains('open');h.parentElement.classList.toggle('open',open);h.setAttribute('aria-expanded',String(open))})});
+$$('#tab-scope .sw').forEach(s=>s.addEventListener('click',()=>{setSwitch(s,!s.classList.contains('on'));refreshScope()}));
 $$('.bulkrow').forEach(r=>{const [on,off]=r.querySelectorAll('button');const g=r.closest('.sgroup-b');
-  on.addEventListener('click',()=>{g.querySelectorAll('.sw').forEach(s=>s.classList.add('on'));refreshScope()});
-  off.addEventListener('click',()=>{g.querySelectorAll('.sw').forEach(s=>s.classList.remove('on'));refreshScope()});});
+  on.addEventListener('click',()=>{g.querySelectorAll('.sw').forEach(s=>setSwitch(s,true));refreshScope()});
+  off.addEventListener('click',()=>{g.querySelectorAll('.sw').forEach(s=>setSwitch(s,false));refreshScope()});});
+$('#autoToggle').addEventListener('click',e=>{const on=e.currentTarget.getAttribute('aria-checked')!=='true';e.currentTarget.setAttribute('aria-checked',String(on));e.currentTarget.querySelector('.sw').classList.toggle('on',on);toast(`Auto mode ${on?'enabled':'disabled'} (mock)`) });
 // queued messages (live in the transcript, dispatch in order; Stop pauses)
-$$('.umsg.queued .unqueue').forEach(b=>b.addEventListener('click',()=>{b.closest('.umsg').remove();toast('Removed from queue (mock)')}));
-$$('.umsg.queued .bump').forEach(b=>b.addEventListener('click',()=>toast('Moved to front of queue (mock)')));
+const queueMessages=()=>$$('[data-queue-message]');
+const queueText=m=>m.dataset.text||(m.dataset.text=m.querySelector('.bubble').textContent.replace(/^Queued · (next|2nd)\s*/i,'').trim());
+const queueLabel=i=>{if(i===0)return 'next';const n=i+1,lastTwo=n%100,last=n%10,suffix=lastTwo>=11&&lastTwo<=13?'th':last===1?'st':last===2?'nd':last===3?'rd':'th';return `${n}${suffix}`};
+const refreshQueue=()=>{const messages=queueMessages();messages.forEach((m,i)=>{const label=queueLabel(i);m.querySelector('.qtag').textContent=`Queued · ${label}`;m.setAttribute('aria-label',`Queued ${label}: ${queueText(m)}`);const bump=m.querySelector('.bump');if(bump)bump.hidden=i===0});const pauseText=$('#qpause').firstChild;if(pauseText)pauseText.nodeValue=`⏸ Queue paused — ${messages.length} messages held, nothing sent`};
+const bindQueueMessage=m=>{const remove=m.querySelector('.unqueue'),bump=m.querySelector('.bump'),edit=m.querySelector('.editqueue')||m.querySelector('.tools button');remove?.addEventListener('click',()=>{m.remove();refreshQueue();toast('Removed from queue (mock)')});bump?.addEventListener('click',()=>{const first=queueMessages()[0];if(first&&first!==m)first.before(m);refreshQueue();toast('Moved to front of queue (mock)')});edit?.addEventListener('click',()=>{const input=$('#cbox');input.value=queueText(m);m.remove();refreshQueue();input.focus();toast('Message returned to composer (mock)')})};
+const addQueueMessage=text=>{const m=document.createElement('div');m.className='umsg queued';m.dataset.queueMessage='';m.dataset.text=text;m.setAttribute('role','status');if(!$('#qpause').hidden)m.classList.add('paused');m.innerHTML='<div class="tools" role="toolbar"><button class="bump" type="button">⬆ Send next</button><button class="editqueue" type="button">Edit</button><button class="unqueue" type="button">× Remove</button></div><div class="bubble"><span class="qtag"></span></div>';m.querySelector('.bubble').append(document.createTextNode(text));$('#threadContent').append(m);bindQueueMessage(m);refreshQueue();m.scrollIntoView({block:'nearest'});toast('Queued after the current run (mock)')};
+const queueComposer=()=>{const input=$('#cbox'),text=input.value.trim();if(!text){toast('Type a message to queue');input.focus();return}addQueueMessage(text);input.value=''};
+queueMessages().forEach(bindQueueMessage);refreshQueue();
+$('#queueBtn').addEventListener('click',queueComposer);
+$('#cbox').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();queueComposer()}});
 $('#stopBtn').addEventListener('click',()=>{
   if(!$('#qpause').hidden)return;
   $('#qpause').hidden=false;
@@ -922,15 +1020,20 @@ const setPending=on=>{
   pill.innerHTML=on
     ? '<span class="dot pend"></span> Plan <b>WC2026 — Age Curves</b> needs review <span class="pcount">+2</span>'
     : pillHTML;
-  $('#cbox').textContent=on?'Approve, deny, or type feedback for this plan…':'Message Dataclaw — sends when the current run finishes…';
+  $('#cbox').placeholder=on?'Approve, deny, or type feedback for this plan…':'Message Dataclaw — sends when the current run finishes…';
   const d=$('.etab[data-tab="plans"] .edot'); if(d){d.classList.toggle('pend',on);d.classList.toggle('run',!on)}
   const c=$('.etab[data-tab="plans"] .ecount'); if(c)c.textContent=on?'3':'2';
 };
 $('#simPending').addEventListener('click',()=>setPending(!document.body.classList.contains('pending')));
 $('#aok').addEventListener('click',()=>{toast('Approval sent to the agent as a chat message (mock)');setPending(false)});
 $('#ano').addEventListener('click',()=>{toast('Denial sent to the agent as a chat message (mock)');setPending(false)});
-$('#aview').addEventListener('click',()=>{setTab('plans');showPlanList();document.body.classList.add('panel-open');toast('Would deep-link to the Age Curves doc (mock)')});
+$('#aview').addEventListener('click',()=>{setTab('plans');showPlanList();openPanel($('#aview'));toast('Would deep-link to the Age Curves doc (mock)')});
 // notes + hint
 $('#notesFab').addEventListener('click',()=>document.body.classList.toggle('notes'));
 $('#hintChip .x').addEventListener('click',()=>$('#hintChip').remove());
+if(new URLSearchParams(location.search).has('review'))document.body.classList.add('review-mode');
+setTab('plans');
+setPanelState(false);
 </script>
+</body>
+</html>

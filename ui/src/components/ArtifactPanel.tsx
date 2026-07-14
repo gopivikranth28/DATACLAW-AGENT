@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Empty, Select, Spin, Tag, Tooltip } from 'antd'
 import { DownloadOutlined, ExportOutlined, FileDoneOutlined, ReloadOutlined } from '@ant-design/icons'
 import { API } from '../api'
+import { reportPreviewUrl } from './reportPreview'
 
 interface ArtifactVersion {
   version: number
@@ -23,18 +24,34 @@ interface ArtifactRecord {
   url?: string
 }
 
+interface ScratchReport {
+  id: string
+  htmlPath: string
+  title?: string
+  updatedAt?: string
+}
+
+interface ReportCounts {
+  published: number
+  scratch: number
+}
+
 export default function ArtifactPanel({
   sessionId,
   refreshKey = 0,
   focusArtifactId = null,
   focusVersion = null,
   focusKey = 0,
+  scratchReports = [],
+  onCountsChange,
 }: {
   sessionId: string | null
   refreshKey?: number
   focusArtifactId?: string | null
   focusVersion?: number | null
   focusKey?: number
+  scratchReports?: ScratchReport[]
+  onCountsChange?: (counts: ReportCounts) => void
 }) {
   const [artifacts, setArtifacts] = useState<ArtifactRecord[]>([])
   const [loading, setLoading] = useState(false)
@@ -53,6 +70,7 @@ export default function ArtifactPanel({
       setSelectedId(null)
       setSelectedVersion(null)
       setError(null)
+      onCountsChange?.({ published: 0, scratch: 0 })
       return
     }
     setLoading(true)
@@ -79,6 +97,8 @@ export default function ArtifactPanel({
       })
       .then(data => {
         const next = sortArtifacts(Array.isArray(data.artifacts) ? data.artifacts : [])
+        const livingCount = next.filter((artifact: ArtifactRecord) => artifact.kind === 'living_report').length
+        onCountsChange?.({ published: next.length - livingCount, scratch: livingCount })
         const shouldApplyFocus = Boolean(focusArtifactId && lastAppliedFocusKeyRef.current !== focusKey)
         const focusedId = shouldApplyFocus && next.some((a: ArtifactRecord) => a.artifact_id === focusArtifactId)
           ? focusArtifactId
@@ -106,9 +126,10 @@ export default function ArtifactPanel({
         setSelectedId(null)
         setSelectedVersion(null)
         setError(formatArtifactLoadError(err))
+        onCountsChange?.({ published: 0, scratch: 0 })
       })
       .finally(() => setLoading(false))
-  }, [sessionId, focusArtifactId, focusVersion, focusKey])
+  }, [sessionId, focusArtifactId, focusVersion, focusKey, onCountsChange])
 
   useEffect(() => { load() }, [load, refreshKey])
 
@@ -116,6 +137,8 @@ export default function ArtifactPanel({
     () => artifacts.find(a => a.artifact_id === selectedId) || null,
     [artifacts, selectedId],
   )
+  const publishedArtifacts = useMemo(() => artifacts.filter(artifact => artifact.kind !== 'living_report'), [artifacts])
+  const livingReports = useMemo(() => artifacts.filter(artifact => artifact.kind === 'living_report'), [artifacts])
   const version = selectedVersion || selected?.latest_version || null
   const isLivingReport = selected?.kind === 'living_report'
   const selectedSessionId = selected?.session_id || sessionId || 'default'
@@ -164,8 +187,9 @@ export default function ArtifactPanel({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <FileDoneOutlined style={{ color: '#1677ff' }} />
-        <span style={{ fontSize: 13, fontWeight: 700, color: '#1f2937' }}>Artifact Library</span>
-        <Tag style={{ marginLeft: 2, fontSize: 10 }}>{artifacts.length}</Tag>
+        <span style={{ fontSize: 13, fontWeight: 700, color: '#1f2937' }}>Reports</span>
+        <Tag style={{ marginLeft: 2, fontSize: 10 }}>{publishedArtifacts.length} published</Tag>
+        {(livingReports.length > 0 || scratchReports.length > 0) && <Tag color="blue" style={{ marginLeft: 0, fontSize: 10 }}>{livingReports.length + scratchReports.length} scratch</Tag>}
         <Tooltip title="Refresh">
           <Button size="small" type="text" icon={<ReloadOutlined />} loading={loading && artifacts.length > 0} onClick={load} style={{ marginLeft: 'auto' }} />
         </Tooltip>
@@ -175,21 +199,25 @@ export default function ArtifactPanel({
         <Alert type="error" showIcon message="Artifact library unavailable" description={error} />
       ) : loading && artifacts.length === 0 ? (
         <div style={{ textAlign: 'center', padding: 32 }}><Spin /></div>
-      ) : artifacts.length === 0 ? (
-        <Empty description="No published artifacts yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+      ) : artifacts.length === 0 && scratchReports.length === 0 ? (
+        <Empty description="No reports yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />
       ) : (
         <>
-          <Select
+          <div style={{ padding: '7px 9px', border: '1px solid #e7ecf3', borderRadius: 7, background: '#fafcff', fontSize: 11.5, color: '#667085', lineHeight: 1.45 }}>
+            Published reports are versioned and counted on the rail. Scratch reports are session drafts; review or publish them from here when they are ready.
+          </div>
+
+          {artifacts.length > 0 && <Select
             value={selected?.artifact_id}
             onChange={onSelectArtifact}
             style={{ width: '100%' }}
             options={artifacts.map(a => ({
               value: a.artifact_id,
               label: a.kind === 'living_report'
-                ? `${a.title || a.artifact_id} · live`
+                ? `${a.title || a.artifact_id} · scratch`
                 : `${a.title || a.artifact_id} · v${a.latest_version}`,
             }))}
-          />
+          />}
 
           {selected && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -250,6 +278,21 @@ export default function ArtifactPanel({
               )}
             </div>
           )}
+
+          {scratchReports.length > 0 && (
+            <section style={{ borderTop: '1px solid #eef1f5', paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 7 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: '#344054' }}>Workspace drafts</span>
+                <Tag color="blue" style={{ margin: 0, fontSize: 10 }}>{scratchReports.length}</Tag>
+              </div>
+              {scratchReports.map(report => (
+                <div key={report.id} style={{ display: 'flex', minWidth: 0, alignItems: 'center', gap: 6, padding: '7px 8px', border: '1px solid #e7ecf3', borderRadius: 7 }}>
+                  <span title={report.title || report.htmlPath} style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11.5, color: '#475467' }}>{report.title || report.htmlPath.split('/').pop()}</span>
+                  <Button size="small" type="link" href={reportPreviewUrl(report.htmlPath)} target="_blank" style={{ flex: '0 0 auto', paddingInline: 2 }}>Open</Button>
+                </div>
+              ))}
+            </section>
+          )}
         </>
       )}
     </div>
@@ -302,8 +345,8 @@ function formatArtifactLoadError(err: unknown): string {
 
 function sortArtifacts(items: ArtifactRecord[]): ArtifactRecord[] {
   return [...items].sort((a, b) => {
-    if (a.kind === 'living_report' && b.kind !== 'living_report') return -1
-    if (a.kind !== 'living_report' && b.kind === 'living_report') return 1
+    if (a.kind === 'living_report' && b.kind !== 'living_report') return 1
+    if (a.kind !== 'living_report' && b.kind === 'living_report') return -1
     return String(b.updated_at || '').localeCompare(String(a.updated_at || ''))
   })
 }

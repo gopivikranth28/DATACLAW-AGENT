@@ -16,11 +16,17 @@
 The DataClaw chat is now a working console, not a tool-call log. Agent turns collapse
 to a single line ("Worked · 14 steps · 4m 32s · 1 error fixed") that expands into
 plain-language steps; narrative and evidence render as notebook-style markdown and
-output cells on one shared rail; plans, files, reports, and session scope live behind
+output cells on one shared rail; plans, files, experiments, reports, and session scope live behind
 an always-visible edge rail on the right; and you can keep typing while the agent works —
 messages queue in the thread, pause when you press Stop, and dispatch in order.
 Every chart, table, and metric carries its provenance: which cell produced it, when,
 and the source one click away.
+
+**Session boundary:** a chat is one session in one of two contexts: **independent**
+(`project_id = null`) or **project-scoped** (`project_id` set). Both own their
+transcript, plans, queue, and notebook state. A project-scoped session uses that
+project's workspace and defaults; an independent session does not. The UI must always
+name the current context and never mix both session lists in one global sidebar.
 
 ## Validation gate & degradation rule
 
@@ -31,11 +37,12 @@ and the source one click away.
   with `Out [n]` gutters, keep the composer enabled during the simulated run, dispatch
   two queued messages in order on run end, and show both plans in the Plans list with
   the pill pointing at the running one. No nested scroll regions inside the thread.
-- **Degradation rule:** AG-UI events with a missing/unknown tool name render as
-  generic verb-less step lines ("Ran a tool"), never as expanded cards or `unknown`
-  headers. Sessions persisted before turn-id attribution render as one flat step group
-  per run. If the plans plugin is absent, the pill, Plans tab, and syslines do not
-  render; nothing else degrades.
+- **Degradation rule:** Every step must still name the concrete action and, when
+  available, its target. Known tools use the verb map; an unknown integration is
+  humanized from its name and target (for example, `Completed search memory — pricing
+  notes`), never rendered as "Ran a tool" or `unknown`. Sessions persisted before
+  turn-id attribution render as one flat step group per run. If the plans plugin is
+  absent, the pill, Plans tab, and syslines do not render; nothing else degrades.
 
 ## Convergence checklist
 
@@ -45,7 +52,7 @@ and the source one click away.
 | Tools | none new; step-line verb map covers existing tool names |
 | Hooks | none |
 | AG-UI | turn grouping keys off existing run/message ids; unknown-name events get a fallback renderer |
-| Sessions API | existing PATCH persistence reused for scope; new fields `queuedMessages`, `parentSessionId`/`forkedFromMessageId` |
+| Sessions API | existing PATCH persistence reused for scope; new field `queuedMessages` |
 | Plans plugin | existing list/decision endpoints unchanged; UI-side selection logic replaced |
 | Skills | no changes; `visualization.md` evidence contract is the inline-render allowlist |
 | OpenClaw | no manifest changes; UI renders the same event stream |
@@ -75,7 +82,7 @@ is a minority of the pixels. Full critique with code references:
 - **G3** - Preserve the notebook feeling inside chat: markdown (`md`) cells for
   narrative, `Out [n]` cells for evidence, one shared gutter rail, no embedded
   notebook documents, no nested scrolling.
-- **G4** - One home for session context: Plans / Files / Reports / Scope as a
+- **G4** - One home for session context: Plans / Files / Reports / Datasets / Experiments / Scope as a
   persistent right edge rail; read-right/act-left for content review.
 - **G5** - Never block input: mid-run messages queue in the transcript, editable and
   reorderable until dispatch.
@@ -83,6 +90,9 @@ is a minority of the pixels. Full critique with code references:
   and a step↔output link in both directions.
 - **G7** - Multi-plan legibility: list-first Plans tab; the top-bar pill always names
   the plan needing attention.
+- **G8** - Keep session context legible: Independent chats are browsed from Chats;
+  project-scoped chats are browsed inside their project. The header names which context
+  is active, and Scope distinguishes project defaults from session-only overrides.
 
 ## 3. Non-goals
 
@@ -91,6 +101,8 @@ is a minority of the pixels. Full critique with code references:
 - No dedicated notebook page; the notebook stays a chat-area experience.
 - No theming/dark-mode expansion beyond the token layer itself.
 - No backend plan/tool schema changes; UI-only interpretation of existing events.
+- No global sidebar that interleaves independent and project-scoped chat sessions, and
+  no hidden project context or invisible inherited configuration.
 - No session forking — considered and cut (2026-07-07): the workspace/notebook-state
   semantics of a fork (copy vs. share vs. snapshot) are unresolved; revisit post-v1.
 
@@ -106,7 +118,9 @@ is a minority of the pixels. Full critique with code references:
 | U6 | "Which of my plans is which?" | Plans tab lists all plans with status/progress; revisions stay inside each plan |
 | U7 | "Ask the next question mid-run" | Composer never disabled; queued messages visible in-thread, ordered, editable |
 | U8 | "Where did this number come from?" | Every evidence cell footers its producing cell, run time, and duration; source expands inline; metrics cite their cell |
-| U9 | "Limit what it can touch" | Scope tab toggles datasets/tools/skills/subagents/guardrails; chip shows restriction state |
+| U9 | "Limit what it can touch" | Datasets tab controls session data; Scope controls tools/skills/subagents/guardrails, with restriction badges on the rail |
+| U10 | "Start a chat without choosing a project" | Chats creates an independent session immediately, with no project defaults |
+| U11 | "Return to a chat inside a project" | The project lists only its own sessions; the chat header, Files, and Scope name the project context |
 
 ## 5. Functional Requirements
 
@@ -120,7 +134,8 @@ is a minority of the pixels. Full critique with code references:
   the page, not itself.
 - **FR-4** Running turns stream steps live under a spinner header; the newest step
   pulses.
-- **FR-5** Unknown-name events use the degradation rule; never render `unknown`.
+- **FR-5** Unknown-name events use the degradation rule; never render `unknown` or
+  "Ran a tool".
 
 ### 5.2 Notebook-in-chat
 - **FR-6** Assistant narrative renders as `md` cells (headings, lists, bold, inline
@@ -155,13 +170,17 @@ is a minority of the pixels. Full critique with code references:
   (optional `source_cell` param on `display_metric` — additive, backward-compatible).
 
 ### 5.5 Panel, rail & chrome
-- **FR-15** Right edge rail (Plans / Files / Reports / Scope) is always visible with
+- **FR-15** Right edge rail (Plans / Files / Reports / Datasets / Experiments / Scope) is always visible with
   status badges; panel content opens on demand; rail tab toggles its panel.
-- **FR-16** Scope tab holds editable groups for datasets, tools, skills, subagents,
-  guardrails (existing PATCH persistence); the `Scope` chip deep-links and turns
-  amber with counts when restricted. The five modals are removed.
-- **FR-17** Project tab bar merges into the left nav; standalone-chat alert removed;
-  message column max-width ~1000px; one top-bar row.
+- **FR-16** Datasets is its own editable session tab; Scope holds tools, skills,
+  subagents, and guardrails (existing PATCH persistence). Restriction badges live on
+  the relevant rail tabs. For project sessions the panels label project defaults and
+  session-only overrides; independent sessions have no inherited defaults. The old
+  filter modals are removed.
+- **FR-17** The global left nav exposes a Chats destination for independent sessions
+  and a Projects destination, but does not list every session. Project pages list only
+  their project-scoped sessions. The chat header carries an Independent or Project
+  context chip; message column max-width ~1000px; one top-bar row.
 
 ## 6. Success metrics
 

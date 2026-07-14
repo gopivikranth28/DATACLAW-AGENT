@@ -29,6 +29,31 @@ window.addEventListener('load', function() {
   }, 350);
 });
 </script>"""
+_RESIZE_REPORT_SCRIPT = """<script data-dc-preview-resize>
+(function() {
+  function reportHeight() {
+    var body = document.body;
+    var root = document.documentElement;
+    var height = Math.ceil(Math.max(
+      body ? body.scrollHeight : 0,
+      body ? body.offsetHeight : 0,
+      root ? root.scrollHeight : 0,
+      root ? root.offsetHeight : 0
+    ));
+    try {
+      window.parent.postMessage({ type: 'dataclaw:report-height', height: height }, '*');
+    } catch (_err) {}
+  }
+  window.addEventListener('load', reportHeight);
+  window.addEventListener('resize', reportHeight);
+  if (window.ResizeObserver && document.documentElement) {
+    new ResizeObserver(reportHeight).observe(document.documentElement);
+  }
+  window.setTimeout(reportHeight, 60);
+  window.setTimeout(reportHeight, 350);
+  window.setTimeout(reportHeight, 1000);
+})();
+</script>"""
 
 
 def _workspace_file_href(path: Path, query: str = "", fragment: str = "") -> str:
@@ -61,6 +86,15 @@ def _inject_print_script(source: str) -> str:
     if _BODY_CLOSE_RE.search(source):
         return _BODY_CLOSE_RE.sub(_PRINT_SCRIPT + r"\g<0>", source, count=1)
     return source + "\n" + _PRINT_SCRIPT
+
+
+def _inject_resize_report_script(source: str) -> str:
+    """Let an embedded preview grow with the report, without same-origin access."""
+    if _RESIZE_REPORT_SCRIPT in source:
+        return source
+    if _BODY_CLOSE_RE.search(source):
+        return _BODY_CLOSE_RE.sub(_RESIZE_REPORT_SCRIPT + r"\g<0>", source, count=1)
+    return source + "\n" + _RESIZE_REPORT_SCRIPT
 
 
 def _allowed_roots() -> list[Path]:
@@ -167,7 +201,7 @@ async def preview_html_document(
         raise HTTPException(400, "Preview is only supported for HTML files")
 
     source = file_path.read_text(encoding="utf-8", errors="replace")
-    rewritten = _rewrite_workspace_relative_urls(source, file_path)
+    rewritten = _inject_resize_report_script(_rewrite_workspace_relative_urls(source, file_path))
     if print_report:
         rewritten = _inject_print_script(rewritten)
     return HTMLResponse(

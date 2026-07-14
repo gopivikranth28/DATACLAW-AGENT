@@ -19,20 +19,16 @@ const TREND_ICON = {
 export default function MetricDisplay({ data }: { data: MetricData }) {
   const trend = (data.trend || '') as keyof typeof TREND_COLOR
   return (
-    <div style={{
-      display: 'inline-flex', flexDirection: 'column', gap: 2,
-      background: '#fafafa', border: '1px solid #f0f0f0',
-      borderRadius: 8, padding: '12px 16px', minWidth: 140,
-    }}>
-      <div style={{ fontSize: 11, color: '#8c8c8c', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+    <div className="chat-metric">
+      <div className="chat-metric__label">
         {data.label}
       </div>
-      <div style={{ fontSize: 24, fontWeight: 700, color: '#1a1a1a', lineHeight: 1.2 }}>
+      <div className="chat-metric__value">
         {data.value}
-        {data.unit && <span style={{ fontSize: 13, fontWeight: 400, color: '#666', marginLeft: 4 }}>{data.unit}</span>}
+        {data.unit && <span className="chat-metric__unit">{data.unit}</span>}
       </div>
       {data.delta && (
-        <div style={{ fontSize: 12, color: TREND_COLOR[trend], display: 'flex', alignItems: 'center', gap: 3 }}>
+        <div className="chat-metric__delta" style={{ color: TREND_COLOR[trend] }}>
           {TREND_ICON[trend]}
           {data.delta}
         </div>

@@ -2,7 +2,7 @@
 
 Companion to [chat-redesign-prd.md](chat-redesign-prd.md). Reference implementation of
 every visual and interaction decision: [mockups/chat-redesign.html](mockups/chat-redesign.html)
-(self-contained; open in a browser, toggle "Design notes").
+(self-contained; open in a browser. Append `?review=1` to show the annotated review controls).
 
 Numbers in this spec (widths, caps, timings) are the mock's values — treat them as
 defaults to tune, not constants to re-litigate.
@@ -20,13 +20,32 @@ defaults to tune, not constants to re-litigate.
 └──────────┴───────────────────────────────┴───────┴──────┘
 ```
 
-- Below 1400px viewport width the panel overlays the thread (absolute, shadowed)
-  instead of pushing it — the console never drops below ~900px usable.
-- Left nav absorbs the project tab bar: Projects tree + Chat / Data / Subagents /
-  Tools / Skills / Experiments / Config. `ProjectPage` tab strip is deleted.
-- Topbar: back · session title · branch chip · (spacer) · plan pill · scope chip ·
-  Auto · kebab. Nothing else. Standalone-chat Alert is deleted.
+- **≥1161px:** below 1400px viewport width the 400px panel overlays the thread
+  (absolute, shadowed) instead of pushing it. This keeps a ≥900px console at the
+  smallest desktop width where that promise is physically possible.
+- **761–1160px:** the left nav collapses to icons and the panel becomes a full console
+  sheet, so opening it never leaves a cramped chat column beside it.
+- **≤760px:** the left nav hides, Scope and Auto fold away from the top bar, and the
+  panel is a sheet covering the console while the 46px rail remains available.
+- Left nav keeps the two contexts distinct without listing sessions: **Chats** opens
+  independent sessions; **Projects** opens the project catalog. A project page lists
+  only the sessions scoped to that project. Data / Subagents / Tools / Skills / Config
+  remain resource navigation, not chat tabs; session Datasets and Experiments live in the right rail.
+- Topbar: back · session title · context chip (Independent | Project name) · (spacer)
+  · plan pill · Auto · session actions. Datasets, Experiments, and Scope open from the right rail.
 - Panel width 400px (resizable 360–560 later; not in v1). Rail is permanent.
+
+### 1.1 Session ↔ project boundary
+
+- A session with `project_id = null` is independent and is created/browsed from Chats.
+  A session with `project_id` is created/browsed from that project's Sessions surface;
+  its project id is passed deliberately, never inferred from unrelated navigation.
+- Plans, queue, transcript, and notebook state always belong to the session. A
+  project-scoped session uses the project workspace and project configuration as its
+  starting defaults; session Scope records any overrides.
+- The Files tab labels its source: **Session workspace** for independent sessions and
+  **Project workspace · {project name}** for project sessions. The context chip uses
+  the same distinction.
 
 ## 2. Design tokens (P0 — do this first)
 
@@ -34,12 +53,12 @@ Introduce `ui/src/tokens.css` as CSS custom properties; components consume token
 never literals. From the mock:
 
 ```
---ink #1a222e   --muted #667085   --faint #98a2b3
+--ink #1a222e   --muted #667085   --faint #667085
 --line #e7ebf0  --line-soft #f0f3f7
 --bg #ffffff    --bg-soft #f7f8fa
 --rail #10151e  --rail-ink #e8ecf2  --rail-muted #8b95a3
---accent #1677ff  --accent-soft #eef4ff
---bad #d92d20   --bad-soft #fef3f2   --good #16a34a   --warn #d97706
+--accent #0b63ce  --accent-soft #eef4ff
+--bad #b42318   --bad-soft #fef3f2   --good #137333   --warn #8a5a00
 --mono ui-monospace,"SF Mono",Menlo,Consolas,monospace
 ```
 
@@ -56,8 +75,8 @@ success states in the transcript wear no color at all.
   `Working` while streaming; else `Worked`.
 - Default collapsed for completed turns; running turn open with spinner header and
   pulsing last line. Completed-turn expansion state is per-turn, not persisted.
-- Error headers: "· {k} errors fixed" only when a later run of the same cell
-  succeeded. A run that ends on an unresolved failure renders
+- Error headers: "· {k} errors fixed" only when a later successful call retries the
+  same tool against the same cell, file, or dataset. A run that ends on an unresolved failure renders
   `Worked · {n} steps · {k} errors` with the count in `--bad` and the failing step
   auto-expanded.
 - Step timestamps are run-relative and prefixed `+m:ss`; syslines use wall-clock —
@@ -72,13 +91,16 @@ success states in the transcript wear no color at all.
 | execute_cell / execute_code | `Ran cell [i] · {dur}` ; error → red + `· {ErrType}: {msg}` (expand → traceback) |
 | open_notebook / close_notebook | `Opened|Closed notebook {name}` |
 | ws_read_file / ws_write_file | `Read|Wrote {path}[ · {size|rows}]` |
+| ws_list_files / ws_update_file / ws_exec | `Listed files [in {path}]` / `Updated {path}` / `Ran workspace command — {command}` |
+| data_* | `Listed available datasets`, `Previewed|Profiled {table} in {dataset}`, `Queried {dataset} — {SQL}` |
 | fetch_skill | `Loaded skill {name}` |
 | propose_plan | `Submitted plan {name} for review` |
 | update_plan | `Updated plan — {summary of step changes}` |
 | delegate_to_subagent | `Delegated to {name} · {k} turns` (expand → conversation, current renderer) |
-| display_* / report_add_section | not a step line — evidence (see §4) |
+| display_* | not a step line — reader-facing evidence (see §4) |
+| report_add_section | Conversational report mutation inside `Worked`: `Set the report opening: {title} — {subtitle}`, `Added the headline metrics — {labels}`, or `Added an interpreted chart: {title} — {caption}`. Adjacent identical mutations collapse to one line with a consolidation note. |
 | mlflow log | `Logged run {name} to MLflow — {headline metric}` |
-| *(unknown)* | `Ran a tool` (degradation rule) |
+| *(unknown)* | Humanize the tool name and attach its best available target: `Read|Created|Updated|… {object} — {file|dataset|query|URL}`; final fallback is `Completed {human-readable tool name}`, never `Ran a tool` |
 
 Identifiers (`[4]`, paths, skill names, metrics) render in `--mono` at 11.5px;
 timestamps in a fixed 34px gutter; step rows ~24px.
@@ -168,17 +190,14 @@ transcript references cells the workspace no longer contains is broken by
 construction. No fork affordances anywhere in v1; revisit post-v1 with a real
 workspace-snapshot design.
 
-## 8. Scope tab
+## 8. Dataset & scope tabs
 
-- Groups: Datasets / Tools / Skills / Subagents / Guardrails. Header: name · count ·
-  state (`all on` green, `{k} off` amber, `none defined` faint). Body: toggle rows
-  (identifier + context tag; guardrails add phase + auto/approval tags). >6 rows →
-  "Show n more…".
-- Persistence: existing per-session PATCH endpoints (`datasetIds`, `toolIds`,
-  `skillIds`, `subagentIds`, guardrail config). The five filter modals are deleted.
-- Chip: `Scope · All` neutral; restricted → amber `Scope · {k} off`. Deep-links to
-  the tab. Settings-vs-review nuance: editing here is allowed; content approvals are
-  not (read-right/act-left applies to agent work).
+- **Datasets:** its own rail tab, with readable names, ids as secondary metadata, and
+  `Use all` / `Clear` actions. It persists `datasetIds` for exactly the active session.
+- **Scope:** groups Tools / Skills / Subagents / Guardrails. Headers show name · count ·
+  state (`all on` green, `{k} off` amber, `none defined` faint); rows are editable in
+  place. Restriction counts appear on the relevant rail tab. Settings-vs-review nuance:
+  editing here is allowed; content approvals are not.
 
 ## 9. Removals checklist
 
@@ -193,16 +212,19 @@ by evidence allowlist) · `Plan 1/Plan 2` buttons in `PlanPanel`.
 |---|---|---|
 | P0 | tokens.css; swap literals in touched files | no visual change; snapshot parity |
 | P1 | turn grouping + step lines + verb map + unknown fix; evidence allowlist; md/Out cells; capped blocks | fixture renders per PRD gate; height metric met |
-| P2 | edge rail + panel (Plans list/doc, Files, Reports); pill; syslines; remove banner/popover | plan review in 1 click; no plan UI in thread except syslines |
+| P2 | edge rail + panel (Plans list/doc, Files, Experiments, Reports); pill; syslines; remove banner/popover | plan review in 1 click; no plan UI in thread except syslines |
 | P3 | queue incl. pause/resume + session API; provenance footers + ↓ output links | queued fixture dispatches FIFO on natural end only; Stop holds the queue; every evidence cell footers its cell |
-| P4 | Scope tab; delete modals; chip states | scope edits persist; amber chip on restriction |
-| P5 | chrome merge (nav, alert), removals checklist, delete `chat_v2` flag | old paths deleted; both fixture types pass |
+| P4 | Scope tab; delete modals; rail state badge | scope edits persist; amber rail badge on restriction |
+| P5 | session-context navigation, chrome cleanup, removals checklist, delete `chat_v2` flag | independent sessions are reachable from Chats; project pages list their own sessions; no global interleaved session list; both fixtures pass |
 
 ## 11. Accessibility & interaction
 
 - All disclosure affordances are buttons with `aria-expanded`; step rows reachable by
-  keyboard (Enter/Space toggle). Focus visible throughout.
-- Live turn header is `role="status"`; queued bubbles announce position.
+  keyboard (Enter/Space toggle). Scope and Auto use keyboard-operable switches; the
+  composer is a labelled textarea, never a pseudo-input. Focus is visible throughout.
+- The live turn header is announced as status; queued bubbles announce their position.
+- Opening the panel moves focus to its close button, makes the background inert, and
+  Escape closes it and returns focus to the invoking control.
 - `prefers-reduced-motion`: no pulse/spin animation, instant expand.
 - Color is never the only signal: errored steps carry the error text; guardrail modes
   carry tags; plan status has text tags beside dots.
@@ -212,7 +234,7 @@ by evidence allowlist) · `Plan 1/Plan 2` buttons in `PlanPanel`.
 1. Auto toggle: stays in topbar (flip frequency) vs. Scope group with its settings —
    currently topbar.
 2. Revision diffs inside a plan doc (rev chips exist; diff view unspecified).
-3. Whether `Working` turn groups should auto-collapse on completion or stay open
-   until the user collapses them — mock keeps them open.
+3. Resolved for v1: `Working` turn groups collapse on completion; expansion state is
+   per-turn and is not persisted.
 4. Multiple pending plans at once: pill reads `Plans · {k} need review` → list
    filtered to pending (plain list acceptable v1).

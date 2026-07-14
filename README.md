@@ -2,7 +2,7 @@
 
 A local-first, extensible data science agent. Dataclaw provides an event-loop agent architecture with swappable providers, a hook-based plugin system, and a React frontend — all wired together with the [AG-UI protocol](https://docs.ag-ui.com) for standardized agent-to-UI communication.
 
-It combines OpenClaw, gBrain-style memory, notebook execution, and a custom analytics harness. It is an experimental beta and is built primarily with AI assistance. Release 3 adds a governed structured-EDA workflow, analytical review gates, versioned artifacts, and a storyboard-based report builder.
+It combines OpenClaw, gBrain-style memory, notebook execution, and a custom analytics harness. It is an experimental beta and is built primarily with AI assistance. Release 3 adds a governed structured-EDA workflow, analytical review gates, versioned artifacts, and a storyboard-based report builder with evidence-bound visual authoring and publish-time integrity gates.
 
 > **Local use only.** Dataclaw is designed to run on your local machine or a trusted private server. It allows arbitrary code execution (shell commands, Python notebooks) on the host device. API keys and credentials are stored as plain text in `~/.dataclaw/dataclaw.config.json`. Do not expose Dataclaw to the public internet without additional security measures.
 
@@ -20,7 +20,7 @@ The `release3` branch turns a local analysis session into a traceable workflow: 
 | Structured EDA | A persistent hypothesis and finding ledger with evidence, confidence, caveats, validation state, and readiness checks | Run goal-directed exploration; preserve rejected or superseded findings; decide whether a dataset is ready for querying, a dashboard, or modelling |
 | Plans and gates | Stable plan-step IDs, required validation gates, explicit risk acceptance, and MLflow run access | Propose a multi-step analysis, track outputs, and keep a completed step from being marked ready before required checks pass |
 | Analysis review | Deterministic review checks plus an optional read-only LLM reviewer | Audit claims, denominator/grain, reproducibility, visual honesty, data-quality caveats, and hypothesis hygiene before presenting results |
-| Report builder | Typed sections, a report storyboard, critique pass, quality rubric, and explicit draft → designed → published states | Build narrative reports with metrics, evidence-backed charts, interactive tables, filters, methodology, and evidence traces |
+| Report builder | Typed sections, editorial storyboard review, runtime visual-authoring plans, a v7 quality rubric, regeneration recipes, and explicit draft → designed → published states | Build narrative reports with metrics, evidence-backed charts, interactive tables, filters, methodology, evidence traces, and source-bound publish receipts |
 | Artifacts | Versioned, session-scoped HTML artifacts and a living-report event log | Publish, revise, preview, export, and inspect reports, dashboards, and other analytical HTML safely |
 | OpenClaw bridge | Live tool-manifest snapshots, drift detection, install/reinstall, and skill sync | Keep OpenClaw's Dataclaw extension aligned with the tools and skills available in the local UI |
 
@@ -29,10 +29,15 @@ The `release3` branch turns a local analysis session into a traceable workflow: 
 1. Create a project and register or load data.
 2. Propose an analysis plan, then use the structured-EDA tools to maintain hypotheses and findings as notebook evidence is produced.
 3. Run an analysis review for a completed high-risk step, artifact, dashboard, or report; resolve findings or explicitly accept a gated risk with rationale.
-4. In Chat, ask for a complete report or ask the agent to continue a draft. The agent selects the appropriate report workflow, and the UI surfaces whether the result is a draft, designed report, or published report.
-5. Ask the agent to version or share the result from the session. It publishes the artifact and can produce a self-contained HTML export, including the Plotly runtime needed by interactive charts.
+4. In Chat, ask for a complete report or ask the agent to continue a draft. The agent selects the appropriate report workflow, plans only from typed source facts, and surfaces whether the result is a draft, designed report, or published report.
+5. For a release requiring visual approval, inspect the generated desktop/mobile browser evidence and record an approved visual review. The gate also checks deterministic rendered-page semantics such as hierarchy, evidence context, and editorial findings.
+6. Ask the agent to version or share the result from the session. It publishes the artifact with its storyboard and source-bound regeneration recipe, and can produce a self-contained HTML export including the Plotly runtime needed by interactive charts.
 
-The report workflow is HTML-first. DOCX conversion remains best-effort and should not be treated as the primary publish format.
+The report workflow is HTML-first. DOCX conversion remains best-effort and should not be treated as the primary publish format. The rendered-page semantic audit is deterministic browser/DOM checking, not a learned vision judgment.
+
+### Chat console redesign (design-ready, not yet implemented)
+
+The current `ui-chat-upgrade` branch also contains an approved chat-console redesign package: a product requirements document, build specification, and revision-5 clickable mock. It defines a turn-grouped transcript, notebook-style evidence cells, a Plans / Files / Reports / Scope edge rail, an in-thread pausable queue, and result provenance. These are implementation targets, not claims about the current production chat surface. See [the critique and decision log](docs/ui-upgrade/chat-redesign.md), [PRD](docs/ui-upgrade/chat-redesign-prd.md), [build specification](docs/ui-upgrade/chat-redesign-spec.md), and [clickable mock](docs/ui-upgrade/mockups/chat-redesign.html).
 
 ## Quick Start
 

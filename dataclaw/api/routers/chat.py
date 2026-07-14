@@ -13,6 +13,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -308,6 +309,21 @@ async def _run_agent_loop(
         # Agent loop with real streaming
         max_turns = int(resolve("app.max_turns", "DATACLAW_MAX_TURNS", "30"))
         _text_chunks: list[str] = []
+        tool_started_at: dict[str, str] = {}
+
+        def tool_timing(call_id: str) -> dict[str, str]:
+            """Persist the user-visible span of a tool call.
+
+            Session records used to receive only their append timestamp, which
+            made replayed notebook logs render every entry at +0:00.  Capture
+            both endpoints instead; the front end can then show a truthful
+            per-turn timeline after a refresh or reconnect.
+            """
+            finished_at = datetime.now(timezone.utc).isoformat()
+            return {
+                "startedAt": tool_started_at.pop(call_id, finished_at),
+                "finishedAt": finished_at,
+            }
 
         for turn in range(max_turns):
             msg_id = str(uuid.uuid4())
@@ -325,6 +341,7 @@ async def _run_agent_loop(
                     emit(emitter.text_delta(event.text, msg_id))
 
                 elif isinstance(event, ToolUseStartEvent):
+                    tool_started_at[event.call_id] = datetime.now(timezone.utc).isoformat()
                     emit(emitter.tool_call_start(event.call_id, event.tool_name))
 
                 elif isinstance(event, PendingToolCall):
@@ -460,7 +477,7 @@ async def _run_agent_loop(
                         "role": "tool_call", "messageId": f"tc-{call_id}",
                         "toolCallId": call_id, "toolName": orig.get("tool_name", "unknown"),
                         "args": json.dumps(orig.get("tool_input", {}), default=str),
-                        "result": result_json, "status": "error",
+                        "result": result_json, "status": "error", **tool_timing(call_id),
                     })
 
                 # For denied user-approval calls, emit the tool_call_result (but no extra guardrail card)
@@ -475,7 +492,7 @@ async def _run_agent_loop(
                         "role": "tool_call", "messageId": f"tc-{call_id}",
                         "toolCallId": call_id, "toolName": orig.get("tool_name", "unknown"),
                         "args": json.dumps(orig.get("tool_input", {}), default=str),
-                        "result": result_json, "status": "error",
+                        "result": result_json, "status": "error", **tool_timing(call_id),
                     })
 
                 # Rebuild pending list:
@@ -539,7 +556,7 @@ async def _run_agent_loop(
                             "role": "tool_call", "messageId": f"tc-{tc.call_id}",
                             "toolCallId": tc.call_id, "toolName": tc.tool_name,
                             "args": json.dumps(tc.tool_input, default=str),
-                            "result": result_json, "status": "error",
+                            "result": result_json, "status": "error", **tool_timing(tc.call_id),
                         })
                         continue
                     try:
@@ -557,7 +574,7 @@ async def _run_agent_loop(
                             "role": "tool_call", "messageId": f"tc-{tc.call_id}",
                             "toolCallId": tc.call_id, "toolName": tc.tool_name,
                             "args": json.dumps(tc.tool_input, default=str),
-                            "result": result_json, "status": "complete",
+                            "result": result_json, "status": "complete", **tool_timing(tc.call_id),
                         }
                         if llm_view_json != result_json:
                             msg_record["result_for_llm"] = llm_view_json
@@ -581,7 +598,7 @@ async def _run_agent_loop(
                             "role": "tool_call", "messageId": f"tc-{tc.call_id}",
                             "toolCallId": tc.call_id, "toolName": tc.tool_name,
                             "args": json.dumps(tc.tool_input, default=str),
-                            "result": result_json, "status": "error",
+                            "result": result_json, "status": "error", **tool_timing(tc.call_id),
                         })
 
                 # Build canonical messages and append to conversation. Use the
@@ -1047,26 +1064,15 @@ class CreateSessionRequest(BaseModel):
 
 @router.get("/sessions")
 async def list_chat_sessions(project_id: str | None = None) -> list[dict[str, Any]]:
-    return await sessions.list_sessions(project_id)
+    # The Chats destination contains independent sessions only. Project pages
+    # deliberately pass their id and receive only their own sessions.
+    return await sessions.list_sessions(project_id, independent_only=project_id is None)
 
 
 @router.post("/sessions")
 async def create_chat_session(req: CreateSessionRequest) -> dict[str, Any]:
     dataset_ids = req.dataset_ids
     project_id = req.project_id
-    session_id: str | None = None
-
-    # Auto-create a session-scoped project so notebooks and files have a home
-    if not project_id:
-        from dataclaw_projects.registry import create_project
-        from dataclaw.config.paths import workspaces_dir
-
-        session_id = str(uuid.uuid4())
-        project = create_project(
-            name=req.title or "New Chat",
-            directory=str(workspaces_dir() / session_id),
-        )
-        project_id = project["id"]
 
     # Seed from project defaults if not explicitly provided
     tool_ids = req.tool_ids
@@ -1088,7 +1094,7 @@ async def create_chat_session(req: CreateSessionRequest) -> dict[str, Any]:
             pass
 
     return await sessions.create_session(
-        session_id=session_id, project_id=project_id,
+        project_id=project_id,
         title=req.title, dataset_ids=dataset_ids,
         tool_ids=tool_ids, skill_ids=skill_ids, subagent_ids=subagent_ids,
     )
@@ -1102,6 +1108,58 @@ async def get_chat_session(session_id: str) -> dict[str, Any]:
     return session
 
 
+def _workspace_tree(root: Path) -> list[dict[str, Any]]:
+    if not root.exists():
+        return []
+    items: list[dict[str, Any]] = []
+    try:
+        for path in sorted(root.iterdir()):
+            if path.name.startswith(".") or path.name == "__pycache__":
+                continue
+            item: dict[str, Any] = {
+                "name": path.name,
+                "path": str(path),
+                "is_dir": path.is_dir(),
+                "size": path.stat().st_size if path.is_file() else 0,
+            }
+            if path.is_dir():
+                item["children"] = _workspace_tree(path)
+            items.append(item)
+    except OSError:
+        logger.warning("Could not read workspace files at %s", root)
+    return items
+
+
+@router.get("/sessions/{session_id}/files")
+async def get_chat_session_files(session_id: str) -> dict[str, Any]:
+    """Return the files that belong to one chat session and its project context.
+
+    A project chat can create session-specific outputs as well as reference the
+    project's shared workspace.  Keep those trees separate so the Files panel
+    does not hide generated work merely because the chat belongs to a project.
+    """
+    session = await sessions.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    from dataclaw.config.paths import workspaces_dir
+
+    session_files = _workspace_tree(workspaces_dir() / session_id)
+    project_id = session.get("projectId")
+    if project_id:
+        try:
+            from dataclaw_projects.registry import list_project_files
+            return {
+                "files": session_files,
+                "projectFiles": list_project_files(project_id).get("project", []),
+                "kind": "project",
+            }
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+    return {"files": session_files, "kind": "session"}
+
+
 class UpdateSessionRequest(BaseModel):
     title: str | None = None
     datasetIds: list[str] | None = None
@@ -1112,6 +1170,8 @@ class UpdateSessionRequest(BaseModel):
     autoMessage: str | None = None
     maxAutoTurns: int | None = None
     autoTurnsUsed: int | None = None
+    queuedMessages: list[dict[str, Any]] | None = None
+    queuePaused: bool | None = None
     # Compatibility App view curation (hidden element ids + chart order) —
     # read by the legacy /app/<session-id> route, so it must live on the session,
     # not in the author's browser.
@@ -1155,6 +1215,8 @@ class IncomingMessage(BaseModel):
     result: Any | None = None
     result_for_llm: str | None = None
     status: str | None = None
+    startedAt: str | None = None
+    finishedAt: str | None = None
 
 
 @router.post("/sessions/{session_id}/message")
@@ -1191,6 +1253,10 @@ async def receive_message(session_id: str, msg: IncomingMessage) -> dict[str, An
             "result_for_llm": result_for_llm,
             "status": msg.status or "complete",
         }
+        if msg.startedAt:
+            record["startedAt"] = msg.startedAt
+        if msg.finishedAt:
+            record["finishedAt"] = msg.finishedAt
         await sessions.append_message(session_id, record)
 
         await _append_visual_artifacts(

@@ -56,7 +56,14 @@ class NotebooksPlugin:
                 except Exception:
                     mgr.project_dir = None
             else:
-                mgr.project_dir = None
+                # Keep notebook state isolated for independent sessions without
+                # turning the session into a project in the registry.
+                session_id = state.get("session_id", "")
+                if session_id:
+                    mgr.project_dir = workspaces_dir() / session_id
+                    mgr.project_id = session_id
+                else:
+                    mgr.project_dir = None
 
             return state
 

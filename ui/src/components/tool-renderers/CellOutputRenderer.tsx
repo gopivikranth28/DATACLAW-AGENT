@@ -1,7 +1,4 @@
 import { useState } from 'react'
-import { IpynbRenderer as IpynbView } from 'react-ipynb-renderer'
-import 'react-ipynb-renderer/dist/styles/default.css'
-import CellSourceView from './CellSourceView'
 import PlotlyRenderer, { type PlotlyFigure } from './PlotlyRenderer'
 
 interface CellOutput {
@@ -17,116 +14,97 @@ interface CellData {
   outputs?: CellOutput[]
   caption?: string
   error?: string | null
-  code?: string    // present in execute_code results (inline code)
-  source?: string  // present in execute_cell results (cell source)
+  code?: string
+  source?: string
 }
 
 interface CellArgs {
-  // execute_code passes the inline source as `code`; execute_cell passes
-  // only `cell_index` (so source is unavailable from args alone).
   code?: string
   cell_index?: number
 }
 
+/** Lightweight chat output renderer.
+ *
+ * The previous renderer mounted an entire, dark Jupyter document for every cell.
+ * Here each output is a normal part of the transcript; dedicated notebook/file
+ * views can still use a full notebook renderer where that is useful.
+ */
 export default function CellOutputRenderer({ data, args }: { data: CellData; args?: CellArgs }) {
   const outputs = data.outputs || []
   const [showSource, setShowSource] = useState(false)
-  // Prefer source from result; fall back to args.code for legacy execute_code
-  // results that didn't echo source on the result side.
-  const sourceForToggle = data.source ?? args?.code ?? ''
-  const hasToggleableSource = !!(sourceForToggle && sourceForToggle.trim())
-
-  if (data.error && outputs.length === 0) {
-    return (
-      <div>
-        {data.cell_index !== undefined && <CellLabel index={data.cell_index} />}
-        <pre style={{ background: '#fff2f0', color: '#cf1322', padding: 8, borderRadius: 4, fontSize: 11, margin: 0, whiteSpace: 'pre-wrap' }}>
-          {data.error}
-        </pre>
-      </div>
-    )
-  }
-
-  // Plotly outputs render interactively via PlotlyRenderer; everything else
-  // goes through the nbformat/IpynbView path unchanged.
-  const plotlyOutputs = outputs.filter(o => o.type === 'plotly' && o.figure)
-  const standardOutputs = outputs.filter(o => o.type !== 'plotly')
-
-  // Convert outputs to nbformat-compatible cell for IpynbView
-  const nbOutputs = standardOutputs.map(out => {
-    if (out.type === 'image' && out.data) {
-      return { output_type: 'display_data', data: { [out.mimetype || 'image/png']: out.data }, metadata: {} }
-    }
-    if (out.type === 'html' && out.text) {
-      return { output_type: 'execute_result', data: { 'text/html': out.text }, metadata: {}, execution_count: null }
-    }
-    if (out.type === 'error' && out.text) {
-      return { output_type: 'error', ename: 'Error', evalue: '', traceback: [out.text] }
-    }
-    return { output_type: 'stream', name: 'stdout', text: out.text || '' }
-  })
-
-  // Build a minimal notebook with one cell for IpynbView
-  const notebook = {
-    nbformat: 4,
-    nbformat_minor: 5,
-    metadata: { kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' }, language_info: { name: 'python' } },
-    cells: [{
-      cell_type: 'code',
-      source: data.code || '',
-      metadata: {},
-      execution_count: data.cell_index !== undefined ? data.cell_index + 1 : null,
-      outputs: nbOutputs,
-    }],
-  }
+  const source = data.source ?? data.code ?? args?.code ?? ''
 
   return (
-    <div>
-      {data.cell_index !== undefined && <CellLabel index={data.cell_index} />}
-      {hasToggleableSource && (
-        <div style={{ marginBottom: 4 }}>
-          <button
-            onClick={() => setShowSource(s => !s)}
-            style={{
-              fontSize: 11, padding: '2px 8px', cursor: 'pointer',
-              border: '1px solid #d9d9d9', borderRadius: 4,
-              background: '#fafafa', color: '#444',
-              display: 'inline-flex', alignItems: 'center', gap: 4,
-            }}
-          >
-            <span style={{
-              display: 'inline-block', transition: 'transform 0.15s',
-              transform: showSource ? 'rotate(90deg)' : 'rotate(0deg)',
-            }}>▸</span>
-            Source
-          </button>
-          {showSource && (
-            <div style={{ marginTop: 4 }}>
-              <CellSourceView source={sourceForToggle} />
-            </div>
-          )}
-        </div>
+    <div className="chat-cell-output">
+      {source.trim() && (
+        <button type="button" className="chat-cell-output__source" onClick={() => setShowSource(value => !value)} aria-expanded={showSource}>
+          {showSource ? '▾ source' : '▸ source'}
+        </button>
       )}
-      {(standardOutputs.length > 0 || plotlyOutputs.length === 0) && (
-        <div className="cell-output-only" style={{ borderRadius: 6, overflow: 'hidden', border: '1px solid #e8e8e8' }}>
-          <IpynbView ipynb={notebook as any} syntaxTheme="vscDarkPlus" language="python" />
-        </div>
-      )}
-      {plotlyOutputs.map((out, i) => (
-        <div key={i} style={{ borderRadius: 6, overflow: 'hidden', border: '1px solid #e8e8e8', marginTop: standardOutputs.length > 0 ? 4 : 0 }}>
-          <PlotlyRenderer figure={out.figure!} />
-        </div>
-      ))}
-      {data.caption && <div style={{ fontSize: 11, color: '#666', fontStyle: 'italic', marginTop: 4 }}>{data.caption}</div>}
-      {data.error && (
-        <pre style={{ background: '#fff2f0', color: '#cf1322', padding: 6, borderRadius: 4, fontSize: 10, marginTop: 4, whiteSpace: 'pre-wrap' }}>
-          {data.error}
-        </pre>
+      {showSource && <LightCode value={source} />}
+      {outputs.map((output, index) => <Output key={index} output={output} />)}
+      {data.error && <pre className="chat-cell-output__error">{data.error}</pre>}
+      {!outputs.length && !data.error && <span className="chat-cell-output__empty">No visible output.</span>}
+    </div>
+  )
+}
+
+function Output({ output }: { output: CellOutput }) {
+  if (output.type === 'plotly' && output.figure) {
+    return <div className="chat-cell-output__plot"><PlotlyRenderer figure={output.figure} /></div>
+  }
+  if (output.type === 'image' && output.data) {
+    return <img className="chat-cell-output__image" src={`data:${output.mimetype || 'image/png'};base64,${output.data}`} alt="Notebook output" />
+  }
+  if (output.type === 'html' && output.text) return <TableOutput html={output.text} />
+  if (output.type === 'error') return <pre className="chat-cell-output__error">{output.text || 'Cell execution failed'}</pre>
+  return <pre className="chat-cell-output__text">{output.text || output.data || ''}</pre>
+}
+
+function TableOutput({ html }: { html: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const parsed = parseTable(html)
+  if (!parsed) return <pre className="chat-cell-output__text">{stripHtml(html)}</pre>
+  const rows = expanded ? parsed.rows : parsed.rows.slice(0, 10)
+  return (
+    <div className="chat-cell-output__table-wrap">
+      <table className="chat-cell-output__table">
+        {parsed.headers.length > 0 && <thead><tr>{parsed.headers.map((header, index) => <th key={index}>{header}</th>)}</tr></thead>}
+        <tbody>{rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody>
+      </table>
+      {parsed.rows.length > 10 && (
+        <button type="button" className="chat-cell-output__more" onClick={() => setExpanded(value => !value)}>
+          {expanded ? 'Show fewer rows' : `${parsed.rows.length - 10} more rows · show table`}
+        </button>
       )}
     </div>
   )
 }
 
-function CellLabel({ index }: { index: number }) {
-  return <div style={{ fontSize: 10, color: '#888', marginBottom: 4, fontFamily: 'monospace' }}>Cell [{index}]</div>
+function LightCode({ value }: { value: string }) {
+  const lines = value.split('\n')
+  const [expanded, setExpanded] = useState(false)
+  const visible = expanded ? lines : lines.slice(0, 12)
+  return (
+    <div className="chat-cell-output__code">
+      <pre>{visible.join('\n')}</pre>
+      {lines.length > 12 && <button type="button" onClick={() => setExpanded(value => !value)}>{expanded ? 'Show less' : `Show all ${lines.length} lines`}</button>}
+    </div>
+  )
+}
+
+function parseTable(html: string): { headers: string[]; rows: string[][] } | null {
+  if (typeof DOMParser === 'undefined' || !/<table[\s>]/i.test(html)) return null
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  const table = doc.querySelector('table')
+  if (!table) return null
+  const headerRow = table.querySelector('thead tr')
+  const headers = headerRow ? Array.from(headerRow.querySelectorAll('th, td')).map(cell => cell.textContent?.trim() || '') : []
+  const rows = Array.from(table.querySelectorAll('tbody tr, table > tr')).map(row => Array.from(row.querySelectorAll('th, td')).map(cell => cell.textContent?.trim() || ''))
+  return { headers, rows }
+}
+
+function stripHtml(value: string) {
+  if (typeof DOMParser === 'undefined') return value.replace(/<[^>]*>/g, '')
+  return new DOMParser().parseFromString(value, 'text/html').body.textContent || ''
 }

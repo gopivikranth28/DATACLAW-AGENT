@@ -21,10 +21,11 @@ interface Props {
 
 export default function MarkdownContent({ content, onFileClick }: Props) {
   return (
-    <ReactMarkdown
-      children={content}
-      remarkPlugins={[remarkGfm]}
-      components={{
+    <div className="chat-markdown">
+      <ReactMarkdown
+        children={content}
+        remarkPlugins={[remarkGfm]}
+        components={{
         code({ className, children, ...props }) {
           const isBlock = className?.startsWith('language-')
           if (isBlock) {
@@ -84,7 +85,7 @@ export default function MarkdownContent({ content, onFileClick }: Props) {
         },
         table({ children }) {
           return (
-            <div style={{ overflowX: 'auto', margin: '8px 0' }}>
+            <div style={{ overflowX: 'auto', margin: '16px 0 20px', maxWidth: '100%' }}>
               <table style={{
                 borderCollapse: 'collapse',
                 fontSize: 13,
@@ -118,7 +119,8 @@ export default function MarkdownContent({ content, onFileClick }: Props) {
             </td>
           )
         },
-      }}
-    />
+        }}
+      />
+    </div>
   )
 }

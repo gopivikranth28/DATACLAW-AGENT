@@ -81,12 +81,73 @@ function SidebarProjects() {
   )
 }
 
+function SidebarChats({ compact }: { compact: boolean }) {
+  const navigate = useNavigate()
+  const { pathname } = useLocation()
+  const [creating, setCreating] = useState(false)
+
+  const createChat = async () => {
+    if (creating) return
+    setCreating(true)
+    try {
+      const response = await fetch(`${API}/chat/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'New chat', project_id: null }),
+      })
+      if (!response.ok) return
+      const session = await response.json()
+      navigate(`/chat?session=${encodeURIComponent(session.id)}`)
+    } catch {
+      // The chat directory remains usable if creating a session is temporarily unavailable.
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  return (
+    <div style={{ position: 'relative', padding: '0 4px' }}>
+      <Menu
+        theme="dark"
+        mode="inline"
+        inlineCollapsed={compact}
+        selectedKeys={pathname.startsWith('/chat') ? ['/chat'] : []}
+        items={[{ key: '/chat', icon: <MessageOutlined />, label: <Link to="/chat">Independent chats</Link> }]}
+        style={{ background: 'transparent', borderInlineEnd: 'none' }}
+      />
+      {!compact && (
+        <button
+          type="button"
+          aria-label="New independent chat"
+          title="New chat"
+          onClick={createChat}
+          disabled={creating}
+          style={{
+            position: 'absolute', right: 12, top: 8, width: 24, height: 24,
+            display: 'grid', placeItems: 'center', border: 0, borderRadius: 5,
+            color: 'rgba(255,255,255,.8)', background: 'transparent', cursor: creating ? 'wait' : 'pointer',
+          }}
+        >
+          <PlusOutlined style={{ fontSize: 13 }} />
+        </button>
+      )}
+    </div>
+  )
+}
+
 export default function App() {
   const { pathname } = useLocation()
   const [plugins, setPlugins] = useState<PluginInfo[]>([])
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth)
 
   useEffect(() => {
     fetch(`${API}/plugins`).then(r => r.ok ? r.json() : []).then(setPlugins).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    const updateViewport = () => setViewportWidth(window.innerWidth)
+    window.addEventListener('resize', updateViewport)
+    return () => window.removeEventListener('resize', updateViewport)
   }, [])
 
   const pluginIds = new Set(plugins.map(p => p.id))
@@ -95,7 +156,9 @@ export default function App() {
   const hasTools = pluginIds.has('custom-tools')
 
   const nav = [
-    { key: '/chat', icon: <MessageOutlined />, label: <Link to="/chat">Chat</Link> },
+    // Chats is the independent-session surface. Project-scoped sessions are
+    // intentionally listed only from their project pages.
+    { key: '/chat', icon: <MessageOutlined />, label: <Link to="/chat">Independent chats</Link> },
     ...(hasData ? [{ key: '/data', icon: <DatabaseOutlined />, label: <Link to="/data">Data</Link> }] : []),
     ...(hasProjects ? [
       { key: '/subagents', icon: <TeamOutlined />, label: <Link to="/subagents">Subagents</Link> },
@@ -106,6 +169,10 @@ export default function App() {
   ]
 
   const selected = nav.map(n => n.key).filter(k => pathname.startsWith(k)).at(-1) ?? ''
+  const resourceNav = nav.filter(item => item.key !== '/chat' && item.key !== '/config')
+  const configNav = nav.filter(item => item.key === '/config')
+  const compactNav = viewportWidth <= 1160
+  const hiddenNav = viewportWidth <= 760
 
   // Legacy compatibility app view — standalone surface, no navigation chrome.
   if (pathname.startsWith('/app/')) {
@@ -123,14 +190,25 @@ export default function App() {
   return (
     <ConfigProvider theme={THEME}>
       <Layout style={{ height: '100vh' }}>
-        <Sider theme="dark" width={200} style={{ overflow: 'auto', background: '#111827' }}>
-          <div style={{ padding: '20px 20px 16px', color: '#f9fafb', fontWeight: 700, fontSize: 17, letterSpacing: '-0.3px', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <img src="/logo_transparent.png" alt="Dataclaw" style={{ height: 28 }} />
-            Dataclaw
+        <Sider theme="dark" width={200} collapsed={compactNav} collapsedWidth={hiddenNav ? 0 : 56} trigger={null} style={{ overflow: 'hidden', background: 'var(--rail)' }}>
+          <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+            {!hiddenNav && (compactNav ? (
+              <div aria-label="Dataclaw" style={{ display: 'grid', placeItems: 'center', height: 54 }}><BrandMark size={28} /></div>
+            ) : (
+              <div style={{ padding: '18px 18px 14px', color: '#f9fafb', fontWeight: 700, fontSize: 17, letterSpacing: '-0.3px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <BrandMark />
+                <span>Dataclaw</span>
+              </div>
+            ))}
+            <SidebarChats compact={compactNav} />
+            {!compactNav && hasProjects && <SidebarProjects />}
+            {!compactNav && <div style={{ padding: '14px 18px 4px', color: 'var(--rail-muted)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '.06em' }}>Resources</div>}
+            <Menu theme="dark" mode="inline" inlineCollapsed={compactNav} selectedKeys={[selected]} items={resourceNav}
+              style={{ background: 'transparent', borderInlineEnd: 'none' }} />
+            <div style={{ flex: 1 }} />
+            <Menu theme="dark" mode="inline" inlineCollapsed={compactNav} selectedKeys={[selected]} items={configNav}
+              style={{ background: 'transparent', borderInlineEnd: 'none', marginBottom: 8 }} />
           </div>
-          {hasProjects && <SidebarProjects />}
-          <Menu theme="dark" mode="inline" selectedKeys={[selected]} items={nav}
-            style={{ background: 'transparent', borderInlineEnd: 'none', marginTop: hasProjects ? 4 : 0 }} />
         </Sider>
         <Content style={{ overflow: 'auto', background: '#fff' }}>
           <Suspense fallback={<RouteFallback />}>
@@ -153,6 +231,26 @@ export default function App() {
         </Content>
       </Layout>
     </ConfigProvider>
+  )
+}
+
+function BrandMark({ size = 30 }: { size?: number }) {
+  // The supplied PNG includes a large black wordmark beneath the icon.  At
+  // sidebar scale, rendering the whole image makes both the symbol and its
+  // lettering too small—and the black strokes vanish against the dark rail.
+  // Crop the icon in a light tile so the actual brand mark stays legible.
+  const imageSize = Math.round(size * 5 / 4)
+  return (
+    <span aria-hidden="true" style={{
+      position: 'relative', display: 'block', flex: '0 0 auto', width: size, height: size,
+      overflow: 'hidden', border: '1px solid rgba(255,255,255,0.5)', borderRadius: Math.max(7, Math.round(size / 4)),
+      background: '#f8fafc', boxShadow: '0 1px 3px rgba(0,0,0,0.28)',
+    }}>
+      <img src="/logo_transparent.png" alt="" style={{
+        position: 'absolute', top: 0, left: '50%', width: imageSize, maxWidth: 'none', height: 'auto',
+        transform: 'translateX(-50%)',
+      }} />
+    </span>
   )
 }
 

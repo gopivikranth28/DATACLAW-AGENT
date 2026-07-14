@@ -13,7 +13,7 @@ access all need rework. Notebook *feeling* is preserved — this is built for an
 but not everything becomes a notebook.
 
 Clickable mock: [`mockups/chat-redesign.html`](mockups/chat-redesign.html) (open in a
-browser; toggle "Design notes" bottom-right for annotated rationale).
+browser; append `?review=1` for the annotated rationale and simulation controls).
 
 ---
 
@@ -76,19 +76,20 @@ downstream of that.
 |---|----------|
 | 1 | **Transcript idiom: Codex × Claude hybrid.** One collapsed activity group per agent turn ("Worked · 14 steps · 4m 32s · 1 error fixed"); inside it, Claude-style one-line steps that expand in place. Success is monochrome; only errors get color. |
 | 2 | **Notebook lives in the chat area.** Narrative text renders as markdown (`md`) cells and evidence (metric tiles, charts, tables) as `Out [n]` cells on one shared gutter rail, with full markdown formatting (headings, lists, inline code). No embedded notebook documents, no dark code islands, heights capped; full outputs open from Files. |
-| 3 | **Right panel = Plans / Files / Reports only.** Read-only (act left, read right). The three tabs stay **visible at all times** as a slim edge rail on the right; panel content opens on demand. The App tab's future is the artifacts layer (parallel development — not part of this initiative). |
+| 3 | **Right panel = Plans / Files / Reports / Datasets / Experiments / Scope.** The tabs stay **visible at all times** as a slim session edge rail on the right; panel content opens on demand. Datasets and Experiments are session-scoped, while Scope holds the remaining editable session configuration. |
 | 4 | **One plan entry point:** a status pill in the top bar (`● Plan WC2026 5/5 completed`) opens the panel. Banner, popover, and auto-focus choreography are removed. Approvals/feedback stay in the composer. |
 | 5 | **Queue in the thread.** Composer is never disabled; messages sent mid-run join the **transcript** as ordered ghost bubbles (`Queued · next`, `Queued · 2nd`, …) that can be edited, removed, or bumped until they dispatch in order on run end. Stop sits beside Queue. |
-| 6 | **Fork a chat** from any message (hover action) → branches the session; header shows a branch chip (`⑂ main`). |
-| 7 | **Chrome subtraction:** project tab bar merges into the left nav; scope chips fold into one `Scope · All` control (counts shown only when restricted); standalone-chat alert removed; column widens to ~1000px. |
+| 6 | **Forking was explored, then cut from v1** — see decision #12. No branch chip ships in this redesign. |
+| 7 | **Chrome subtraction:** Chats is the destination for independent sessions; Projects is separate and owns the list of project-scoped sessions. The global rail never interleaves both. Session configuration and experiment history live in the right rail, leaving the top bar for context, active plans, Auto, and session actions. |
 | 8 | **Plan boilerplate sections stay** (Validation/Deliverables/Risks) — content-model slimming deferred. |
-| 9 | Verbs, not tool names, in step lines ("Added code cell [4] · 38 lines", not `insert_cell`). Raw args/JSON stay one expand deeper. |
+| 9 | Verbs, not tool names, in step lines ("Added code cell [4] · 38 lines", not `insert_cell`). Report section writes are narrated inside `Worked` with their title and reader purpose; repeated identical writes collapse. Every fallback is humanized with its target; "Ran a tool" is prohibited. Raw args/JSON stay one expand deeper. |
 | 10 | **Multi-plan review: list-first.** The Plans tab opens as a master list — one card per plan (name, status tag, progress bar, rev, updated), active/pending sorted to top — and clicking a card opens that plan's doc with an "← All plans (n)" back link. The top-bar pill always shows the plan needing attention (pending > running > latest) with a `+n` count of the others and deep-links to it; the rail tab badge shows the plan count. Revisions are not separate list entries — they live inside each plan's doc as `rev` chips. Replaces the old anonymous "Plan 1 / Plan 2" buttons. |
-| 11 | **Scope lives in the panel too.** The five toolbar chips + five modals collapse into a fourth rail tab — collapsible groups for datasets, tools, skills, subagents, and guardrails, editable in place. This is session *settings*, not content review: read-right/act-left governs approvals of agent work, so in-place editing here is allowed, while plan/report approvals stay in the composer. The top-bar `Scope · All` chip is the status shortcut — deep-links to the tab, turns amber with counts when anything is restricted. |
+| 11 | **Session settings live in the panel.** Datasets is a dedicated rail tab; Scope holds tools, skills, subagents, and guardrails. They are editable session settings, not content review: read-right/act-left governs approvals of agent work, while plan/report approvals stay in the composer. Rail badges surface restricted settings. |
 | 12 | **Fork removed** (2026-07-07). Workspace-state semantics of a fork (copy vs. share vs. snapshot) unresolved; a chat-only fork breaks against the stateful notebook. Revisit post-v1. |
 | 13 | **Queue: Stop pauses, never auto-fires.** Cancelling a run holds the queue ("paused — n held" strip + Resume); dispatch only on natural run end; dispatched messages carry a `sent from queue` tag. Queue visibility is in-thread only — no counters. |
 | 14 | **Provenance model:** footer on every evidence cell (`cell [n] · ran at +t · duration` + expandable source), `↓ output` links on producing steps, metrics cite their source cell. Chosen over hover-cards (hidden) and notebook-anchor-only (bigger build; still the eventual `Out [n]` destination). |
 | 15 | **Plan approval = slim amber strip above the composer** (Approve / Deny / View plan; composer doubles as feedback). Pill and rail dot turn amber on pending. Replaces the deleted banner with a single, calmer surface. Also: `md` gutter label dropped; step times are `+m:ss` (run-relative) vs wall-clock syslines. |
+| 16 | **Two session contexts.** A session is either independent or project-scoped. Both own transcript, plans, queue, and notebook state; a project session starts from its project's workspace/configuration and shows that context in the header, Files, and Scope. Independent and project session lists are never mixed in the global rail. |
 
 ## 3. Implementation notes (for when we build)
 
@@ -100,14 +101,16 @@ downstream of that.
 - Evidence classification: keep an allowlist (`display_metric`, `display_image`,
   plotly-bearing `execute/display_cell_output`, `report_add_section` summary) rendered
   inline; everything else becomes a step line.
+- Session navigation has two entry points: Chats loads independent sessions; a Project
+  loads only sessions with its `project_id`. Pass `project_id` explicitly when creating
+  a project session. Label project defaults and session overrides in Scope, and label
+  the Files workspace source.
 - Replace `react-ipynb-renderer` in-chat with a lightweight capped code/output block
   (light syntax theme); keep the full renderer for a dedicated notebook/file preview.
 - Queue: buffer sends while `isRunning`, render the buffer in the transcript as ghost
   user bubbles, flush in order on `onRunFinished` (plumbing exists — auto-mode already
   re-sends there).
 - Icons stay AntD outline style everywhere (nav, panel rail, file tree) — no emoji.
-- Fork: new session created from a message index; copy history up to that point;
-  parent/branch metadata on the session record for the header chip.
 - Unmount collapsed tool detail instead of `display:none` (or virtualize) to stop
   Plotly memory growth.
 

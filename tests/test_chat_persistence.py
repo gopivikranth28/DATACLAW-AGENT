@@ -84,6 +84,20 @@ async def test_app_layout_roundtrips_through_session_storage():
     assert loaded["appLayout"] == layout
 
 
+async def test_queue_state_roundtrips_through_session_storage():
+    """Queued input is session state, not browser-only state."""
+    from dataclaw.storage import sessions
+
+    created = await sessions.create_session(title="Queued work")
+    queued = [{"id": "q-1", "text": "Run the sensitivity check", "ts": 123}]
+    await sessions.update_session(created["id"], {"queuedMessages": queued, "queuePaused": True})
+
+    loaded = await sessions.get_session(created["id"])
+    assert loaded is not None
+    assert loaded["queuedMessages"] == queued
+    assert loaded["queuePaused"] is True
+
+
 # ── Loose visual normalization for compatibility App view ──────────────────
 
 
@@ -159,6 +173,8 @@ async def test_openclaw_tool_call_message_persists_as_dataclaw_tool_call():
                 "html_path": "/tmp/workspace/reports/live.html",
                 "title": "Live Report",
             },
+            startedAt="2026-07-14T09:00:00+00:00",
+            finishedAt="2026-07-14T09:00:04+00:00",
         ),
     )
 
@@ -169,6 +185,8 @@ async def test_openclaw_tool_call_message_persists_as_dataclaw_tool_call():
     assert msg["toolName"] == "report_add_section"
     assert msg["args"] == '{"section_type": "header"}'
     assert '"html_path": "/tmp/workspace/reports/live.html"' in msg["result"]
+    assert msg["startedAt"] == "2026-07-14T09:00:00+00:00"
+    assert msg["finishedAt"] == "2026-07-14T09:00:04+00:00"
     assert loaded["visualArtifacts"][0]["kind"] == "report"
 
 

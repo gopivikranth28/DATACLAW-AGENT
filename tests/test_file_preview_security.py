@@ -107,6 +107,11 @@ async def test_workspace_html_preview_document_serves_interactive_html_with_csp(
     assert "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:" in csp
     assert "<h1>preview</h1>" in body
     assert "window.inlineReady = true" in body
+    assert "data-dc-preview-resize" in body
+    assert "dataclaw:report-height" in body
+    body_close = body.lower().find("</body>")
+    if body_close >= 0:
+        assert body.index("data-dc-preview-resize") < body_close
     assert 'src="../files?path=' in body
     assert "&asset_query=v%3D123#ready" in body
     assert "assets/report.js" not in body

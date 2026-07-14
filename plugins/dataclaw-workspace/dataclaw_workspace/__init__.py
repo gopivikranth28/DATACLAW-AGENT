@@ -15,6 +15,7 @@ from dataclaw.plugins.base import (
 )
 from dataclaw.providers.tool.implementations.python_tool import PythonTool
 
+from dataclaw.config.paths import workspaces_dir
 from dataclaw_workspace.tools import (
     ws_list_files,
     ws_read_file,
@@ -57,7 +58,10 @@ class WorkspacePlugin:
                     logger.warning("workspace preToolCallHook: failed to resolve project: %s", e)
                     set_project_dir(None)
             else:
-                set_project_dir(None)
+                # An independent chat owns a session workspace; it is not a
+                # synthetic project and must never share the default workspace.
+                session_id = state.get("session_id", "")
+                set_project_dir(workspaces_dir() / session_id if session_id else None)
             return state
 
         ctx.hooks.register("preToolCallHook", _inject_project_dir)
