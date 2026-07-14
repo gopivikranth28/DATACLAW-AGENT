@@ -259,7 +259,15 @@ class WorkspacePlugin:
                             "table",
                         ],
                     },
-                    "data": {"type": "object", "description": "Section data payload"},
+                    "data": {
+                        "type": "object",
+                        "description": (
+                            "Section data payload. For narrative_band, use title (or heading) plus body/text/summary; "
+                            "basic <b>, <i>, and <code> emphasis is supported. For interactive_table, provide columns "
+                            "and rows as objects keyed by those columns, or rows as value arrays in the same column order. "
+                            "This low-level tool returns a draft; use report_design_report then report_publish for a final report."
+                        ),
+                    },
                     "report_path": {"type": "string", "description": "Output report path", "default": "report.html"},
                     "title": {"type": "string", "description": "Report title, used when creating a new report", "default": "Analysis Report"},
                     "quality_gate": {"type": "string", "description": "Report-quality behavior: warn and write, fail on required quality regressions, or off", "enum": ["warn", "fail", "off"], "default": "warn"},

@@ -116,11 +116,22 @@ const target = process.argv[1];
         const id = anchor.getAttribute('href').slice(1);
         if (id && !document.getElementById(id)) failures.push({check: 'anchor_target', detail: 'missing target #' + id});
       });
+      document.querySelectorAll('.r-story-nav a').forEach((anchor, index) => {
+        if (/^Section\\s+\\d+$/i.test(anchor.textContent.trim().replace(/^\\d+\\s*/, ''))) {
+          failures.push({check: 'generic_navigation_label', detail: 'navigation item ' + index + ' has no meaningful heading'});
+        }
+      });
       document.querySelectorAll('.r-chart-target').forEach((target, index) => {
         if (window.Plotly && !target.querySelector('.js-plotly-plot')) failures.push({check: 'chart_mount', detail: 'chart target ' + index + ' did not mount'});
       });
       document.querySelectorAll('[data-dc-section="filterable_chart"], [data-dc-section="interactive_table"], [data-dc-section="selector_panel"], [data-dc-section="chart_table_explorer"]').forEach(section => {
         if (!section.querySelector('[data-dc-control-bar]')) failures.push({check: 'interactive_controls', detail: 'interactive section missing controls'});
+      });
+      document.querySelectorAll('[data-dc-section="interactive_table"], [data-dc-section="chart_table_explorer"]').forEach((section, index) => {
+        const dataRows = Array.from(section.querySelectorAll('tbody tr')).filter(row => !row.querySelector('.r-empty-state'));
+        if (dataRows.length && dataRows.every(row => Array.from(row.querySelectorAll('td')).every(cell => !cell.textContent.trim()))) {
+          failures.push({check: 'table_content', detail: 'interactive table ' + index + ' rendered only blank cells'});
+        }
       });
       document.querySelectorAll('.r-empty-state').forEach(node => failures.push({check: 'empty_state', detail: node.textContent.trim()}));
       return failures;
@@ -442,6 +453,8 @@ async def build_report(
 
     result: dict[str, Any] = {
         "type": "report_build",
+        "publication_status": "designed",
+        "publish_required": True,
         "html_path": str(resolved_html),
         "storyboard_path": str(resolved_storyboard),
         "source_html_path": str(resolved_source),
@@ -566,6 +579,8 @@ async def report_publish(
     result: dict[str, Any] = {
         "type": "report_publish",
         "published": True,
+        "publication_status": "published",
+        "publish_required": False,
         "html_path": str(resolved_html),
         "storyboard_path": str(resolved_storyboard),
         "receipt_path": str(resolved_receipt),
@@ -645,6 +660,8 @@ async def report_design_report(
 
     return {
         "type": "report_design",
+        "publication_status": "designed",
+        "publish_required": True,
         "html_path": str(resolved_html),
         "storyboard_path": str(resolved_storyboard),
         "title": title,
@@ -705,6 +722,8 @@ async def report_add_section(
     resolved.write_text(doc, encoding="utf-8")
     return {
         "type": "report",
+        "publication_status": "draft",
+        "publish_required": True,
         "html_path": str(resolved),
         "section_type": section_type,
         "section": typed_section,

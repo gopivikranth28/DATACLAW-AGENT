@@ -642,6 +642,17 @@ def report_shell_script() -> str:
     });
     return cols;
   }
+  function normalizeTableRows(rows, columns) {
+    if (!Array.isArray(rows)) return [];
+    var cols = columnsFrom([], columns);
+    if (!cols.length) return rows;
+    return rows.map(function(row) {
+      if (!Array.isArray(row)) return row;
+      var normalized = {};
+      cols.forEach(function(col, index) { normalized[col.key] = row[index]; });
+      return normalized;
+    });
+  }
   function uniqueOptions(rows, key) {
     var seen = {};
     var options = [];
@@ -1009,7 +1020,7 @@ def report_shell_script() -> str:
     registerChartRender(target, function() { renderChart(target, chart, rows); });
   }
   function initTable(root, config, rowsProvider) {
-    var baseRows = config.rows || config.records || [];
+    var baseRows = normalizeTableRows(config.rows || config.records || [], config.columns);
     var cols = columnsFrom(baseRows, config.columns);
     var pageSize = Number(config.page_size || config.pageSize || 20);
     var state = {page: 1, sortKey: '', sortDir: 1, search: ''};
@@ -1252,9 +1263,15 @@ def report_shell_script() -> str:
         }
         section.id = candidate;
       }
+    });
+    var navigationSections = sections.filter(function(section) {
       var heading = section.querySelector('h1, h2, h3');
-      var label = heading ? heading.textContent.trim() : 'Section ' + (index + 1);
-      if (nav && sections.length > 1) {
+      return Boolean(heading && heading.textContent.trim());
+    });
+    navigationSections.forEach(function(section, index) {
+      var heading = section.querySelector('h1, h2, h3');
+      var label = heading.textContent.trim();
+      if (nav && navigationSections.length > 1) {
         var link = document.createElement('a');
         link.href = '#' + section.id;
         var num = document.createElement('span');
@@ -1285,7 +1302,9 @@ def report_shell_script() -> str:
         entries.forEach(function(entry) {
           if (entry.isIntersecting) {
             entry.target.classList.add('in-view');
-            markActive(entry.target.id);
+            if (navLinks.some(function(link) { return link.dataset.target === entry.target.id; })) {
+              markActive(entry.target.id);
+            }
           }
         });
       }, { rootMargin: '-18% 0px -62% 0px', threshold: 0.01 });
@@ -2855,6 +2874,7 @@ def _render_section_body(section_type: str, data: dict[str, Any], typed: dict[st
         rows = data.get("rows", [])
         if not isinstance(rows, list):
             raise ValueError("interactive_table section requires list 'rows'")
+        rows = _normalize_interactive_table_rows(rows, data.get("columns", []))
         config = _json_for_script({
             "rows": rows,
             "columns": data.get("columns", []),
@@ -2880,6 +2900,7 @@ def _render_section_body(section_type: str, data: dict[str, Any], typed: dict[st
         records = data.get("records", data.get("rows", []))
         if not isinstance(records, list):
             raise ValueError("chart_table_explorer section requires list 'records' or 'rows'")
+        records = _normalize_interactive_table_rows(records, data.get("columns", []))
         chart = data.get("chart", {})
         if not isinstance(chart, dict):
             raise ValueError("chart_table_explorer section requires dict 'chart'")
@@ -3068,9 +3089,10 @@ def _render_section_body(section_type: str, data: dict[str, Any], typed: dict[st
 
     if st == "narrative_band":
         body = _paragraphs(data.get("body", data.get("text", data.get("summary", ""))))
+        narrative_title = data.get("title") or data.get("heading") or "Narrative"
         return f"""    <section class="r-section" {attrs}>
       <div class="r-narrative-band">
-        <h2>{_esc(data.get("title", "Narrative"))}</h2>
+        <h2>{_esc(narrative_title)}</h2>
         {_section_context(data)}
         {body}
       </div>
@@ -3184,6 +3206,60 @@ def _render_section_body(section_type: str, data: dict[str, Any], typed: dict[st
 
 def _esc(value: Any) -> str:
     return html_lib.escape(clean_text(value))
+
+
+def _safe_inline_markup(value: Any) -> str:
+    """Escape prose while preserving the small inline emphasis vocabulary we support.
+
+    Report inputs frequently come from agents and notebooks.  Rendering their HTML
+    directly would create an XSS boundary, but rendering every tag literally makes
+    basic prose such as ``<b>Argentina</b>`` look broken.  Only tag names without
+    attributes are reinstated after escaping; everything else remains text.
+    """
+    escaped = _esc(value)
+    replacements = (
+        (r"&lt;(?:b|strong)&gt;", "<strong>"),
+        (r"&lt;/(?:b|strong)&gt;", "</strong>"),
+        (r"&lt;(?:i|em)&gt;", "<em>"),
+        (r"&lt;/(?:i|em)&gt;", "</em>"),
+        (r"&lt;code&gt;", "<code>"),
+        (r"&lt;/code&gt;", "</code>"),
+    )
+    for pattern, replacement in replacements:
+        escaped = re.sub(pattern, replacement, escaped, flags=re.IGNORECASE)
+    return escaped
+
+
+def _interactive_table_column_keys(columns: Any) -> list[str]:
+    keys: list[str] = []
+    for column in columns if isinstance(columns, list) else []:
+        if isinstance(column, dict):
+            key = clean_text(column.get("key") or column.get("name") or column.get("label") or "")
+        else:
+            key = clean_text(column)
+        if key:
+            keys.append(key)
+    return keys
+
+
+def _normalize_interactive_table_rows(rows: list[Any], columns: Any) -> list[dict[str, Any]]:
+    """Accept object rows or tabular rows, and serialize one reliable table shape."""
+    column_keys = _interactive_table_column_keys(columns)
+    normalized: list[dict[str, Any]] = []
+    for index, row in enumerate(rows):
+        if isinstance(row, dict):
+            normalized.append(row)
+            continue
+        if not isinstance(row, list):
+            raise ValueError(f"interactive_table row {index + 1} must be an object or an array")
+        if not column_keys:
+            raise ValueError("interactive_table array rows require a non-empty 'columns' list")
+        if len(row) > len(column_keys):
+            raise ValueError(
+                f"interactive_table row {index + 1} has {len(row)} values but only {len(column_keys)} columns"
+            )
+        normalized.append({key: row[position] if position < len(row) else "" for position, key in enumerate(column_keys)})
+    return normalized
 
 
 def _json_for_script(value: Any) -> str:
@@ -3669,4 +3745,4 @@ def _render_finding_item(item: Any) -> str:
 def _paragraphs(value: Any) -> str:
     text = clean_text(value)
     parts = [p.strip() for p in text.split("\n\n") if p.strip()]
-    return "".join(f"<p>{_esc(p)}</p>" for p in parts)
+    return "".join(f"<p>{_safe_inline_markup(p)}</p>" for p in parts)

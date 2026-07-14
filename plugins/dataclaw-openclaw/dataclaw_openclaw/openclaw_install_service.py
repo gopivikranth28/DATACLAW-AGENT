@@ -550,16 +550,17 @@ async def install_plugin_atomic(
     # Step 3: pre-install — clear any orphan channels.<id> config from a prior
     # failed install so OpenClaw 2026.5's plugin-install commit doesn't hard-
     # fail with "channels.<id>: unknown channel id" during config validation.
-    # Plain `config set` only warns about orphan channel sections, but the
-    # install command's commit goes through writeConfigFile in strict mode.
+    # The install command's commit goes through writeConfigFile in strict
+    # mode.  OpenClaw 2026.6 validates ``config set --batch-json`` before
+    # applying it, so a ``null`` value cannot delete a channel section here;
+    # use the dedicated unset command instead.
     pre_install_section = await fetch_current_channel_section(argv)
     if pre_install_section:
-        clear_entry = {"path": f"channels.{plugin_id}", "value": None}
-        yield _sse({"line": "$ openclaw config set --batch-json (clear stale channel section)"})
-        yield _sse({"line": f"  payload: [{json.dumps(clear_entry)}]"})
+        channel_path = f"channels.{plugin_id}"
+        yield _sse({"line": f"$ openclaw config unset {channel_path} (clear stale channel section)"})
         rc_clear: int | None = None
         async for event in _stream_subprocess([
-            *argv, "config", "set", "--batch-json", json.dumps([clear_entry]),
+            *argv, "config", "unset", channel_path,
         ]):
             if "_rc" in event:
                 rc_clear = int(event["_rc"])

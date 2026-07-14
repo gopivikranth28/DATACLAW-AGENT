@@ -1,4 +1,4 @@
-import { Button } from 'antd'
+import { Button, Tag } from 'antd'
 import { FileTextOutlined, EyeOutlined, PrinterOutlined, ExportOutlined, DownloadOutlined } from '@ant-design/icons'
 import { API } from '../../api'
 import { reportDocumentUrl, reportPreviewUrl } from '../reportPreview'
@@ -8,6 +8,8 @@ interface ReportData {
   docx_path?: string
   size?: number
   created?: boolean
+  publication_status?: 'draft' | 'designed' | 'published'
+  publish_required?: boolean
   // legacy fields from old PDF-based tool
   path?: string
   format?: string
@@ -21,6 +23,7 @@ export default function ReportDisplay({ data, onFileClick }: {
   const name = htmlPath?.split('/').pop() || 'report.html'
   const previewUrl = htmlPath ? reportPreviewUrl(htmlPath) : ''
   const documentUrl = htmlPath ? reportDocumentUrl(htmlPath, data.size !== undefined ? String(data.size) : undefined) : ''
+  const publication = publicationLabel(data)
 
   const handleView = () => {
     if (!htmlPath) return
@@ -56,6 +59,7 @@ export default function ReportDisplay({ data, onFileClick }: {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, marginBottom: 8, flexWrap: 'wrap' }}>
         <FileTextOutlined style={{ color: '#1677ff', fontSize: 14 }} />
         <span style={{ fontWeight: 500 }}>Report: {name}</span>
+        {publication && <Tag color={publication.color}>{publication.label}</Tag>}
         {data.size !== undefined && (
           <span style={{ color: '#999', fontSize: 11 }}>({formatSize(data.size)})</span>
         )}
@@ -77,6 +81,13 @@ export default function ReportDisplay({ data, onFileClick }: {
       )}
     </div>
   )
+}
+
+function publicationLabel(data: ReportData): { label: string; color: string } | null {
+  if (data.publication_status === 'published') return { label: 'Published', color: 'success' }
+  if (data.publication_status === 'designed') return { label: 'Designed · publish required', color: 'processing' }
+  if (data.publication_status === 'draft' || data.publish_required) return { label: 'Draft · publish required', color: 'warning' }
+  return null
 }
 
 function formatSize(bytes: number): string {

@@ -221,6 +221,8 @@ async def test_report_design_report_storyboards_then_renders_cohesive_html(cfg):
     html = Path(result["html_path"]).read_text()
     storyboard = Path(result["storyboard_path"]).read_text()
     assert result["type"] == "report_design"
+    assert result["publication_status"] == "designed"
+    assert result["publish_required"] is True
     assert result["section_count"] >= 6
     assert result["interaction_count"] == 1
     assert "World Cup Archetype Report" in html
@@ -261,6 +263,8 @@ async def test_report_publish_regates_and_writes_receipt(cfg):
     assert designed["quality"]["status"] == "pass"
     assert published["type"] == "report_publish"
     assert published["published"] is True
+    assert published["publication_status"] == "published"
+    assert published["publish_required"] is False
     expected_status = "pass" if published["runtime_smoke"]["status"] == "passed" else "warn"
     assert published["quality"]["status"] == expected_status
     assert published["docx_export"] == {"requested": False, "status": "skipped"}
@@ -477,11 +481,12 @@ async def test_report_add_section_builds_live_html_report(cfg):
         data={"title": "World Cup Analysis", "subtitle": "A visual report"},
     )
     assert header["type"] == "report"
+    assert header["publication_status"] == "draft"
+    assert header["publish_required"] is True
     assert header["updated"] is True
     assert header["section"]["kind"] == "header"
     assert "--dc-bg" in header["section"]["tokens"]
     assert "data-dc-runtime=\"plotly\"" not in Path(header["html_path"]).read_text()
-
     await report_add_section(
         cfg=cfg,
         section_type="metric_row",
@@ -676,6 +681,12 @@ async def test_report_add_section_builds_live_html_report(cfg):
     )
     await report_add_section(
         cfg=cfg,
+        section_type="metric_row",
+        report_path="reports/live.html",
+        data={"metrics": [{"label": "Teams", "value": 2}]},
+    )
+    await report_add_section(
+        cfg=cfg,
         section_type="interactive_table",
         report_path="reports/live.html",
         data={
@@ -810,6 +821,49 @@ async def test_report_add_section_builds_live_html_report(cfg):
     assert "data-dc-section-meta" in html
     assert "--dc-bg" in html
     assert "data-dc-runtime=\"plotly\"" in html
+
+
+@pytest.mark.asyncio
+async def test_report_add_section_normalizes_array_table_rows_and_safe_narrative_markup(cfg):
+    report_path = "reports/array-rows.html"
+    draft = await report_add_section(
+        cfg=cfg,
+        section_type="narrative_band",
+        report_path=report_path,
+        data={
+            "heading": "Executive readout",
+            "body": "<b>Argentina</b> leads the sample.\n\n<script>alert('never run')</script>",
+        },
+    )
+    await report_add_section(
+        cfg=cfg,
+        section_type="metric_row",
+        report_path=report_path,
+        data={"metrics": [{"label": "Teams", "value": 2}]},
+    )
+    await report_add_section(
+        cfg=cfg,
+        section_type="interactive_table",
+        report_path=report_path,
+        data={
+            "title": "Team lookup",
+            "columns": ["Team", "Rating", "Reach semifinal"],
+            "rows": [["Argentina", 2214, "100%"], ["Spain", 2107, "83%"]],
+        },
+    )
+
+    html = Path(draft["html_path"]).read_text(encoding="utf-8")
+    assert draft["publication_status"] == "draft"
+    assert "<h2>Executive readout</h2>" in html
+    assert "<p><strong>Argentina</strong> leads the sample.</p>" in html
+    assert "<p>&lt;script&gt;alert(&#x27;never run&#x27;)&lt;/script&gt;</p>" in html
+    assert '"Team": "Argentina"' in html
+    assert '"Reach semifinal": "100%"' in html
+    assert "function normalizeTableRows(rows, columns)" in html
+    smoke = await workspace_tools._run_report_runtime_smoke(Path(draft["html_path"]))
+    assert smoke["status"] in {"passed", "skipped"}
+    if smoke["status"] == "passed":
+        assert not [check for check in smoke["checks"] if check["check"] == "table_content"]
 
 
 @pytest.mark.asyncio

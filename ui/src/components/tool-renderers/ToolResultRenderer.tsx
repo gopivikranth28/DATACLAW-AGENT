@@ -15,6 +15,7 @@ const AUTO_EXPAND_TOOLS = new Set([
   'open_notebook',
   'ws_write_file', 'ws_read_file',
   'build_report',
+  'report_design_report',
   'report_publish',
   'publish_artifact',
   'insert_cell', 'edit_cell', 'edit_cell_source',
@@ -26,6 +27,7 @@ const CUSTOM_RENDER_TOOLS = new Set([
   'close_notebook',
   'propose_plan',
   'update_plan',
+  'report_design_report',
   'report_add_section',
 ])
 
@@ -89,6 +91,7 @@ export default function ToolResultRenderer({ toolName, result, args, status, onF
     case 'ws_read_file':
       return <FileReadDisplay data={parsed} onFileClick={onFileClick} />
     case 'build_report':
+    case 'report_design_report':
     case 'report_publish':
       return <ReportDisplay data={parsed} onFileClick={onFileClick} />
     case 'report_add_section':
@@ -118,6 +121,9 @@ function ReportUpdateNotice({ data, onFileClick }: {
       fontSize: 12, color: '#667085',
     }}>
       <span>Report updated: <b>{sectionType}</b></span>
+      {data?.publication_status === 'draft' && (
+        <span style={{ color: '#ad6800', fontWeight: 600 }}>Draft · publish required</span>
+      )}
       {htmlPath && (
         <>
           <span style={{ color: '#98a2b3' }}>{name}</span>

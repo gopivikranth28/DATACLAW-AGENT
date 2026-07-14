@@ -320,6 +320,28 @@ async def test_ready_for_validation_blocks_on_eda_like_step_before_auto_review()
 
 
 @pytest.mark.asyncio
+async def test_ready_for_validation_blocks_on_report_step_before_auto_review():
+    proposed = await propose_plan(
+        name="Plan",
+        description="d",
+        steps=[{"name": "Build report", "description": "Create the final stakeholder report"}],
+        session_id="sess-1",
+    )
+    proposal_id = proposed["proposal_id"]
+    step_id = (await get_plan(proposal_id=proposal_id))["steps"][0]["plan_step_id"]
+
+    result = await update_plan(
+        proposal_id=proposal_id,
+        step_patches=[{"plan_step_id": step_id, "status": "completed", "ready_for_validation": True}],
+        session_id="sess-1",
+    )
+
+    assert result["success"] is False
+    assert result["error"]["code"] == "gate_blocked"
+    assert result["error"]["blocking_gates"][0]["name"] == "analysis_review"
+
+
+@pytest.mark.asyncio
 async def test_update_plan_cannot_accept_gate_by_patch():
     r = await propose_plan(
         name="Plan",

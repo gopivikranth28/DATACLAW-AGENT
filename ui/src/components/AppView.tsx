@@ -31,7 +31,7 @@ export interface VisualArtifact {
 }
 
 const CELL_OUTPUT_TOOLS = new Set(['execute_cell', 'display_cell_output', 'execute_code'])
-const REPORT_TOOLS = new Set(['build_report', 'report_add_section', 'report_publish'])
+const REPORT_TOOLS = new Set(['build_report', 'report_design_report', 'report_add_section', 'report_publish'])
 
 // Item ids are sequence-based (metric-0, chart-1, ...). Session history is
 // append-only, so ids stay stable as the session grows — which lets saved

@@ -17,7 +17,7 @@ from dataclaw_analysis_review.tools import (
     resolve_review_finding,
 )
 from dataclaw_eda.tools import record_eda_finding, summarize_eda_readiness
-from dataclaw_plans.gates import get_plan_gates
+from dataclaw_plans.gates import get_plan_gates, set_step_gate
 from dataclaw_plans.tools import get_plan, propose_plan, update_plan
 
 
@@ -306,6 +306,46 @@ async def test_auto_review_hook_runs_on_completed_high_risk_step():
     plan_gates = await get_plan_gates(proposal_id)
     assert gate["gate"] == "fail"
     assert plan_gates["steps"][0]["gates"]["analysis_review"]["status"] == "fail"
+
+
+@pytest.mark.asyncio
+async def test_auto_review_hook_revokes_optimistic_readiness_when_review_fails():
+    proposal_id, step_id = await _high_risk_plan()
+    set_step_gate(
+        proposal_id=proposal_id,
+        plan_step_id=step_id,
+        gate_name="analysis_review",
+        status="pass",
+        required=True,
+        reason="Earlier review passed before the completion patch.",
+    )
+    update = await update_plan(
+        proposal_id=proposal_id,
+        step_patches=[{"plan_step_id": step_id, "status": "completed", "ready_for_validation": True}],
+        session_id="sess-1",
+    )
+    assert update["success"] is True
+
+    await auto_review_completed_steps_hook(
+        {
+            "session_id": "sess-1",
+            "tool_results": [
+                {
+                    "tool_name": "update_plan",
+                    "tool_input": {
+                        "proposal_id": proposal_id,
+                        "step_patches": [{"plan_step_id": step_id, "status": "completed", "ready_for_validation": True}],
+                    },
+                    "result": update,
+                    "is_error": False,
+                }
+            ],
+        }
+    )
+
+    plan = await get_plan(proposal_id=proposal_id)
+    assert plan["steps"][0]["ready_for_validation"] is False
+    assert plan["steps"][0]["gates"]["analysis_review"]["status"] == "fail"
 
 
 @pytest.mark.asyncio

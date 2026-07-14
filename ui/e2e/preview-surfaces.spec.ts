@@ -147,6 +147,8 @@ test('renders a published report tool result in chat', async ({ page }) => {
   const reportPath = 'reports/customer-retention.html'
   const publishedReport = {
     type: 'report_publish',
+    publication_status: 'published',
+    publish_required: false,
     html_path: reportPath,
     storyboard_path: 'reports/customer-retention.storyboard.json',
     quality: { status: 'pass', rubric_version: 3 },
@@ -243,6 +245,7 @@ test('renders a published report tool result in chat', async ({ page }) => {
 
   await expect(page.getByText('Publish report')).toBeVisible()
   await expect(page.getByText('Report: customer-retention.html')).toBeVisible()
+  await expect(page.getByText('Published', { exact: true })).toBeVisible()
   await expect(page.getByText('(2.0KB)')).toBeVisible()
   await expect(page.getByRole('button', { name: 'View' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Print' })).toBeVisible()

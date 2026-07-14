@@ -127,6 +127,7 @@ export default function ToolCallCard({ toolCall, onFileClick, sessionId }: Props
 function toolLabel(toolName: string): string {
   const labels: Record<string, string> = {
     report_add_section: 'Report update',
+    report_design_report: 'Design report',
     build_report: 'Report',
     report_publish: 'Publish report',
     propose_plan: 'Plan proposal',

@@ -12,6 +12,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+import dataclaw.config.paths as paths
+import dataclaw_openclaw.openclaw_install_service as install_service
 from dataclaw_openclaw.openclaw_install_service import (
     PLUGIN_MANIFEST_FILENAME,
     build_batch_entries,
@@ -29,6 +31,17 @@ def _write_manifest(tmp_path: Path, manifest: dict) -> Path:
     plugin_dir.mkdir(parents=True, exist_ok=True)
     (plugin_dir / PLUGIN_MANIFEST_FILENAME).write_text(json.dumps(manifest))
     return plugin_dir
+
+
+@pytest.fixture(autouse=True)
+def isolate_openclaw_install_state(tmp_path: Path, monkeypatch):
+    """Never let installer tests overwrite the user's real sync snapshot."""
+    monkeypatch.setattr(paths, "DATACLAW_HOME", tmp_path / "dataclaw-home")
+
+
+async def _empty_async_events(*_args, **_kwargs):
+    if False:  # pragma: no cover - keeps this an async generator
+        yield {}
 
 
 # ── Pure helpers ────────────────────────────────────────────────────────────
@@ -465,3 +478,43 @@ async def test_install_plugin_atomic_happy_path(tmp_path: Path) -> None:
     assert paths["tools.allow"] == ["group:openclaw", "dataclaw"]
     assert "plugins.entries.dataclaw.enabled" in paths
     assert "plugins.allow" not in paths
+
+
+@pytest.mark.asyncio
+async def test_install_plugin_uses_config_unset_for_existing_orphan_channel(tmp_path: Path, monkeypatch) -> None:
+    plugin_dir = _write_manifest(tmp_path, {"id": "dataclaw"})
+    calls: list[list[str]] = []
+
+    async def fake_stream(argv: list[str], cwd: Path | None = None):
+        calls.append(argv)
+        yield {"_rc": 0}
+
+    async def fake_build(_plugin_dir: Path):
+        yield {"line": "built"}
+
+    async def fake_channel_section(*_args, **_kwargs):
+        return {"dataclawApiUrl": "http://legacy"}
+
+    monkeypatch.setattr(install_service, "_stream_subprocess", fake_stream)
+    monkeypatch.setattr(install_service, "build_plugin_runtime", fake_build)
+    monkeypatch.setattr(install_service, "_wait_for_gateway", _empty_async_events)
+    monkeypatch.setattr(install_service, "fetch_current_channel_section", fake_channel_section)
+    monkeypatch.setattr(install_service, "fetch_current_also_allow", AsyncMock(return_value=[]))
+    monkeypatch.setattr(install_service, "fetch_current_tools_allow", AsyncMock(return_value=[]))
+    monkeypatch.setattr(install_service, "fetch_current_tools_profile", AsyncMock(return_value=None))
+    monkeypatch.setattr(install_service, "fetch_current_plugins_allow", AsyncMock(return_value=[]))
+    monkeypatch.setattr(install_service, "fetch_current_plugin_entry_config", AsyncMock(return_value={}))
+    monkeypatch.setattr(install_service, "fetch_current_plugin_enabled", AsyncMock(return_value=False))
+
+    events = [
+        event
+        async for event in install_plugin_atomic(
+            plugin_dir=plugin_dir,
+            openclaw_cfg={},
+            argv=["openclaw"],
+        )
+    ]
+
+    assert ["openclaw", "config", "unset", "channels.dataclaw"] in calls
+    assert not any("--batch-json" in call and "channels.dataclaw" in call for call in calls)
+    assert events[-1] == {"exit_code": 0}

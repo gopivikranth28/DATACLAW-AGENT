@@ -71,7 +71,7 @@ async def auto_review_completed_steps_hook(state: AgentState) -> AgentState:
             step = _resolve_step(proposal, patch)
             if not step or not should_auto_review_step(step):
                 continue
-            await request_analysis_review(
+            review = await request_analysis_review(
                 scope="plan_step",
                 target_id=_step_identity(step),
                 proposal_id=proposal_id,
@@ -79,6 +79,30 @@ async def auto_review_completed_steps_hook(state: AgentState) -> AgentState:
                 severity_floor="warning",
                 require_subagent=False,
             )
+            # A completion and its automatic review are separate tool events.  If
+            # a step was marked ready in the completion patch, reconcile that
+            # optimistic flag with the review that just finished.  This also
+            # protects older step names that predate the review-keyword policy.
+            review_gate = str((review.get("gate") or {}).get("gate") or "unknown")
+            if review_gate == "pass":
+                continue
+            try:
+                refreshed = find_proposal(proposal_id)
+                refreshed_step = _resolve_step(refreshed, patch)
+                if refreshed_step and refreshed_step.get("ready_for_validation"):
+                    from dataclaw_plans.tools import update_plan
+
+                    await update_plan(
+                        proposal_id=proposal_id,
+                        step_patches=[{
+                            "plan_step_id": _step_identity(refreshed_step),
+                            "ready_for_validation": False,
+                            "note": "Automatic analysis review has unresolved findings.",
+                        }],
+                        session_id=session_id,
+                    )
+            except (KeyError, ValueError):
+                continue
     return state
 
 
