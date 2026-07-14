@@ -14,7 +14,7 @@
 # promotion to `fail`, except a versioned criterion that closes a material
 # publish-gate bypass. rubric_version bumps on any criteria/threshold change.
 
-rubric_version: 3
+rubric_version: 7
 
 # Gate thresholds — every value matches the live gate (analyze_report_quality).
 thresholds:
@@ -67,19 +67,21 @@ criteria:
   - id: missing_methodology
     axis: rigor
     severity: fail
-    status: deferred                  # designer plans the block; gate does not assert it yet
+    status: live
+    since_version: 7
     scope: report
     applies_to: [methodology_block]
     signal: A methodology_block states grain, denominator, and validation.
     remediable: partial
     on_fail: block
-    remediation: draft_from_intake    # block only if intake has none (§5.5)
+    remediation: draft_from_intake    # enforced only when requirements.rigor declares it
     rationale: A data-scientist reader needs the model, denominator, and validation shown.
 
   - id: missing_data_quality
     axis: rigor
     severity: warn
-    status: deferred
+    status: live
+    since_version: 7
     scope: report
     applies_to: [methodology_block, callout]
     signal: Data-quality / coverage risk is disclosed.
@@ -91,7 +93,8 @@ criteria:
   - id: missing_uncertainty
     axis: rigor
     severity: warn
-    status: deferred
+    status: live
+    since_version: 7
     scope: section
     applies_to: [metric_row, findings, insight_grid, chart_interpretation]
     signal: Quantitative headline claims show CI / confidence / n where applicable.
@@ -115,7 +118,8 @@ criteria:
   - id: missing_recipe
     axis: rigor
     severity: warn
-    status: deferred
+    status: live
+    since_version: 7
     scope: report
     applies_to: [report]
     signal: Storyboard JSON + regeneration recipe is attached to the artifact.
@@ -226,7 +230,8 @@ criteria:
   - id: plaintext_where_component_warranted
     axis: narrative
     severity: warn
-    status: deferred
+    status: live
+    since_version: 7
     scope: section
     applies_to: [section]
     signal: Categorical/%/entity values use the right component per the component_map.
@@ -344,6 +349,71 @@ criteria:
     on_fail: warn
     remediation: rerender_after_upstream_fixes
     rationale: All seven 2026-07-10 bugs were invisible to metadata checks (§1.4).
+
+  - id: visual_semantic_review
+    axis: integrity
+    severity: warn
+    status: live
+    since_version: 7
+    scope: report
+    applies_to: [report]
+    signal: >-
+      Rendered-page semantic review confirms one hero heading, meaningful section
+      headings, contextualized evidence, coherent editorial findings, and no
+      undeclared nested surfaces.
+    remediable: true
+    on_fail: warn
+    remediation: revise_rendered_visual_semantics
+    rationale: Screenshot existence proves capture, not that the rendered composition preserves reader-facing meaning.
+
+  - id: visual_author_fallback
+    axis: integrity
+    severity: warn
+    status: live
+    since_version: 4
+    scope: report
+    applies_to: [report]
+    signal: >-
+      A requested runtime visual-author run either records a validated visual plan
+      or explicitly records that deterministic fallback was used.
+    remediable: true
+    on_fail: warn
+    remediation: inspect_runtime_author_or_use_provided_spec
+    rationale: A safe fallback protects content integrity but is not evidence that the requested runtime composition ran.
+
+  - id: visual_plan_budget
+    axis: narrative
+    severity: warn
+    status: live
+    since_version: 4
+    scope: report
+    applies_to: [report]
+    signal: >-
+      The validated visual plan has no unresolved advisory observations about
+      repeated strong surfaces, unclear parent-child nesting, repeated framing
+      of narrative material, or card grids without peer comparison.
+    remediable: true
+    on_fail: warn
+    remediation: revise_visual_plan_or_accept_contextual_density
+    rationale: Surface budgets are composition guidance, not a rigid card quota.
+
+  - id: display_fact_coverage
+    axis: narrative
+    severity: warn
+    status: live
+    since_version: 5
+    scope: report
+    applies_to: [insight_grid, chart_interpretation, filterable_chart, chart_table_explorer, entity_card_grid]
+    signal: >-
+      When runtime visual composition or explicit display-fact coverage is requested,
+      reader-facing pills, scan points, examples, and annotations originate from
+      stable source-owned display_facts rather than inferred prose or legacy fields.
+      An explicit presentation.require_display_facts contract also blocks
+      publication until its authoring findings are resolved.
+    remediable: true
+    on_fail: warn
+    remediation: add_typed_display_facts
+    rationale: The renderer can place evidence-bound facts but cannot safely decide which prose fragments deserve visual emphasis.
 
   - id: export_fidelity
     axis: integrity

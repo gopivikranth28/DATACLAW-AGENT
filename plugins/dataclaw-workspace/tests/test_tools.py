@@ -1,5 +1,6 @@
 """Tests for workspace tools."""
 
+import hashlib
 import json
 
 import pytest
@@ -19,6 +20,7 @@ from dataclaw_workspace.tools import (
     display_image,
     build_report,
     report_design_report,
+    report_review_visuals,
     report_publish,
     report_add_section,
     _BODY_CLOSE_RE,
@@ -233,6 +235,13 @@ async def test_report_design_report_storyboards_then_renders_cohesive_html(cfg):
     assert "report_design" in result["type"]
     assert "\"mode\": \"whole_report\"" in storyboard
     assert "section_plan" in storyboard
+    assert result["design_review"]["passes"] == 5
+    assert result["design_review"]["status"] == "pass"
+    assert result["analytical_review"]["status"] == "attention_required"
+    assert "unresolved_evidence_anchors" in {
+        finding["id"] for finding in result["analytical_review"]["findings"]
+    }
+    assert "\"analytical_review\"" in storyboard
 
 
 @pytest.mark.asyncio
@@ -260,6 +269,7 @@ async def test_report_publish_regates_and_writes_receipt(cfg):
     )
 
     receipt = json.loads(Path(published["receipt_path"]).read_text())
+    recipe = json.loads(Path(designed["recipe_path"]).read_text())
     assert designed["quality"]["status"] == "pass"
     assert published["type"] == "report_publish"
     assert published["published"] is True
@@ -270,9 +280,391 @@ async def test_report_publish_regates_and_writes_receipt(cfg):
     assert published["docx_export"] == {"requested": False, "status": "skipped"}
     assert published["runtime_smoke"]["status"] in {"passed", "skipped"}
     assert receipt["status"] == "published"
-    assert receipt["quality"]["rubric_version"] == 3
+    assert receipt["quality"]["rubric_version"] == 7
+    assert receipt["analytical_review"] == published["analytical_review"]
+    assert published["analytical_review"]["status"] == "pass"
     assert receipt["runtime_smoke"] == published["runtime_smoke"]
     assert receipt["storyboard_path"] == published["storyboard_path"]
+    assert published["recipe_path"] == designed["recipe_path"]
+    assert receipt["regeneration_recipe"]["path"] == designed["recipe_path"]
+    assert recipe["recipe_schema"] == 1
+    assert recipe["artifact"]["html_sha256"] == designed["html_sha256"]
+
+
+@pytest.mark.asyncio
+async def test_report_publish_rejects_missing_or_tampered_recipe_sidecar(cfg):
+    designed = await report_design_report(
+        cfg=cfg,
+        report_goal="Explain the decision-changing finding.",
+        report_path="reports/recipe-integrity.html",
+        storyboard_path="reports/recipe-integrity.storyboard.json",
+        insights=[{"title": "Retention improved", "detail": "The retained cohort rose after the onboarding change."}],
+    )
+    recipe_path = Path(designed["recipe_path"])
+    recipe_path.unlink()
+
+    with pytest.raises(ValueError, match="regeneration recipe sidecar is missing"):
+        await report_publish(
+            cfg=cfg,
+            report_path="reports/recipe-integrity.html",
+            storyboard_path="reports/recipe-integrity.storyboard.json",
+            export_docx=False,
+        )
+
+    # A syntactically valid replacement still cannot change the source/plan
+    # identity that the rendered report was designed from.
+    recipe_path.write_text(json.dumps({
+        "recipe_schema": 1,
+        "renderer": "dataclaw_workspace.report_renderer.render_report_from_storyboard",
+        "source_context_sha256": "different-source",
+        "section_plan_sha256": "different-plan",
+        "artifact": {
+            "html_path": designed["html_path"],
+            "storyboard_path": designed["storyboard_path"],
+            "html_sha256": designed["html_sha256"],
+        },
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="recipe no longer matches the storyboard"):
+        await report_publish(
+            cfg=cfg,
+            report_path="reports/recipe-integrity.html",
+            storyboard_path="reports/recipe-integrity.storyboard.json",
+            export_docx=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_report_publish_can_require_browser_visual_review_artifacts(cfg, monkeypatch):
+    await report_design_report(
+        cfg=cfg,
+        report_goal="Explain the decision-changing finding.",
+        report_path="reports/final-visual-review.html",
+        storyboard_path="reports/final-visual-review.storyboard.json",
+        insights=[{"title": "Retention improved", "detail": "The retained cohort rose after the onboarding change."}],
+        requirements={"publication": {"require_visual_review": True}},
+    )
+
+    async def skipped_smoke(_path):
+        return {"status": "skipped", "reason": "Playwright unavailable"}
+
+    monkeypatch.setattr(workspace_tools, "_run_report_runtime_smoke", skipped_smoke)
+    with pytest.raises(ValueError, match="visual-review gate failed"):
+        await report_publish(
+            cfg=cfg,
+            report_path="reports/final-visual-review.html",
+            storyboard_path="reports/final-visual-review.storyboard.json",
+            export_docx=False,
+        )
+
+    async def reviewed_smoke(_path):
+        review_dir = _path.with_name(f"{_path.stem}.visual-review")
+        review_dir.mkdir(parents=True, exist_ok=True)
+        artifacts = []
+        for name, kind, viewport in (
+            ("desktop-full-page", "full_page", "desktop"),
+            ("mobile-full-page", "full_page", "mobile"),
+            ("desktop-hero", "key_section", "desktop"),
+        ):
+            artifact_path = review_dir / f"{name}.png"
+            artifact_path.write_bytes((f"screenshot:{name}".encode("utf-8")) * 128)
+            artifacts.append({
+                "kind": kind,
+                "viewport": viewport,
+                "path": str(artifact_path),
+                "sha256": hashlib.sha256(artifact_path.read_bytes()).hexdigest(),
+            })
+        return {
+            "status": "passed",
+            "checks": [],
+            "screenshots": artifacts,
+            "semantic_visual": {"visual_semantic_schema": 1, "status": "pass", "findings": []},
+        }
+
+    async def semantic_attention_smoke(_path):
+        result = await reviewed_smoke(_path)
+        result["semantic_visual"] = {
+            "visual_semantic_schema": 1,
+            "status": "attention_required",
+            "findings": [{"id": "evidence_context_missing", "detail": "Visual has no context."}],
+        }
+        return result
+
+    monkeypatch.setattr(workspace_tools, "_run_report_runtime_smoke", semantic_attention_smoke)
+    with pytest.raises(ValueError, match="automated visual-semantic review did not pass"):
+        await report_review_visuals(
+            cfg=cfg,
+            report_path="reports/final-visual-review.html",
+            storyboard_path="reports/final-visual-review.storyboard.json",
+            reviewer="Report reviewer",
+            decision="approved",
+            notes="Semantic review requires repair before approval.",
+        )
+
+    async def outside_review_dir_smoke(_path):
+        result = await reviewed_smoke(_path)
+        artifact = result["screenshots"][0]
+        artifact["path"] = str(_path)
+        artifact["sha256"] = hashlib.sha256(_path.read_bytes()).hexdigest()
+        return result
+
+    monkeypatch.setattr(workspace_tools, "_run_report_runtime_smoke", outside_review_dir_smoke)
+    with pytest.raises(ValueError, match="outside the report review directory"):
+        await report_review_visuals(
+            cfg=cfg,
+            report_path="reports/final-visual-review.html",
+            storyboard_path="reports/final-visual-review.storyboard.json",
+            reviewer="Report reviewer",
+            decision="approved",
+            notes="Review artifacts must remain bound to the report review directory.",
+        )
+
+    monkeypatch.setattr(workspace_tools, "_run_report_runtime_smoke", reviewed_smoke)
+    reviewed = await report_review_visuals(
+        cfg=cfg,
+        report_path="reports/final-visual-review.html",
+        storyboard_path="reports/final-visual-review.storyboard.json",
+        reviewer="Report reviewer",
+        decision="approved",
+        notes="Desktop and mobile hierarchy, spacing, and chart framing are reader-ready.",
+    )
+    assert reviewed["approved"] is True
+
+    # An approved review is reusable only for exactly unchanged HTML and image
+    # evidence. A later environment without Playwright is recorded as skipped,
+    # rather than pretending the browser check passed again.
+    monkeypatch.setattr(workspace_tools, "_run_report_runtime_smoke", skipped_smoke)
+    published = await report_publish(
+        cfg=cfg,
+        report_path="reports/final-visual-review.html",
+        storyboard_path="reports/final-visual-review.storyboard.json",
+        export_docx=False,
+    )
+    assert published["visual_review"]["required"] is True
+    assert published["visual_review"]["status"] == "approved"
+    assert published["visual_review"]["reviewer"] == "Report reviewer"
+
+    reviewed_artifact = Path(reviewed["runtime_smoke"]["screenshots"][0]["path"])
+    reviewed_artifact.write_bytes(b"changed after approval")
+    with pytest.raises(ValueError, match="reviewed screenshot is missing or changed"):
+        await report_publish(
+            cfg=cfg,
+            report_path="reports/final-visual-review.html",
+            storyboard_path="reports/final-visual-review.storyboard.json",
+            export_docx=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_report_publish_blocks_missing_required_display_facts(cfg):
+    await report_design_report(
+        cfg=cfg,
+        report_goal="Explain the decision-changing finding.",
+        report_path="reports/required-display-facts.html",
+        storyboard_path="reports/required-display-facts.storyboard.json",
+        insights=[{"title": "Retention improved", "detail": "The retained cohort rose after the onboarding change."}],
+        requirements={"presentation": {"require_display_facts": True}},
+    )
+
+    with pytest.raises(ValueError, match="authoring gate failed"):
+        await report_publish(
+            cfg=cfg,
+            report_path="reports/required-display-facts.html",
+            storyboard_path="reports/required-display-facts.storyboard.json",
+            export_docx=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_report_publish_blocks_unresolved_design_review_findings(cfg):
+    designed = await report_design_report(
+        cfg=cfg,
+        report_goal="Explain the category evidence and let readers inspect the rows.",
+        report_path="reports/needs-design-repair.html",
+        storyboard_path="reports/needs-design-repair.storyboard.json",
+        insights=[{"title": "Category A leads", "detail": "The supplied aggregate is highest for category A."}],
+        analyses=[
+            {
+                "section_type": "entity_card_grid",
+                "title": "Categories",
+                "items": [{"title": "A"}, {"title": "B"}],
+            },
+            {
+                "title": "Central comparison",
+                "figure": {"data": [{"type": "bar", "x": ["A", "B"], "y": [2, 1]}]},
+                "caption": "The central category comparison.",
+                "interpretation": "Category A leads the supplied aggregate.",
+            },
+            {
+                "title": "Category explorer",
+                "rows": [{"category": "A", "value": 2}, {"category": "B", "value": 1}],
+                "columns": ["category", "value"],
+            },
+        ],
+        requirements={
+            "editorial_archetype": "taxonomy_explorer",
+            "methodology": [{"title": "Grain", "detail": "Supplied aggregate category rows."}],
+        },
+    )
+
+    assert "guided_visual_evidence_missing" in {
+        finding["id"] for finding in designed["design_review"]["findings"]
+    }
+    with pytest.raises(ValueError, match="design-review gate failed: guided_visual_evidence_missing"):
+        await report_publish(
+            cfg=cfg,
+            report_path="reports/needs-design-repair.html",
+            storyboard_path="reports/needs-design-repair.storyboard.json",
+            export_docx=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_report_publish_blocks_required_analytical_review_findings(cfg):
+    designed = await report_design_report(
+        cfg=cfg,
+        report_goal="Forecast the remaining tournament matches and champion probabilities.",
+        report_path="reports/needs-baseline.html",
+        storyboard_path="reports/needs-baseline.storyboard.json",
+        insights=[{
+            "title": "Spain lead the projection",
+            "detail": "Spain have the highest champion probability.",
+        }],
+    )
+
+    required = {
+        finding["id"] for finding in designed["analytical_review"]["findings"]
+        if finding["severity"] == "required"
+    }
+    assert required == {"missing_baseline_comparison"}
+
+    with pytest.raises(ValueError, match="analytical-review gate failed: missing_baseline_comparison"):
+        await report_publish(
+            cfg=cfg,
+            report_path="reports/needs-baseline.html",
+            storyboard_path="reports/needs-baseline.storyboard.json",
+            export_docx=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_report_review_lifecycle_supports_explicit_risk_acceptance(cfg):
+    from dataclaw_analysis_review.tools import resolve_review_finding
+
+    designed = await report_design_report(
+        cfg=cfg,
+        report_goal="Forecast the remaining tournament matches and champion probabilities.",
+        report_path="reports/accepted-risk.html",
+        storyboard_path="reports/accepted-risk.storyboard.json",
+        insights=[{
+            "title": "Spain lead the projection",
+            "detail": "Spain have the highest champion probability.",
+        }],
+    )
+    lifecycle = designed["review_lifecycle"]
+    baseline = next(
+        finding for finding in lifecycle["findings"]
+        if finding["report_finding_id"] == "missing_baseline_comparison"
+    )
+    assert lifecycle["gate"]["gate"] == "fail"
+
+    accepted = await resolve_review_finding(
+        finding_id=baseline["finding_id"],
+        status="accepted_with_rationale",
+        rationale="The stakeholder explicitly accepted the missing historical comparison for this exploratory forecast.",
+        session_id="default",
+    )
+    assert accepted["success"] is True
+    assert accepted["status"] == "accepted_with_rationale"
+
+    published = await report_publish(
+        cfg=cfg,
+        report_path="reports/accepted-risk.html",
+        storyboard_path="reports/accepted-risk.storyboard.json",
+        export_docx=False,
+    )
+    baseline_review = next(
+        finding for finding in published["analytical_review"]["findings"]
+        if finding["id"] == "missing_baseline_comparison"
+    )
+    assert baseline_review["lifecycle_status"] == "accepted_with_rationale"
+
+
+@pytest.mark.asyncio
+async def test_report_publish_recomputes_a_tampered_analytical_review(cfg):
+    designed = await report_design_report(
+        cfg=cfg,
+        report_goal="Forecast next-quarter demand.",
+        report_path="reports/tampered-review.html",
+        storyboard_path="reports/tampered-review.storyboard.json",
+        insights=[{"title": "Demand forecast", "detail": "Demand is projected to rise."}],
+    )
+    storyboard_path = Path(designed["storyboard_path"])
+    storyboard = json.loads(storyboard_path.read_text())
+    storyboard["analytical_review"] = {"status": "pass", "findings": []}
+    storyboard_path.write_text(json.dumps(storyboard), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="analytical-review gate failed: missing_baseline_comparison"):
+        await report_publish(
+            cfg=cfg,
+            report_path="reports/tampered-review.html",
+            storyboard_path="reports/tampered-review.storyboard.json",
+            export_docx=False,
+        )
+
+    refreshed = json.loads(storyboard_path.read_text())
+    assert refreshed["analytical_review"]["status"] == "attention_required"
+
+
+@pytest.mark.asyncio
+async def test_report_publish_rejects_html_from_a_different_storyboard(cfg):
+    designed = await report_design_report(
+        cfg=cfg,
+        report_goal="Explain retention by cohort.",
+        report_path="reports/hash-bound.html",
+        storyboard_path="reports/hash-bound.storyboard.json",
+        insights=[{"title": "Retention", "detail": "Retention is stable.", "finding_id": "finding-retention"}],
+    )
+    html_path = Path(designed["html_path"])
+    html_path.write_text("<!doctype html><html><body><h1>Different forecast</h1></body></html>", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="integrity gate failed"):
+        await report_publish(
+            cfg=cfg,
+            report_path="reports/hash-bound.html",
+            storyboard_path="reports/hash-bound.storyboard.json",
+            export_docx=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_report_publish_rejects_a_changed_analysis_contract(cfg):
+    designed = await report_design_report(
+        cfg=cfg,
+        report_goal="Forecast next-quarter demand.",
+        report_path="reports/contract-bound.html",
+        storyboard_path="reports/contract-bound.storyboard.json",
+        insights=[{"title": "Demand forecast", "detail": "Demand is projected to rise."}],
+    )
+    storyboard_path = Path(designed["storyboard_path"])
+    storyboard = json.loads(storyboard_path.read_text())
+    storyboard["analysis_contract"] = {
+        "mode": "predictive",
+        "baseline": {
+            "status": "complete",
+            "method": "Holdout comparison",
+            "result": "Improved log loss",
+            "evidence": {"kind": "notebook_cell", "ref": "cell-ablation"},
+        },
+    }
+    storyboard_path.write_text(json.dumps(storyboard), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="analytical review contract changed after rendering"):
+        await report_publish(
+            cfg=cfg,
+            report_path="reports/contract-bound.html",
+            storyboard_path="reports/contract-bound.storyboard.json",
+            export_docx=False,
+        )
 
 
 @pytest.mark.asyncio
@@ -294,6 +686,10 @@ async def test_build_report_normalizes_raw_html_for_publish(cfg):
     assert Path(built["source_html_path"]).read_text() == "<html><body><h1>Legacy report</h1></body></html>"
     assert Path(built["storyboard_path"]).is_file()
     assert "data-dc-section-meta" in Path(built["html_path"]).read_text()
+    storyboard = json.loads(Path(built["storyboard_path"]).read_text())
+    recipe = json.loads(Path(built["recipe_path"]).read_text())
+    assert storyboard["regeneration_recipe"]["recipe_schema"] == 1
+    assert recipe["source_context_sha256"] == storyboard["regeneration_recipe"]["source_context_sha256"]
     assert published["published"] is True
 
 
@@ -340,6 +736,17 @@ async def test_build_report_preserves_existing_typed_report(cfg):
     assert rebuilt["normalization"]["mode"] == "typed_preservation"
     assert Path(rebuilt["html_path"]).read_text() == original_html
     assert Path(rebuilt["source_html_path"]).read_text() == original_html
+    storyboard = json.loads(Path(rebuilt["storyboard_path"]).read_text())
+    assert storyboard["regeneration_recipe"]["recipe_schema"] == 1
+
+    published = await report_publish(
+        cfg=cfg,
+        report_path="reports/preserved-typed.html",
+        storyboard_path="reports/preserved-typed.storyboard.json",
+        export_docx=False,
+    )
+    assert published["published"] is True
+    assert published["recipe_path"] == rebuilt["recipe_path"]
 
 
 @pytest.mark.asyncio
@@ -851,6 +1258,57 @@ async def test_report_add_section_builds_live_html_report(cfg):
     assert "data-dc-runtime=\"plotly\"" in html
 
 
+def test_runtime_smoke_reclassifies_closed_browser_as_skipped():
+    result = workspace_tools._classify_runtime_smoke_result({
+        "status": "failed",
+        "checks": [{
+            "check": "page_load",
+            "detail": "browserType.newPage: Target page, context or browser has been closed",
+        }],
+    })
+
+    assert result["status"] == "skipped"
+    assert "environment unavailable" in result["reason"]
+
+
+def test_runtime_smoke_keeps_rendered_layout_failures_fail_closed():
+    result = workspace_tools._classify_runtime_smoke_result({
+        "status": "failed",
+        "checks": [{
+            "check": "horizontal_overflow",
+            "detail": "mobile viewport scrolls horizontally (412px > 390px)",
+        }],
+    })
+
+    assert result["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_runtime_smoke_emits_passing_semantic_review_for_a_designed_report(cfg):
+    designed = await report_design_report(
+        cfg=cfg,
+        report_goal="Explain the completed decision-changing finding.",
+        report_path="reports/runtime-semantic.html",
+        storyboard_path="reports/runtime-semantic.storyboard.json",
+        insights=[{
+            "title": "Retention improved",
+            "detail": "The retained cohort rose after the completed onboarding change.",
+            "finding_id": "retention-runtime-smoke",
+        }],
+    )
+    smoke = await workspace_tools._run_report_runtime_smoke(Path(designed["html_path"]))
+
+    # Browser capability is optional in this plugin, but a browser-enabled
+    # environment must expose the deterministic semantic result as well as its
+    # screenshot and layout checks.
+    assert smoke["status"] in {"passed", "skipped"}
+    if smoke["status"] == "passed":
+        semantic = smoke["semantic_visual"]
+        assert semantic["visual_semantic_schema"] == 1
+        assert semantic["status"] == "pass"
+        assert semantic["findings"] == []
+
+
 @pytest.mark.asyncio
 async def test_report_add_section_normalizes_array_table_rows_and_safe_narrative_markup(cfg):
     report_path = "reports/array-rows.html"
@@ -892,6 +1350,10 @@ async def test_report_add_section_normalizes_array_table_rows_and_safe_narrative
     assert smoke["status"] in {"passed", "skipped"}
     if smoke["status"] == "passed":
         assert not [check for check in smoke["checks"] if check["check"] == "table_content"]
+        assert {shot["viewport"] for shot in smoke["screenshots"]} == {"desktop", "mobile"}
+        assert all(Path(shot["path"]).is_file() and shot["bytes"] >= 1024 for shot in smoke["screenshots"])
+        assert {shot["viewport"] for shot in smoke["screenshots"] if shot["kind"] == "full_page"} == {"desktop", "mobile"}
+        assert any(shot["kind"] == "key_section" for shot in smoke["screenshots"])
 
 
 @pytest.mark.asyncio
@@ -1078,6 +1540,21 @@ def test_existing_report_shell_context_upgrade_is_idempotent():
     assert _ensure_report_shell_context(migrated).count("data-dc-report-shell-css") == 1
     assert _ensure_report_shell_context(migrated).count("data-dc-report-shell-script") == 1
     assert _ensure_report_shell_context(migrated).count('class="r-story-nav"') == 1
+
+
+def test_report_shell_preserves_a_named_runtime_theme_through_an_upgrade():
+    html = _report_shell(
+        title="Themed report",
+        first_section='<section class="r-section"><h2>Evidence</h2></section>',
+        visual_theme={"name": "forest"},
+    )
+
+    upgraded = _ensure_report_shell_context(html)
+
+    assert 'data-dc-visual-theme="forest"' in upgraded
+    assert ':root[data-dc-visual-theme="forest"]' in upgraded
+    assert ':root[data-theme="dark"][data-dc-visual-theme="forest"]' in upgraded
+    assert "--dc-accent: #166534" in upgraded
 
 
 def test_legacy_shell_without_attrs_gets_current_runtime():

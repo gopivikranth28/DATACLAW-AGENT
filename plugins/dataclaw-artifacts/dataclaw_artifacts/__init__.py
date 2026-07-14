@@ -30,8 +30,9 @@ class ArtifactsPlugin:
             (
                 "publish_artifact",
                 (
-                    "Publish a self-contained HTML artifact. Pass artifact_id to revise "
-                    "an existing artifact as a new version."
+                    "Publish a self-contained HTML artifact. Structured report-builder HTML "
+                    "also requires the current report_publish receipt. Pass artifact_id to "
+                    "revise an existing artifact as a new version."
                 ),
                 publish_artifact,
                 {
@@ -41,6 +42,7 @@ class ArtifactsPlugin:
                         "description": {"type": "string", "description": "One-line summary", "default": ""},
                         "source_path": {"type": "string", "description": "Workspace path of the HTML file to publish"},
                         "html": {"type": "string", "description": "Inline HTML for small artifacts"},
+                        "report_receipt_path": {"type": "string", "description": "Current report_publish receipt for structured report HTML"},
                         "artifact_id": {"type": "string", "description": "Existing artifact id to revise"},
                         "label": {"type": "string", "description": "Short version label"},
                         "base_version": {"type": "integer", "description": "Version this update was based on"},
