@@ -329,13 +329,26 @@ def test_storyboard_design_keeps_local_context_without_duplicate_insights():
     assert "adjacent_insights" not in chart
     assert chart["interpretation"] == insights[0]["detail"]
     assert chart["caveat"] == insights[0]["caveat"]
-    assert chart["data_note"].startswith("Data note:")
+    assert "data_note" not in chart
     rendered = report_renderer.render_report_from_storyboard(storyboard)
     assert '<div class="r-adjacent-insights">' not in rendered
     assert "Evidence 01" not in rendered
     assert "Evidence for:" not in rendered
     assert "notebook cell: cell-style-map" not in rendered
-    assert "Data note:" in rendered
+    assert "Data note:" not in rendered
+
+    diagnostic = report_renderer.design_report_storyboard(
+        report_goal="Explain player archetypes.",
+        insights=insights,
+        analyses=analyses,
+        requirements={"presentation": {"data_notes": "automatic"}},
+        max_design_passes=5,
+    )
+    diagnostic_chart = next(
+        item["data"] for item in diagnostic["section_plan"]
+        if item["section_type"] == "chart_interpretation"
+    )
+    assert diagnostic_chart["data_note"].startswith("Data note:")
 
 
 def test_taxonomy_explorer_architecture_sequences_evidence_before_findings():
@@ -805,6 +818,44 @@ def test_storyboard_compiles_a_bounded_desktop_composition_contract():
     assert report_renderer.review_storyboard_design(storyboard)["status"] == "pass"
 
 
+def test_desktop_composition_allows_only_a_reasoned_width_exception():
+    exception = {
+        "width": "reading",
+        "reason": "The supplied annotated comparison is intentionally a compact reading-column exhibit.",
+    }
+    section = {
+        "title": "Annotated comparison",
+        "caption": "Compare the two supplied groups.",
+        "figure": {"data": [{"type": "bar", "x": ["A", "B"], "y": [1, 2]}]},
+        "interpretation": "The completed comparison rises from A to B.",
+        "evidence": [{"kind": "analysis_artifact", "ref": "annotated-comparison"}],
+        "desktop_composition": "guided_visual",
+        "layout_width": "reading",
+        "layout_exception": exception,
+    }
+    storyboard = report_renderer.design_report_storyboard(
+        report_goal="Explain the supplied comparison.",
+        insights=[{"title": "The comparison rises", "detail": "B exceeds A in the supplied aggregate."}],
+        analyses=[section],
+    )
+    chart = next(item["data"] for item in storyboard["section_plan"] if item["section_type"] == "chart_interpretation")
+    assert chart["layout_exception"] == exception
+    assert report_renderer.review_storyboard_design(storyboard)["status"] == "pass"
+    rendered = report_renderer.render_report_from_storyboard(storyboard)
+    assert "has-layout-exception" in rendered
+    assert 'data-dc-layout-exception="true"' in rendered
+
+    chart["layout_exception"] = {"width": "reading", "reason": "too short"}
+    review = report_renderer.review_storyboard_design(storyboard)
+    assert any(finding["id"] == "desktop_composition_width_conflict" for finding in review["findings"])
+
+    chart["layout_exception"] = {
+        "reason": "This rationale is deliberately long but has no declared width.",
+    }
+    review = report_renderer.review_storyboard_design(storyboard)
+    assert any(finding["id"] == "desktop_composition_width_conflict" for finding in review["findings"])
+
+
 def test_story_arcs_allow_variable_reader_questions_to_order_supplied_sections():
     figure = lambda title: {
         "data": [{"type": "bar", "x": ["A", "B"], "y": [2, 1]}],
@@ -841,7 +892,7 @@ def test_story_arcs_allow_variable_reader_questions_to_order_supplied_sections()
                 {
                     "id": "decision",
                     "title": "Where should readers look next?",
-                    "claim": "Use the supplied scenario lookup for the complete comparison.",
+                    "reader_question": "Which supplied scenario changes the decision?",
                 },
             ],
         },
@@ -851,6 +902,8 @@ def test_story_arcs_allow_variable_reader_questions_to_order_supplied_sections()
     assert [arc["phase"] for arc in storyboard["storyboard"]] == ["signal", "decision"]
     assert storyboard["storyboard"][0]["sections"] == ["analysis_1_chart_interpretation"]
     assert storyboard["storyboard"][1]["sections"] == ["analysis_2_interactive_table"]
+    assert storyboard["storyboard"][0]["primary_section"] == "analysis_1_chart_interpretation"
+    assert storyboard["storyboard"][1]["primary_section"] == "analysis_2_interactive_table"
     assert [item["layout_role"] for item in storyboard["section_plan"]] == [
         "opening_context",
         "story_arc_signal",
@@ -863,6 +916,34 @@ def test_story_arcs_allow_variable_reader_questions_to_order_supplied_sections()
     assert "What separates the outcomes?" in rendered
     assert "Where should readers look next?" in rendered
     assert "r-section is-full-width is-quiet-surface is-story-arc" in rendered
+
+
+def test_story_arc_requires_a_reader_question_and_valid_primary_section():
+    analysis = {
+        "title": "Supplied comparison",
+        "caption": "Compare the supplied groups.",
+        "figure": {"data": [{"type": "bar", "x": ["A", "B"], "y": [1, 2]}]},
+        "story_arc": "signal",
+    }
+    with pytest.raises(ValueError, match="reader_question, question, or purpose"):
+            report_renderer.design_report_storyboard(
+                report_goal="Explain the completed analysis.",
+                insights=[{"title": "Completed result", "detail": "The supplied comparison is complete."}],
+                analyses=[analysis],
+            requirements={"story_arcs": [{"id": "signal", "title": "The signal"}]},
+        )
+    with pytest.raises(ValueError, match="primary_section must name one of its sections"):
+            report_renderer.design_report_storyboard(
+                report_goal="Explain the completed analysis.",
+                insights=[{"title": "Completed result", "detail": "The supplied comparison is complete."}],
+                analyses=[analysis],
+            requirements={"story_arcs": [{
+                "id": "signal",
+                "title": "The signal",
+                "reader_question": "What does the supplied comparison show?",
+                "primary_section": "opening_context",
+            }]},
+        )
 
 
 def test_primary_insight_layout_defaults_to_editorial_list_but_keeps_card_grid_opt_in():

@@ -3,6 +3,8 @@ name: report_design
 description: Design polished analytical reports and upgrade legacy HTML from completed insights, aggregate assets, evidence, methodology, and interaction requirements. Use before final report generation so the agent creates a storyboard-backed, publishable report instead of appending chart dumps.
 ---
 
+<!-- Canonical OpenClaw skill directory: report_design -->
+
 ## When to use
 
 Use this skill before producing any polished analytical report, dashboard, living-report artifact, or final report HTML. It owns report composition: story flow, section choice, interaction design, evidence placement, and the `report_design_report` payload contract.
@@ -26,13 +28,16 @@ Do not use this skill for a quick scratch chart or a single draft section. For t
      an optional Sources & reproducibility disclosure; do not render them as
      the main report story.
    - Pass those arcs in `requirements.story_arcs` when their order should
-     control the report. Each arc needs a `title` plus either explicit rendered
-     section roles or analyses marked with the same `story_arc` id. Arcs are
-     variable in number and purpose; they may frame a question, comparison,
-     mechanism, scenario, or decision without imposing a fixed set of acts.
+     control the report. Each arc needs a `title`, a distinct `reader_question`
+     (or `purpose`), and either explicit rendered section roles or analyses
+     marked with the same `story_arc` id. Set `primary_section` when the first
+     visual/table/card is not the central proof point; otherwise the compiler
+     records the first supplied evidence-shaped section. Arcs remain variable
+     in number and purpose; they may frame a question, comparison, mechanism,
+     scenario, or decision without imposing a fixed set of acts.
 4. Call `report_design_report`, not a sequence of final `report_add_section` calls. Inspect its `analytical_review` and quality result; resolve every `required` finding or obtain an explicit user-approved risk acceptance; resolve or explicitly disclose warnings before calling the report complete.
    The designer performs up to five bounded critique-and-repair passes, stopping early when no further safe repair is available. These passes can improve structure, captions, caveats, and evidence presentation; they never invent analytical validation or silently clear a substantive finding.
-   Keep the default `design_passes=5` unless a deliberately smaller, faster draft is needed. The design passes preserve the full supplied context in the storyboard, retain audit-only provenance mappings, add local data notes, carry supplied caveats into chart interpretation, and plan visual emphasis without fabricating content. They must not create generic `Evidence 01` sections, duplicate an insight beside its supporting chart, or insert filler captions.
+   Keep the default `design_passes=5` unless a deliberately smaller, faster draft is needed. The design passes preserve the full supplied context in the storyboard, retain audit-only provenance mappings, carry supplied caveats into chart interpretation, and plan visual emphasis without fabricating content. They preserve a source-authored `data_note` but do not add generic row-count notes unless `presentation.data_notes="automatic"` is explicitly requested for a diagnostic draft. They must not create generic `Evidence 01` sections, duplicate an insight beside its supporting chart, or insert filler captions.
    When supplied assets include category/archetype cards, static visual evidence, and an interactive explorer, set `requirements.editorial_archetype="taxonomy_explorer"`. It makes the page architecture deliberate: **hero → floating KPIs → taxonomy cards → hero visualization → paired diagnostics → findings → explorer → methodology and limitations footer**. The supplied readout becomes the hero abstract, so the report does not duplicate its conclusion before analysis.
    Category-shaped selector items (`archetype`, `category`, `segment`, etc.)
    are automatically shown first as non-interactive cards while the original
@@ -64,8 +69,11 @@ Do not use this skill for a quick scratch chart or a single draft section. For t
    storyboard template: they make visual/evidence sections use the report
    width, keep long-form conclusions and disclosures at a readable measure,
    and prevent arbitrary narrow or floating panels. Override only a genuine
-   exception with `desktop_composition` on that analysis/section; do not use
-   pixel offsets or a custom CSS width to compensate for a weak story order.
+   exception with `desktop_composition` on that analysis/section. If the
+   supplied evidence genuinely needs a non-default `layout_width`, add
+   `layout_exception={"width": "…", "reason": "…"}`; the reason is retained
+   for visual review. Do not use pixel offsets or a custom CSS width to
+   compensate for a weak story order.
 5. Keep `quality_gate="fail"` for final reports. Fix failures before presenting
    the report as complete.
 6. For a final release, set `requirements.publication.require_visual_review=true`, inspect screenshots, then call `report_review_visuals(report_path=..., storyboard_path=..., reviewer=..., decision="approved", notes=...)`. It writes a named, hash-bound review only when browser evidence and automated semantic review pass; browser-unavailable cannot create approval, and changed HTML or screenshots require a new review.
@@ -353,6 +361,12 @@ Use `semantic_role` on an analysis (`methodology`, `data_quality`, `uncertainty`
 `provenance`, `timeline`, or `status`) to select the safe matching component.
 
 ### Runtime visual author
+
+Every report starts with the renderer's deterministic desktop-editorial
+baseline (semantic composition frames, hierarchy, evidence surfaces, and
+Plotly theming). It is recorded in the storyboard/receipt even when runtime
+visual authoring is off. This baseline is the reproducible default; it does
+not require an LLM.
 
 When a configured LLM should compose the presentation at build time, opt into
 the runtime visual author. It is a visual-editor stage, not a prompt-to-HTML

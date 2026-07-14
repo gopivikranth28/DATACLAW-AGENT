@@ -1316,6 +1316,41 @@ async def test_runtime_smoke_emits_passing_semantic_review_for_a_designed_report
 
 
 @pytest.mark.asyncio
+async def test_runtime_smoke_honors_a_documented_desktop_layout_exception(cfg):
+    designed = await report_design_report(
+        cfg=cfg,
+        report_goal="Explain the supplied annotated comparison.",
+        report_path="reports/runtime-layout-exception.html",
+        storyboard_path="reports/runtime-layout-exception.storyboard.json",
+        insights=[{
+            "title": "The completed comparison rises",
+            "detail": "The supplied aggregate is higher for B than A.",
+            "finding_id": "layout-exception-result",
+        }],
+        analyses=[{
+            "title": "Compact annotated comparison",
+            "caption": "Compare the two supplied groups.",
+            "figure": {"data": [{"type": "bar", "x": ["A", "B"], "y": [1, 2]}]},
+            "interpretation": "The completed comparison rises from A to B.",
+            "evidence": [{"kind": "analysis_artifact", "ref": "compact-comparison"}],
+            "desktop_composition": "guided_visual",
+            "layout_width": "reading",
+            "layout_exception": {
+                "width": "reading",
+                "reason": "The supplied annotated comparison is intentionally a compact reading-column exhibit.",
+            },
+        }],
+    )
+    smoke = await workspace_tools._run_report_runtime_smoke(Path(designed["html_path"]))
+    assert smoke["status"] in {"passed", "skipped"}
+    if smoke["status"] == "passed":
+        assert not [
+            check for check in smoke["checks"]
+            if check["check"] in {"desktop_composition_width", "desktop_composition_measure"}
+        ]
+
+
+@pytest.mark.asyncio
 async def test_report_add_section_normalizes_array_table_rows_and_safe_narrative_markup(cfg):
     report_path = "reports/array-rows.html"
     draft = await report_add_section(

@@ -4,6 +4,8 @@ description: Run goal-directed exploratory data analysis tailored to the user's 
 tags: [data, analysis, eda, exploratory-analysis, data-quality, profiling]
 ---
 
+<!-- Canonical OpenClaw skill directory: structured_eda -->
+
 ## When to use
 
 Use this skill when the user asks to explore, understand, profile, audit, or prepare a dataset before modeling, dashboarding, reporting, segmentation, forecasting, survey analysis, or decision support.

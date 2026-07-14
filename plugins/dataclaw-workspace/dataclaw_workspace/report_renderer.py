@@ -717,6 +717,9 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   }
   .r-section.is-composition-editorial-findings .r-insight-card p { line-height: 1.55; }
+  .r-section.has-layout-exception.is-full-width { max-width: none; margin-left: 0; margin-right: 0; }
+  .r-section.has-layout-exception.is-content-width { max-width: 920px; margin-left: auto; margin-right: auto; }
+  .r-section.has-layout-exception.is-reading-width { max-width: 780px; margin-left: auto; margin-right: auto; }
 }
 .r-section.is-story-arc {
   margin: 46px 0 18px;
@@ -3174,10 +3177,18 @@ def _presentation_options(requirements: dict[str, Any]) -> dict[str, str]:
     ).lower().replace("-", "_")
     if provenance not in {"audit", "disclosure", "expanded"}:
         raise ValueError("presentation.provenance must be 'audit', 'disclosure', or 'expanded'")
+    data_notes = clean_text(
+        supplied.get("data_notes")
+        or requirements.get("data_notes")
+        or "source_only"
+    ).lower().replace("-", "_")
+    if data_notes not in {"source_only", "automatic"}:
+        raise ValueError("presentation.data_notes must be 'source_only' or 'automatic'")
     return {
         "insight_layout": insight_layout,
         "insight_evidence": insight_evidence,
         "provenance": provenance,
+        "data_notes": data_notes,
     }
 
 
@@ -3263,6 +3274,26 @@ def _apply_desktop_compositions(section_plan: list[dict[str, Any]]) -> bool:
     return changed
 
 
+def _layout_exception_reason(data: dict[str, Any], *, expected_width: str, actual_width: str) -> str:
+    """Return an auditable reason for an intentional composition-width exception.
+
+    An exception is narrower than an arbitrary CSS escape hatch: it may only
+    use the existing full/content/reading width vocabulary and must record why
+    the default reader frame does not fit the supplied material.  The reason
+    remains in the storyboard and publish receipt for human visual review.
+    """
+    raw = data.get("layout_exception")
+    if not isinstance(raw, dict):
+        return ""
+    reason = clean_text(raw.get("reason") or "").strip()
+    declared_width = clean_text(raw.get("width") or "").lower().replace("-", "_")
+    if declared_width not in {"full", "content", "reading"}:
+        return ""
+    if declared_width != actual_width or actual_width == expected_width:
+        return ""
+    return reason if len(reason) >= 12 else ""
+
+
 def _story_arc_id(value: Any, index: int) -> str:
     """Return a stable, reader-neutral identifier for a supplied story arc."""
     raw = clean_text(value or "").lower()
@@ -3345,12 +3376,33 @@ def _apply_story_arcs(
                 f"requirements.story_arcs assigns a section more than once: {', '.join(duplicate)}"
             )
         assigned.extend(roles)
-        purpose = clean_text(raw.get("purpose") or raw.get("reader_question") or raw.get("question") or raw.get("claim") or title)
+        purpose = clean_text(raw.get("purpose") or raw.get("reader_question") or raw.get("question") or "")
+        if not purpose:
+            raise ValueError(
+                f"requirements.story_arcs[{index}] requires a reader_question, question, or purpose; "
+                "a title alone is not a reader-facing arc contract"
+            )
+        supplied_primary = clean_text(
+            raw.get("primary_section") or raw.get("primary_asset") or raw.get("primary_evidence") or ""
+        )
+        if supplied_primary and supplied_primary not in roles:
+            raise ValueError(
+                f"requirements.story_arcs[{index}].primary_section must name one of its sections"
+            )
+        primary_section = supplied_primary or next(
+            (
+                role for role in roles
+                if clean_text(by_role[role].get("section_type") or "")
+                in (CHART_SECTION_KINDS | INTERACTIVE_SECTION_KINDS | {"table", "entity_card_grid", "comparison"})
+            ),
+            roles[0],
+        )
         arc = {
             "phase": arc_id,
             "title": title,
             "purpose": purpose,
             "sections": roles,
+            "primary_section": primary_section,
         }
         for key in ("question", "claim", "caveat", "interaction"):
             value = clean_text(raw.get(key) or "")
@@ -3385,6 +3437,7 @@ def _apply_story_arcs(
                 "layout_width": "full",
                 "layout_variant": "story_arc",
                 "surface_variant": "quiet",
+                "primary_section": clean_text(arc.get("primary_section") or ""),
             },
         })
         ordered.extend(by_role[role] for role in arc["sections"])
@@ -4289,6 +4342,7 @@ def _critique_editorial_design(storyboard: dict[str, Any], *, max_passes: int = 
     requirements = storyboard.get("source_context", {}).get("requirements", {})
     if not isinstance(requirements, dict):
         requirements = {}
+    automatic_data_notes = _presentation_options(requirements)["data_notes"] == "automatic"
     architecture = storyboard.get("editorial_architecture")
     architecture = dict(architecture) if isinstance(architecture, dict) else {}
     is_editorial_story = clean_text(architecture.get("archetype") or "") in {
@@ -4324,7 +4378,7 @@ def _critique_editorial_design(storyboard: dict[str, Any], *, max_passes: int = 
             changed = _repair_editorial_hierarchy(section_plan)
         elif action == "anchor_visuals_to_local_context":
             paired = _preserve_story_context(section_plan)
-            noted = _add_local_data_notes(section_plan)
+            noted = _add_local_data_notes(section_plan, automatic=automatic_data_notes)
             interpreted = _complete_chart_context_from_adjacent_insights(section_plan)
             changed = paired or noted or interpreted
         elif action == "audit_page_architecture":
@@ -4452,6 +4506,7 @@ def _review_editorial_design(storyboard: dict[str, Any]) -> dict[str, Any]:
     }
     missing_compositions: list[str] = []
     width_conflicts: list[str] = []
+    declared_exceptions: list[str] = []
     for item in indexed:
         data = item_data(item)
         role = clean_text(item.get("layout_role") or item.get("section_type") or "")
@@ -4468,7 +4523,11 @@ def _review_editorial_design(storyboard: dict[str, Any]) -> dict[str, Any]:
         # values are checked exactly so a visual cannot quietly become a narrow
         # text card or a long-form disclosure cannot sprawl across the page.
         if width and width != expected and not (role == "report_epilogue" and width == "reading"):
-            width_conflicts.append(role)
+            reason = _layout_exception_reason(data, expected_width=expected, actual_width=width)
+            if reason:
+                declared_exceptions.append(role)
+            else:
+                width_conflicts.append(role)
     if missing_compositions:
         add(
             "desktop_composition_missing",
@@ -4484,6 +4543,36 @@ def _review_editorial_design(storyboard: dict[str, Any]) -> dict[str, Any]:
             claim="One or more section widths conflict with their desktop composition.",
             recommendation="Use full width for guided visuals, explorers, comparisons, and headline blocks; use reading/content width only for intentional narrative and trust material.",
             sections=width_conflicts,
+        )
+    if declared_exceptions:
+        add(
+            "desktop_composition_exception_declared",
+            severity="info",
+            claim="One or more sections intentionally use a non-default desktop width with a recorded rationale.",
+            recommendation="Keep the exception reason in the visual-review record and remove it when the supplied material no longer needs the alternate frame.",
+            sections=declared_exceptions,
+        )
+
+    declared_arcs = storyboard.get("storyboard")
+    declared_arcs = declared_arcs if isinstance(declared_arcs, list) else []
+    arc_contract_issues: list[str] = []
+    known_roles = {clean_text(item.get("layout_role") or "") for item in indexed}
+    for arc in declared_arcs:
+        if not isinstance(arc, dict) or "primary_section" not in arc:
+            continue
+        phase = clean_text(arc.get("phase") or arc.get("title") or "story arc")
+        purpose = clean_text(arc.get("purpose") or arc.get("reader_question") or arc.get("question") or "")
+        sections = arc.get("sections") if isinstance(arc.get("sections"), list) else []
+        primary = clean_text(arc.get("primary_section") or "")
+        if not purpose or not primary or primary not in sections or primary not in known_roles:
+            arc_contract_issues.append(phase)
+    if arc_contract_issues:
+        add(
+            "story_arc_contract_incomplete",
+            severity="warning",
+            claim="One or more supplied story arcs do not retain a reader question and an in-plan primary section.",
+            recommendation="Give every arc a reader_question or purpose and point primary_section at one of its supplied sections before publication.",
+            sections=arc_contract_issues,
         )
 
     visual_sections = [
@@ -4525,7 +4614,10 @@ def _review_editorial_design(storyboard: dict[str, Any]) -> dict[str, Any]:
         return {
             "review_schema": 1,
             "archetype": archetype,
-            "status": "attention_required" if findings else "pass",
+            # Informational records (for example a documented layout exception)
+            # are audit context, not a reason to block publication.  Only a
+            # repairable warning should move the design review out of pass.
+            "status": "attention_required" if any(item["severity"] == "warning" for item in findings) else "pass",
             "findings": findings,
         }
 
@@ -4836,6 +4928,9 @@ def _refine_storyboard_design(storyboard: dict[str, Any], *, max_passes: int = 5
     section_plan = working.get("section_plan")
     if not isinstance(section_plan, list):
         return working
+    requirements = working.get("source_context", {}).get("requirements", {})
+    requirements = requirements if isinstance(requirements, dict) else {}
+    automatic_data_notes = _presentation_options(requirements)["data_notes"] == "automatic"
     limit = max(1, min(int(max_passes or 5), 5))
     applied: list[dict[str, Any]] = []
     pass_labels = (
@@ -4852,7 +4947,7 @@ def _refine_storyboard_design(storyboard: dict[str, Any], *, max_passes: int = 5
         if action == "preserve_story_context":
             changed = _preserve_story_context(section_plan)
         elif action == "place_local_data_notes":
-            changed = _add_local_data_notes(section_plan)
+            changed = _add_local_data_notes(section_plan, automatic=automatic_data_notes)
         elif action == "complete_chart_context_from_supplied_findings":
             changed = _complete_chart_context_from_adjacent_insights(section_plan)
         elif action == "apply_visual_emphasis_plan":
@@ -4922,7 +5017,17 @@ def _preserve_story_context(section_plan: list[dict[str, Any]]) -> bool:
     return changed
 
 
-def _add_local_data_notes(section_plan: list[dict[str, Any]]) -> bool:
+def _add_local_data_notes(section_plan: list[dict[str, Any]], *, automatic: bool = False) -> bool:
+    """Add generic row-count notes only when the author explicitly opts in.
+
+    Captions, interpretations, and supplied annotations explain the reader's
+    decision.  A renderer-generated "N supplied rows" sentence generally does
+    not, and was visibly noisy in final reports.  Source-authored ``data_note``
+    is always preserved; the old generic fallback is available only through
+    ``presentation.data_notes='automatic'`` for diagnostic drafts.
+    """
+    if not automatic:
+        return False
     changed = False
     for planned in section_plan:
         if not isinstance(planned, dict):
@@ -5563,6 +5668,14 @@ def render_report_section(section_type: str, data: dict[str, Any], typed: dict[s
     if st == "header" and clean_text(data.get("visual_treatment") or "") == "editorial_dark":
         classes.append("is-editorial-dark")
     composition = _desktop_composition_for({"section_type": st, "data": data})
+    expected_width = {
+        "opening": "full", "headline_metrics": "full", "reader_readout": "reading",
+        "editorial_findings": "content", "guided_visual": "full", "interactive_explorer": "full",
+        "comparison": "full", "trust_close": "content", "story_arc": "full", "supporting": "content",
+    }[composition]
+    layout_exception = _layout_exception_reason(data, expected_width=expected_width, actual_width=width)
+    if layout_exception:
+        classes.append("has-layout-exception")
     # Keep the hero's established class signature stable for callers that use
     # it as a presentation hook; the durable composition is still exposed on
     # every section through data-dc-composition.
@@ -5572,7 +5685,8 @@ def render_report_section(section_type: str, data: dict[str, Any], typed: dict[s
         wrapper = "r-hero" if st == "header" else "r-section"
         html = html.replace(
             f'class="{wrapper}"',
-            f'class="{wrapper} {" ".join(classes)}" data-dc-composition="{_esc(composition)}"',
+            f'class="{wrapper} {" ".join(classes)}" data-dc-composition="{_esc(composition)}"'
+            + (f' data-dc-layout-exception="true"' if layout_exception else ""),
             1,
         )
     kicker = clean_text(data.get("kicker") or "")

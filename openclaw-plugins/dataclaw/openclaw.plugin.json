@@ -109,6 +109,7 @@
       "dataclaw_display_image",
       "dataclaw_build_report",
       "dataclaw_report_design_report",
+      "dataclaw_report_review_visuals",
       "dataclaw_report_publish",
       "dataclaw_report_add_section",
       "dataclaw_open_notebook",

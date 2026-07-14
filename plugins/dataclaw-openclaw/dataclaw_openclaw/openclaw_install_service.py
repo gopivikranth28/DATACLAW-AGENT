@@ -26,6 +26,18 @@ logger = logging.getLogger(__name__)
 
 PLUGIN_MANIFEST_FILENAME = "openclaw.plugin.json"
 
+# Report publication is a multi-tool transaction.  A stale generated manifest
+# used to omit fields added to the Dataclaw tools, letting an OpenClaw agent
+# discover only a partial flow (for example it could not pass the publish
+# receipt into publish_artifact).  The installer owns the generated manifest,
+# so fail before modifying OpenClaw when the in-process registry is internally
+# inconsistent.
+_REPORT_TOOL_REQUIRED_PROPERTIES: dict[str, set[str]] = {
+    "report_design_report": {"design_passes", "visual_author"},
+    "report_publish": {"require_visual_review"},
+    "publish_artifact": {"report_receipt_path"},
+}
+
 
 # OpenClaw 2026.5's install scanner blocks any plugin bundle that mixes
 # `process.env` access with a network send (`fetch(`/`post(`/`http.request(`).
@@ -459,6 +471,38 @@ def write_tool_manifest(
     return True, f"refreshed {target.name}: {len(tools)} tools"
 
 
+def validate_report_tool_manifest(tools: list[dict[str, Any]] | None) -> list[str]:
+    """Return report-flow schema gaps in a live tool-registry snapshot.
+
+    Tool availability is intentionally dynamic, so absent report tools are not
+    errors.  The *registry snapshot* itself is mandatory, however: reusing an
+    on-disk generated manifest is precisely how an older, partial contract
+    was installed. Once a report tool is present, its schema must expose all
+    parameters needed for the governed storyboard → publish → artifact
+    transaction.
+    """
+    if tools is None:
+        return ["live Dataclaw tool registry is unavailable"]
+    by_name = {
+        str(tool.get("name") or ""): tool
+        for tool in tools
+        if isinstance(tool, dict) and str(tool.get("name") or "")
+    }
+    issues: list[str] = []
+    for name, required in _REPORT_TOOL_REQUIRED_PROPERTIES.items():
+        tool = by_name.get(name)
+        if not tool:
+            continue
+        parameters = tool.get("parameters") if isinstance(tool.get("parameters"), dict) else {}
+        properties = parameters.get("properties") if isinstance(parameters.get("properties"), dict) else {}
+        missing = sorted(field for field in required if field not in properties)
+        if missing:
+            issues.append(f"{name} missing properties: {', '.join(missing)}")
+    if "report_publish" in by_name and "report_review_visuals" not in by_name:
+        issues.append("report_publish is present but report_review_visuals is unavailable")
+    return issues
+
+
 def write_plugin_manifest_contracts_tools(
     plugin_dir: Path, tools: list[dict[str, Any]] | None, prefix: str
 ) -> tuple[bool, str]:
@@ -538,6 +582,13 @@ async def install_plugin_atomic(
     # Step 2: write fresh tool manifest from in-process registry, and
     # mirror it into openclaw.plugin.json contracts.tools so OpenClaw's
     # tool-contract gate accepts each registerTool call.
+    schema_gaps = validate_report_tool_manifest(tools)
+    if schema_gaps:
+        yield _sse({
+            "error": "OpenClaw tool-manifest sync refused an incomplete report-flow schema: " + "; ".join(schema_gaps),
+            "exit_code": 1,
+        })
+        return
     ok, msg = write_tool_manifest(plugin_dir, tools)
     yield _sse({"line": ("$ " if ok else "warning: ") + msg})
     tools_prefix = str(

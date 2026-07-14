@@ -121,12 +121,12 @@ async def main() -> int:
         print(f"[install] discovered {len(tools)} tools", flush=True)
     except Exception as exc:
         print(
-            f"[install] WARNING: tool registry bootstrap failed ({exc}); "
-            "falling back to existing on-disk manifest",
+            f"[install] ERROR: tool registry bootstrap failed ({exc}); "
+            "refusing to reuse an on-disk generated manifest",
             file=sys.stderr,
             flush=True,
         )
-        tools = None
+        return 1
 
     exit_code = 0
     async for event in openclaw_install_service.install_plugin_atomic(

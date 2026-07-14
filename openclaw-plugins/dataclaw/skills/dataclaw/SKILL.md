@@ -3,6 +3,8 @@ name: dataclaw_data_science
 description: Use Dataclaw tools for governed data science and analytics work. Includes tools for interacting with data, running jupyter notebooks, proposing, updating and reviewing analytical plans, experiment tracking, training machine learning models, and generating reports.
 ---
 
+<!-- Canonical OpenClaw skill directory: dataclaw -->
+
 # Dataclaw Data Science Workflow
 
 Use this skill when the user asks for data analysis, exploratory data analysis, notebook work, modeling, profiling, segmentation, visualization, or a data science report.

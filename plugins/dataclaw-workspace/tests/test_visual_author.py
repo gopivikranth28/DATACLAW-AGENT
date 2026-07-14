@@ -20,6 +20,7 @@ from dataclaw_workspace.visual_author import (
     apply_visual_spec,
     author_report_visuals,
     build_visual_author_catalog,
+    visual_author_config,
     validate_visual_spec,
 )
 
@@ -284,6 +285,20 @@ async def test_disabled_visual_author_bypasses_legacy_fact_catalog_validation():
     authored, record = await author_report_visuals(storyboard, config={"mode": "off"})
 
     assert record == {"schema": 1, "mode": "off", "status": "disabled", "applied": False}
+    assert authored["visual_author"] == record
+
+
+@pytest.mark.asyncio
+async def test_default_visual_author_records_the_deterministic_desktop_baseline():
+    config = visual_author_config({})
+    assert config == {"mode": "off", "baseline": "deterministic_desktop_editorial"}
+
+    authored, record = await author_report_visuals(_storyboard(), config=config)
+
+    assert record["mode"] == "off"
+    assert record["status"] == "disabled"
+    assert record["baseline"] == "deterministic_desktop_editorial"
+    assert record["source"] == "renderer"
     assert authored["visual_author"] == record
 
 

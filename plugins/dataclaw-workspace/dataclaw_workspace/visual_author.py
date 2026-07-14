@@ -80,7 +80,11 @@ def visual_author_config(requirements: dict[str, Any] | None, override: dict[str
     """
     supplied = override if isinstance(override, dict) else (requirements or {}).get("visual_author")
     if supplied is None:
-        return {"mode": "off"}
+        # Every report still receives the renderer's bounded desktop/editorial
+        # visual system.  Runtime authoring is opt-in because an LLM must not
+        # become a prerequisite for a reproducible report; expose the default
+        # in the receipt so "off" cannot be mistaken for an unstyled fallback.
+        return {"mode": "off", "baseline": "deterministic_desktop_editorial"}
     if not isinstance(supplied, dict):
         raise ValueError("visual_author must be a dictionary when supplied")
     config = copy.deepcopy(supplied)
@@ -232,6 +236,10 @@ async def author_report_visuals(
             "status": "disabled",
             "applied": False,
         }
+        baseline = _clean(cfg.get("baseline"))
+        if baseline:
+            record["baseline"] = baseline
+            record["source"] = "renderer"
         original["visual_author"] = record
         return original, record
 

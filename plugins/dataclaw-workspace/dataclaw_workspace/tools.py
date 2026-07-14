@@ -804,11 +804,17 @@ const target = process.argv[1];
           if (pageRect) {
             topLevelSections.forEach((section, index) => {
               const composition = section.getAttribute('data-dc-composition') || '';
+              // The renderer emits this attribute only for a storyboard
+              // exception with a validated width and a recorded rationale.
+              // Keep the normal full/readable-measure assertions strict, but
+              // do not reject a reviewed one-off composition merely because
+              // it differs from the default frame.
+              const hasLayoutException = section.getAttribute('data-dc-layout-exception') === 'true';
               const rect = section.getBoundingClientRect();
-              if (['guided_visual', 'interactive_explorer', 'comparison'].includes(composition) && rect.width < pageRect.width * .84) {
+              if (!hasLayoutException && ['guided_visual', 'interactive_explorer', 'comparison'].includes(composition) && rect.width < pageRect.width * .84) {
                 failures.push({check: 'desktop_composition_width', detail: name + ' ' + composition + ' section ' + index + ' is unexpectedly narrow (' + Math.round(rect.width) + 'px)'});
               }
-              if (['reader_readout', 'editorial_findings', 'supporting', 'trust_close'].includes(composition) && rect.width > pageRect.width * .94) {
+              if (!hasLayoutException && ['reader_readout', 'editorial_findings', 'supporting', 'trust_close'].includes(composition) && rect.width > pageRect.width * .94) {
                 failures.push({check: 'desktop_composition_measure', detail: name + ' ' + composition + ' section ' + index + ' uses the full page measure instead of a readable column'});
               }
             });

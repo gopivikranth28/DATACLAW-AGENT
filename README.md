@@ -31,7 +31,7 @@ The `release3` branch turns a local analysis session into a traceable workflow: 
 2. Propose an analysis plan, then use the structured-EDA tools to maintain hypotheses and findings as notebook evidence is produced.
 3. Run an analysis review for a completed high-risk step, artifact, dashboard, or report; resolve findings or explicitly accept a gated risk with rationale.
 4. In Chat, ask for a complete report or ask the agent to continue a draft. The agent selects the appropriate report workflow, plans only from typed source facts, and surfaces whether the result is a draft, designed report, or published report.
-5. For a release requiring visual approval, inspect the generated desktop/mobile browser evidence and record an approved visual review. The gate also checks deterministic rendered-page semantics such as hierarchy, evidence context, and editorial findings.
+5. For a release requiring visual approval, inspect the generated desktop/webview browser evidence and record an approved visual review. The gate also checks deterministic rendered-page semantics such as hierarchy, evidence context, and editorial findings.
 6. Ask the agent to version or share the result from the session. It publishes the artifact with its storyboard and source-bound regeneration recipe, and can produce a self-contained HTML export including the Plotly runtime needed by interactive charts.
 
 The report workflow is HTML-first. DOCX conversion remains best-effort and should not be treated as the primary publish format. The rendered-page semantic audit is deterministic browser/DOM checking, not a learned vision judgment.
@@ -452,10 +452,22 @@ rm -rf ui/dist && uv run dataclaw
 
 The bridge plugin's tool manifest (`openclaw.plugin.json contracts.tools` + `src/tools/tool-manifest.generated.ts`) is regenerated automatically every time you click **Install** on the OpenClaw Bridge — the install service snapshots the live tool registry at install time. Add a new tool, watch the drift banner appear on the Config / Tools pages, click Install, then check the sync status. A healthy status has equal live and installed counts with no added or removed entries.
 
-If you'd rather invoke the install flow programmatically:
+Do not use `openclaw plugins install` directly to refresh this bridge: it can
+copy an older generated manifest without the current Dataclaw tool parameters.
+Use the Dataclaw install flow below, which validates the governed report
+publish contract before it updates OpenClaw.
+
+If the Dataclaw API is running, invoke the same flow through the UI endpoint:
 
 ```bash
 curl -X POST http://localhost:8000/api/openclaw/plugins/dataclaw/install
+```
+
+For a local shell sync without starting the API, use the equivalent guarded
+utility:
+
+```bash
+.venv/bin/python scripts/sync_openclaw_plugin.py
 ```
 
 ---

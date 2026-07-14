@@ -21,6 +21,7 @@ from dataclaw_openclaw.openclaw_install_service import (
     read_plugin_manifest,
     resolve_channel_section_values,
     resolve_plugin_entry_config_values,
+    validate_report_tool_manifest,
     write_plugin_manifest_contracts_tools,
 )
 
@@ -89,6 +90,34 @@ def test_resolve_plugin_entry_config_values_picks_up_dataclaw_cfg() -> None:
     )
 
     assert resolved == {"toolsPrefix": "dc_", "toolsOptional": True}
+
+
+def test_report_tool_manifest_requires_the_governed_publish_parameters() -> None:
+    issues = validate_report_tool_manifest([
+        {"name": "report_design_report", "parameters": {"type": "object", "properties": {}}},
+        {"name": "report_publish", "parameters": {"type": "object", "properties": {}}},
+        {"name": "publish_artifact", "parameters": {"type": "object", "properties": {}}},
+    ])
+
+    assert "report_design_report missing properties: design_passes, visual_author" in issues
+    assert "report_publish missing properties: require_visual_review" in issues
+    assert "publish_artifact missing properties: report_receipt_path" in issues
+    assert "report_publish is present but report_review_visuals is unavailable" in issues
+
+
+def test_report_tool_manifest_accepts_a_complete_governed_publish_flow() -> None:
+    tools = [
+        {"name": "report_design_report", "parameters": {"properties": {"design_passes": {}, "visual_author": {}}}},
+        {"name": "report_review_visuals", "parameters": {"properties": {}}},
+        {"name": "report_publish", "parameters": {"properties": {"require_visual_review": {}}}},
+        {"name": "publish_artifact", "parameters": {"properties": {"report_receipt_path": {}}}},
+    ]
+
+    assert validate_report_tool_manifest(tools) == []
+
+
+def test_report_tool_manifest_requires_a_live_registry_snapshot() -> None:
+    assert validate_report_tool_manifest(None) == ["live Dataclaw tool registry is unavailable"]
 
 
 def test_build_batch_entries_appends_to_tools_allow_when_no_profile() -> None:
@@ -344,6 +373,24 @@ async def test_install_plugin_atomic_pre_flight_fails_on_missing_dir(
 
 
 @pytest.mark.asyncio
+async def test_install_plugin_atomic_refuses_to_reuse_a_stale_generated_manifest(tmp_path: Path) -> None:
+    plugin_dir = _write_manifest(tmp_path, {"id": "dataclaw"})
+
+    events = []
+    async for event in install_plugin_atomic(
+        plugin_dir=plugin_dir,
+        openclaw_cfg={},
+        argv=["openclaw"],
+        tools=None,
+    ):
+        events.append(event)
+
+    assert len(events) == 1
+    assert events[0]["exit_code"] == 1
+    assert "live Dataclaw tool registry is unavailable" in events[0]["error"]
+
+
+@pytest.mark.asyncio
 async def test_install_plugin_atomic_happy_path(tmp_path: Path) -> None:
     plugin_dir = _write_manifest(
         tmp_path,
@@ -390,7 +437,10 @@ async def test_install_plugin_atomic_happy_path(tmp_path: Path) -> None:
                 {
                     "name": "report_design_report",
                     "description": "Design cohesive analytical reports",
-                    "parameters": {"type": "object", "properties": {}},
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"design_passes": {}, "visual_author": {}},
+                    },
                 },
             ],
         ):
@@ -512,6 +562,7 @@ async def test_install_plugin_uses_config_unset_for_existing_orphan_channel(tmp_
             plugin_dir=plugin_dir,
             openclaw_cfg={},
             argv=["openclaw"],
+            tools=[{"name": "demo", "description": "Demo tool", "parameters": {}}],
         )
     ]
 
