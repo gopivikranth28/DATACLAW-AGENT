@@ -1,10 +1,8 @@
 # Dataclaw Agent
 
-A local-first, extensible data science agent. Dataclaw provides an event-loop agent architecture with swappable providers, a hook-based plugin system, and a clean React frontend — all wired together with the [AG-UI protocol](https://docs.ag-ui.com) for standardized agent-to-UI communication.
+A local-first, extensible data science agent. Dataclaw provides an event-loop agent architecture with swappable providers, a hook-based plugin system, and a React frontend — all wired together with the [AG-UI protocol](https://docs.ag-ui.com) for standardized agent-to-UI communication.
 
-Its built on the current opensource tools, Dataclaw = Openclaw+ Gbrain from Gary tan + Andrej Karpathy- Auto research + A custom harness layer that handles analytics and specific data science tasks. Its an experimental Beta release. This is mostly built with AI.
-
-***A few things that would be great additions in near future will be - Nvidia open shell to make it more secure, A sub agent which can review the v1 analysis and provide feedback for improvement (its manaual now), would be good to add a hermes version to see if thats more stable vs open claw, a defined auto research skill - that runs expeiremnts on existing projects. - collaborations are welcome. 
+It combines OpenClaw, gBrain-style memory, notebook execution, and a custom analytics harness. It is an experimental beta and is built primarily with AI assistance. Release 3 adds a governed structured-EDA workflow, analytical review gates, versioned artifacts, and a storyboard-based report builder.
 
 > **Local use only.** Dataclaw is designed to run on your local machine or a trusted private server. It allows arbitrary code execution (shell commands, Python notebooks) on the host device. API keys and credentials are stored as plain text in `~/.dataclaw/dataclaw.config.json`. Do not expose Dataclaw to the public internet without additional security measures.
 
@@ -12,6 +10,29 @@ Its built on the current opensource tools, Dataclaw = Openclaw+ Gbrain from Gary
 https://github.com/user-attachments/assets/25dc8181-bd14-41ad-a81c-5f9fe108e30a
 
 ---
+
+## Release 3: Governed Analytics and Publishing
+
+The `release3` branch turns a local analysis session into a traceable workflow: frame the question, test hypotheses in notebooks, record validated findings, review high-risk work, and publish a self-contained interactive report or artifact.
+
+| Area | What Release 3 adds | What you can do |
+|---|---|---|
+| Structured EDA | A persistent hypothesis and finding ledger with evidence, confidence, caveats, validation state, and readiness checks | Run goal-directed exploration; preserve rejected or superseded findings; decide whether a dataset is ready for querying, a dashboard, or modelling |
+| Plans and gates | Stable plan-step IDs, required validation gates, explicit risk acceptance, and MLflow run access | Propose a multi-step analysis, track outputs, and keep a completed step from being marked ready before required checks pass |
+| Analysis review | Deterministic review checks plus an optional read-only LLM reviewer | Audit claims, denominator/grain, reproducibility, visual honesty, data-quality caveats, and hypothesis hygiene before presenting results |
+| Report builder | Typed sections, a report storyboard, critique pass, quality rubric, and explicit draft → designed → published states | Build narrative reports with metrics, evidence-backed charts, interactive tables, filters, methodology, and evidence traces |
+| Artifacts | Versioned, session-scoped HTML artifacts and a living-report event log | Publish, revise, preview, export, and inspect reports, dashboards, and other analytical HTML safely |
+| OpenClaw bridge | Live tool-manifest snapshots, drift detection, install/reinstall, and skill sync | Keep OpenClaw's Dataclaw extension aligned with the tools and skills available in the local UI |
+
+### A typical Release 3 workflow
+
+1. Create a project and register or load data.
+2. Propose an analysis plan, then use the structured-EDA tools to maintain hypotheses and findings as notebook evidence is produced.
+3. Run an analysis review for a completed high-risk step, artifact, dashboard, or report; resolve findings or explicitly accept a gated risk with rationale.
+4. In Chat, ask for a complete report or ask the agent to continue a draft. The agent selects the appropriate report workflow, and the UI surfaces whether the result is a draft, designed report, or published report.
+5. Ask the agent to version or share the result from the session. It publishes the artifact and can produce a self-contained HTML export, including the Plotly runtime needed by interactive charts.
+
+The report workflow is HTML-first. DOCX conversion remains best-effort and should not be treated as the primary publish format.
 
 ## Quick Start
 
@@ -228,7 +249,10 @@ dataclaw/
     dataclaw-workspace/                  #   File I/O + shell execution
     dataclaw-data/                       #   Dataset registry + DuckDB querying
     dataclaw-notebooks/                  #   Jupyter notebook management (isolated venvs)
-    dataclaw-plans/                      #   Plan proposals + MLflow tracking
+    dataclaw-plans/                      #   Plans, gates, risk acceptance + MLflow tracking
+    dataclaw-eda/                        #   Structured EDA hypothesis/finding ledger
+    dataclaw-analysis-review/            #   Deterministic and sub-agent analysis reviews
+    dataclaw-artifacts/                  #   Versioned HTML artifacts + living-report log
     dataclaw-projects/                   #   Project management
     dataclaw-browser/                    #   AI browser automation (feature-flagged)
     dataclaw-openclaw/                   #   OpenClaw agent bridge
@@ -251,10 +275,13 @@ Plugins are installed via pip and auto-discovered at startup:
 
 | Plugin | Tools | Routes | Key Dependencies |
 |---|---|---|---|
-| `dataclaw-workspace` | 6 (file I/O, shell exec) | — | stdlib |
+| `dataclaw-workspace` | 10 (file I/O, shell exec, report design/publish) | — | stdlib, Plotly runtime |
 | `dataclaw-data` | 6 (list, profile, preview, query, describe, docs) | `/api/data/*` | duckdb |
 | `dataclaw-notebooks` | 13 (open, close, read, edit, execute, etc.) | `/api/notebooks` | nbformat, jupyter_client |
-| `dataclaw-plans` | 5 (propose, update, list, get, mlflow) | `/api/plans/*`, `/api/mlflow/*` | mlflow |
+| `dataclaw-plans` | 6 (propose, update, inspect, MLflow, gate-risk acceptance) | `/api/plans/*`, `/api/mlflow/*` | mlflow |
+| `dataclaw-eda` | 8 (hypotheses, findings, readiness) | `/api/eda/*` | stdlib |
+| `dataclaw-analysis-review` | 5 (run, list, resolve, gate, history) | `/api/analysis-review/*` | stdlib |
+| `dataclaw-artifacts` | 6 (publish, revise, read, list, export, notes) | `/api/artifacts/*` | stdlib, Plotly runtime |
 | `dataclaw-projects` | — | `/api/projects/*` | — |
 | `dataclaw-browser` | 1 (browser_use) + browser sub-agent | — | browser-use |
 | `dataclaw-openclaw` | — (replaces agent provider) | `/api/openclaw/*`, `/api/tools/{name}/call` | httpx |
@@ -262,6 +289,34 @@ Plugins are installed via pip and auto-discovered at startup:
 | `dataclaw-kaggle` | 8 (competitions, datasets, leaderboards, submissions) | `/api/kaggle/*` | kaggle SDK |
 | `dataclaw-gbrain` | 2 (search, save) — registered via memory provider | — | gbrain CLI |
 | `dataclaw-codex` | — (registers `codex` sub-agent type) | — | openai-codex-app-server-sdk |
+
+Plugin discovery is dependency-aware: the EDA ledger depends on plans, notebooks, and artifacts; analysis review depends on plans, EDA, artifacts, and projects. The **Config** and **Tools** UI surfaces the live registry, while the OpenClaw install snapshot shows whether the extension's manifest has drifted.
+
+### Skills
+
+Skills are Markdown instructions that guide the agent at prompt time. They are separate from executable tools: a skill explains a reliable workflow; a tool performs the action. The **Skills** page lets you create, edit, delete, browse, preview, and install skills.
+
+Release 3 ships a bundled `skill-library/` covering:
+
+- structured EDA, data profiling, SQL analysis, insight validation, and notebook reporting;
+- visualisation, dashboarding, versioned artifacts, and report design;
+- analysis review and the end-to-end Dataclaw data-science workflow.
+
+Installing a bundled skill copies it to `~/.dataclaw/skills/` with its library source and content hash. Dataclaw detects when an installed library skill's body differs from the bundled version; refresh it by deleting and reinstalling it in the UI, or use the library install API with `?force=true` when an overwrite is intended. For safety, a publish-quality check blocks a report when an installed library skill is stale. The prompt resolver uses current bundled guidance and exposes a freshness warning rather than silently following obsolete instructions.
+
+When the OpenClaw bridge is installed, the Skills page can also copy an installed skill into the Dataclaw OpenClaw extension or remove that synced copy. This is separate from tool-manifest sync: after adding or removing tools, reinstall/sync the bridge plugin as described below.
+
+### Report Builder and Artifacts
+
+Users normally request reports and publishing in Chat or through the artifact/report UI; they do not need to call tool names directly. The names below describe the capabilities available to the agent and to API integrators.
+
+The workspace plugin provides two complementary report paths:
+
+- `report_design_report` turns findings and aggregate analysis assets into a typed storyboard, applies a bounded critique pass, renders a report, and returns a **designed** result that still needs explicit publishing.
+- `report_add_section` appends typed sections to a living **draft**. Supported sections include headers, metric rows, narrative bands, findings, methodology, evidence traces, Plotly charts, chart interpretations, filterable charts, interactive tables, chart-table explorers, selectors, and entity-card grids.
+- `report_publish` runs the report-quality rubric and a browser/static runtime smoke check before returning a **published** result. It produces self-contained HTML; interactive charts embed Plotly so a downloaded report can render without a CDN.
+
+`dataclaw-artifacts` is the durable sharing layer. `publish_artifact` stores a session-scoped artifact version, `read_artifact` retrieves clean source for revision, `export_artifact` creates a self-contained export, and `report_note` records a note in the living-report log. Artifact previews are served with a restrictive CSP and sandboxed frame.
 
 ### Notebook Isolation
 
@@ -295,6 +350,8 @@ Plugins can register **sub-agent providers** (`ctx.sub_agent_registry.register(.
 | `codex` | `dataclaw-codex` | Hand off coding work to OpenAI Codex via the `codex` CLI/app-server |
 
 Subagent definitions are managed in the **Subagents** page (`/subagents`) and can be scoped per-project. The parent agent's `list_subagents` tool returns only the subagents the current session has been allowed to use.
+
+Release 3 also registers an `analysis-reviewer` definition. It is an `llm` subagent with a read-only, review-specific tool allowlist. `request_analysis_review(require_subagent=true)` uses it in addition to deterministic checks; if the reviewer cannot run, the gate stays unknown instead of claiming a completed review. This reviewer is intentionally constrained to auditing evidence, hypotheses, findings, and artifact metadata — it does not execute notebook code or mutate the analysis.
 
 ### Custom Tools & MCP Servers
 
@@ -371,6 +428,8 @@ uv sync --extra dev
 uv run pytest tests/ -v                          # core tests
 uv run pytest plugins/dataclaw-data/tests/ -v    # data plugin
 uv run pytest plugins/dataclaw-notebooks/tests/  # notebooks
+uv run pytest plugins/dataclaw-eda/tests/ plugins/dataclaw-analysis-review/tests/ -v
+uv run pytest plugins/dataclaw-workspace/tests/ -v
 ```
 
 ### Rebuild the frontend
@@ -383,7 +442,7 @@ rm -rf ui/dist && uv run dataclaw
 
 ### Sync OpenClaw tool manifest
 
-The bridge plugin's tool manifest (`openclaw.plugin.json contracts.tools` + `src/tools/tool-manifest.generated.ts`) is regenerated automatically every time you click **Install** on the OpenClaw Bridge — the install service snapshots the live tool registry at install time. Add a new tool, watch the drift banner appear on the Config / Tools pages, click Install, done.
+The bridge plugin's tool manifest (`openclaw.plugin.json contracts.tools` + `src/tools/tool-manifest.generated.ts`) is regenerated automatically every time you click **Install** on the OpenClaw Bridge — the install service snapshots the live tool registry at install time. Add a new tool, watch the drift banner appear on the Config / Tools pages, click Install, then check the sync status. A healthy status has equal live and installed counts with no added or removed entries.
 
 If you'd rather invoke the install flow programmatically:
 
@@ -403,7 +462,7 @@ curl -X POST http://localhost:8000/api/openclaw/plugins/dataclaw/install
 
 **Agent Backends:** OpenClaw (recommended), Anthropic Claude, OpenAI, OpenAI Codex (OAuth or API key), Google Gemini, Mock
 
-**Sub-agents:** built-in LLM, browser-use, Codex
+**Sub-agents:** built-in LLM (including the Release 3 analysis reviewer), browser-use, Codex
 
 ---
 
