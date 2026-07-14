@@ -102,7 +102,7 @@ Structured EDA is hypothesis-driven. The notebook computes evidence, but the dur
 2. Use these sources deliberately: `user_goal`, `mode_expected_risk`, `domain_prior`, and `data_signal`. Use `prior_finding` during later loops and `reviewer` only when the analysis reviewer raises a new hypothesis.
 3. Keep the batch tight: 7 maximum, 3 high-priority maximum. If the list is bigger, merge or downgrade before calling the tool.
 4. Mark irrelevant or untestable candidates `out_of_scope` with `update_eda_hypothesis` and a reason. Rejected ideas are evidence of coverage, not clutter.
-5. For every material observation, call `record_eda_finding` with evidence anchors, validation, disposition, `covers_checks`, and the linked `hypothesis_id` when one applies.
+5. For every material observation, call `record_eda_finding` with evidence anchors, validation, disposition, `covers_checks`, and the linked `hypothesis_id` when one applies. For an internally validated finding, anchor the exact result cell as `{"kind":"notebook_cell","cell_id":"<cell id>","source_sha256":"<hash>"}` and cite `validation.internal.evidence_refs` as `"notebook_cell:<cell id>"`. Reading or executing that cell in the current session supplies the anchor automatically; an empty ref list derives from it only when that real anchor exists.
 6. If a finding updates a hypothesis, pass `hypothesis_status` in the same `record_eda_finding` call. A rejected hypothesis should be recorded as rejecting evidence, not only mentioned in prose.
 7. If a re-run changes the evidence, call `supersede_eda_finding`; do not overwrite the old conclusion in chat or notebook text.
 

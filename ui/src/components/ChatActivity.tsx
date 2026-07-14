@@ -7,6 +7,14 @@ import {
 } from '@ant-design/icons'
 import type { GuardrailState, TimelineItem, ToolCallState } from '../hooks/useAGUI'
 import ToolResultRenderer from './tool-renderers/ToolResultRenderer'
+import {
+  hasToolError,
+  publishedReportPath as successfulReportPath,
+  reportPublishState,
+  reportTargetPath,
+  toolBaseName,
+  toolErrorMessage,
+} from './reportPublishState'
 
 interface TurnGroup {
   id: string
@@ -85,7 +93,7 @@ function keepLatestPublishedReportEvidence(blocks: TranscriptBlock[]) {
     const evidence: ToolCallState[] = []
     for (let callIndex = block.group.evidence.length - 1; callIndex >= 0; callIndex -= 1) {
       const call = block.group.evidence[callIndex]
-      const reportPath = publishedReportPath(call)
+      const reportPath = successfulReportPath(call)
       if (reportPath && seenReportPaths.has(reportPath)) continue
       if (reportPath) seenReportPaths.add(reportPath)
       evidence.push(call)
@@ -97,19 +105,15 @@ function keepLatestPublishedReportEvidence(blocks: TranscriptBlock[]) {
   return keptBlocks.reverse()
 }
 
-function publishedReportPath(call: ToolCallState) {
-  if (call.name !== 'report_publish') return ''
-  const result = parse(call.result) || {}
-  const args = parse(call.args) || {}
-  return String(result.html_path || result.path || args.html_path || args.report_path || args.path || '')
-}
-
 export function TurnActivity({ group, sessionId, onFileClick }: {
   group: TurnGroup
   sessionId?: string | null
   onFileClick?: (path: string) => void
 }) {
-  const allCalls = [...group.calls, ...group.evidence]
+  // Evidence is rendered separately, so the two arrays are partitioned rather
+  // than chronological. Restore the original call order before deciding whether
+  // a later retry recovered an error.
+  const allCalls = [...group.calls, ...group.evidence].sort((left, right) => left.order - right.order)
   const activityCalls = collapseDuplicateReportUpdates(group.calls)
   const isRunning = allCalls.some(call => call.status === 'calling')
   const errors = allCalls.filter(hasError)
@@ -130,8 +134,8 @@ export function TurnActivity({ group, sessionId, onFileClick }: {
 
   const duration = relativeDuration(allCalls)
   const turnStartedAt = firstTimestamp(allCalls)
-  const metricEvidence = group.evidence.filter(call => call.name === 'display_metric')
-  const documentEvidence = group.evidence.filter(call => call.name !== 'display_metric')
+  const metricEvidence = group.evidence.filter(call => toolBaseName(call.name) === 'display_metric')
+  const documentEvidence = group.evidence.filter(call => toolBaseName(call.name) !== 'display_metric')
   const stepCount = activityCalls.length + group.guardrails.length + group.evidence.length
   const meta = `${stepCount} steps${duration ? ` · ${duration}` : ''}`
   const label = `${verb} · ${meta}`
@@ -227,12 +231,13 @@ function EvidenceCell({ call, sessionId, onFileClick }: {
   const args = parse(call.args)
   const cell = typeof data?.cell_index === 'number' ? data.cell_index : typeof args?.cell_index === 'number' ? args.cell_index : null
   const caption = typeof data?.caption === 'string' ? data.caption : ''
-  const isMetric = call.name === 'display_metric'
+  const isMetric = toolBaseName(call.name) === 'display_metric'
+  const publishState = reportPublishState(call)
 
   return (
     <article id={`output-${call.id}`} className={`chat-evidence${isMetric ? ' is-metric' : ''}`}>
       <div className="chat-evidence__body">
-        {call.name === 'report_publish' && <div style={{ marginBottom: 8, color: 'var(--ink)', fontSize: 12, fontWeight: 650 }}>Publish report</div>}
+        {publishState === 'published' && <div style={{ marginBottom: 8, color: 'var(--ink)', fontSize: 12, fontWeight: 650 }}>Report published to workspace</div>}
         <ToolResultRenderer toolName={call.name} result={call.result} args={call.args} status={call.status} onFileClick={onFileClick} sessionId={sessionId} />
         {caption && <p className="chat-evidence__caption">{caption}</p>}
         <footer className="chat-evidence__footer">
@@ -269,8 +274,10 @@ function isEvidenceCall(call: ToolCallState) {
   // A report section is a mutation, not reader-facing evidence. Keep it in
   // Worked as a narrated step; only the finished/published report earns its
   // own durable output surface.
-  if (call.name === 'display_metric' || call.name === 'display_image' || call.name === 'report_publish') return true
-  if (!['execute_cell', 'execute_code', 'display_cell_output'].includes(call.name)) return false
+  const toolName = toolBaseName(call.name)
+  if (toolName === 'report_publish') return reportPublishState(call) === 'published'
+  if (toolName === 'display_metric' || toolName === 'display_image') return true
+  if (!['execute_cell', 'execute_code', 'display_cell_output'].includes(toolName)) return false
   const data = parse(call.result)
   return Array.isArray(data?.outputs) && data.outputs.some((output: any) => ['plotly', 'image', 'html'].includes(output?.type))
 }
@@ -279,13 +286,13 @@ function stepLabel(call: ToolCallState): string {
   const args = parse(call.args) || {}
   const result = parse(call.result) || {}
   const cell = result.cell_index ?? result.index ?? args.cell_index ?? args.index
-  const path = result.path ?? args.path ?? args.file_path ?? args.output_path ?? args.report_path
+  const path = result.html_path ?? result.path ?? args.html_path ?? args.path ?? args.file_path ?? args.output_path ?? args.report_path
   const failed = hasError(call)
   const failure = failed ? errorSummary(call, result) : ''
   const suffix = failure ? ` — ${failure}` : ''
   const duration = callDuration(call, result)
   const durationSuffix = duration ? ` · ${duration}` : ''
-  const toolName = call.name.replace(/^(?:dataclaw_|workspace_|notebook_)/, '')
+  const toolName = toolBaseName(call.name)
 
   switch (toolName) {
     case 'insert_cell': {
@@ -326,7 +333,7 @@ function stepLabel(call: ToolCallState): string {
     case 'build_report': return `Built report ${displayName(args.title || path || 'report')}${args.report_goal ? ` — ${compactInline(args.report_goal, 110)}` : ''}${suffix}`
     case 'report_design_report': return reportDesignLabel(args, result, path, suffix)
     case 'report_review_visuals': return `Reviewed report visuals for ${displayName(path || 'report')}${suffix}`
-    case 'report_publish': return `Published report ${displayName(path || 'report')}${suffix}`
+    case 'report_publish': return reportPublishLabel(call, suffix)
     case 'report_add_section': return reportSectionLabel(args, result, suffix)
     case 'report_note': return `Added note to the ${args.page || 'report'} report${suffix}`
     default: return genericStepLabel(call, args, result, suffix, durationSuffix)
@@ -338,6 +345,19 @@ function reportDesignLabel(args: any, result: any, path: unknown, suffix: string
   const insightCount = Array.isArray(args.insights) ? args.insights.length : 0
   const purpose = args.report_goal || result.report_goal || ''
   return `Designed report ${title}${insightCount ? ` from ${insightCount} completed finding${insightCount === 1 ? '' : 's'}` : ''}${purpose ? ` — ${compactInline(purpose, 110)}` : ''}${suffix}`
+}
+
+function reportPublishLabel(call: ToolCallState, suffix: string) {
+  const state = reportPublishState(call)
+  const target = displayName(reportTargetPath(call) || 'report')
+  switch (state) {
+    case 'publishing': return `Publishing report ${target}`
+    case 'published': return `Report published to workspace: ${target}`
+    case 'draft': return `Report remains a draft: ${target}${suffix}`
+    case 'blocked': return `Report publication blocked: ${target}${suffix}`
+    case 'failed': return `Could not publish report: ${target}${suffix}`
+    default: return `Completed report publication check: ${target}${suffix}`
+  }
 }
 
 function reportSectionLabel(args: any, result: any, suffix: string) {
@@ -386,7 +406,7 @@ function reportSectionContext(kind: string, data: any, section: any) {
 }
 
 function genericStepLabel(call: ToolCallState, args: any, result: any, suffix: string, durationSuffix: string) {
-  const name = call.name.replace(/^(?:dataclaw_|workspace_|notebook_)/, '')
+  const name = toolBaseName(call.name)
   const words = name
     .replace(/([a-z])([A-Z])/g, '$1 $2')
     .replace(/[_-]+/g, ' ')
@@ -396,7 +416,7 @@ function genericStepLabel(call: ToolCallState, args: any, result: any, suffix: s
   const target = genericTarget(args, result)
   const action = genericAction(words)
   const subject = action.object || words || 'task'
-  const prefix = call.status === 'calling' ? 'Running' : action.verb
+  const prefix = call.status === 'calling' ? 'Running' : hasError(call) ? 'Failed to' : action.verb
   return `${prefix} ${subject}${target ? ` — ${target}` : ''}${durationSuffix}${suffix}`
 }
 
@@ -453,7 +473,7 @@ function planChange(args: any, result: any) {
 }
 
 function errorSummary(call: ToolCallState, result: any) {
-  const raw = firstText(result, null, ['error', 'message', 'detail']) || (call.status === 'error' ? call.result || 'Tool failed' : 'Tool failed')
+  const raw = toolErrorMessage(result) || (call.status === 'error' ? toolErrorMessage(call.result) || call.result || 'Tool failed' : 'Tool failed')
   return compactInline(raw.replace(/^error:\s*/i, ''), 150)
 }
 
@@ -499,8 +519,7 @@ function compactInline(value: string, max: number) {
 
 function hasError(call: ToolCallState) {
   if (call.status === 'error') return true
-  const result = parse(call.result)
-  return Boolean(result?.error || result?.success === false || result?.ok === false || result?.status === 'error' || (typeof result?.exit_code === 'number' && result.exit_code !== 0))
+  return hasToolError(call.result)
 }
 
 function executableOutput(call: ToolCallState) {

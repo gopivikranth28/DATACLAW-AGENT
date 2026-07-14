@@ -18,6 +18,14 @@ EDA_TOOLS = {
     "read_eda_finding",
     "summarize_eda_readiness",
 }
+NOTEBOOK_EVIDENCE_TOOLS = {
+    "execute_cell",
+    "read_cell",
+    # OpenClaw exposes the same notebook operations with this prefix while
+    # the in-process tool registry uses the short names.
+    "dataclaw_execute_cell",
+    "dataclaw_read_cell",
+}
 
 
 async def eda_context_hook(state: AgentState) -> AgentState:
@@ -54,10 +62,10 @@ async def eda_context_hook(state: AgentState) -> AgentState:
 
 
 async def eda_evidence_hook(state: AgentState) -> AgentState:
-    """Capture the last executed notebook cell as a default evidence anchor."""
+    """Capture a successfully executed or read notebook cell as an anchor."""
     session_id = state.get("session_id", "default")
     for result in state.get("tool_results", []) or []:
-        if result.get("tool_name") != "execute_cell" or result.get("is_error"):
+        if result.get("tool_name") not in NOTEBOOK_EVIDENCE_TOOLS or result.get("is_error"):
             continue
         payload: Any = result.get("result")
         if isinstance(payload, str):

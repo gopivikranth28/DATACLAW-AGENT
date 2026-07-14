@@ -311,18 +311,33 @@ def _csp_meta(nonce: str) -> str:
     )
 
 
-def _inject_head(html: str, title: str, *, nonce: str, inline_runtime: bool = False) -> str:
-    meta = (
-        _csp_meta(nonce)
-        + _plotly_runtime_tag(nonce=nonce, inline=inline_runtime)
-        + theme_runtime(nonce)
-        + TOKEN_STYLE
-    )
+def _source_uses_plotly(html: str) -> bool:
+    """Whether an artifact source needs the trusted Plotly runtime.
+
+    Workspace reports carry a local Plotly script while they are being edited.
+    The artifact validator intentionally removes that untrusted source copy
+    before persistence, leaving the chart initialisers (``Plotly.newPlot``,
+    ``Plotly.react``, etc.) in the stored document.  Detect those references
+    so a static artifact does not pay the runtime cost, while an interactive
+    report receives a runtime that can execute in its opaque sandbox.
+    """
+    return bool(re.search(r"\b(?:window\.)?Plotly\b", html))
+
+
+def _inject_head(html: str, title: str, *, nonce: str, inline_runtime: bool | None = None) -> str:
+    # ``srcdoc`` frames have an opaque origin.  Supplying Plotly as a network
+    # script from that frame is brittle under the artifact CSP/sandbox pair;
+    # render it inline with the per-response nonce instead.  This happens only
+    # at serve time, so the stored artifact remains lightweight.
+    if inline_runtime is None:
+        inline_runtime = _source_uses_plotly(html)
+    runtime_tag = _plotly_runtime_tag(nonce=nonce, inline=True) if inline_runtime else ""
+    meta = _csp_meta(nonce) + runtime_tag + theme_runtime(nonce) + TOKEN_STYLE
     if "<head" in html.lower():
         if "</head>" in html.lower():
-            injected = re.sub(r"(</head>)", meta + r"\1", html, count=1, flags=re.I)
+            injected = re.sub(r"(</head>)", lambda match: meta + match.group(1), html, count=1, flags=re.I)
         else:
-            injected = re.sub(r"(<head\b[^>]*>)", r"\1" + meta, html, count=1, flags=re.I)
+            injected = re.sub(r"(<head\b[^>]*>)", lambda match: match.group(1) + meta, html, count=1, flags=re.I)
         return _stamp_script_nonces(injected, nonce)
     injected = (
         "<!doctype html><html><head><meta charset=\"utf-8\">"
@@ -338,7 +353,7 @@ def artifact_host_shell(
     title: str,
     source: str,
     nonce: str | None = None,
-    inline_runtime: bool = False,
+    inline_runtime: bool | None = None,
 ) -> str:
     nonce = nonce or new_nonce()
     child = _inject_head(source, title, nonce=nonce, inline_runtime=inline_runtime)

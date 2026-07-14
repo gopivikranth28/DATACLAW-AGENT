@@ -1,5 +1,5 @@
 ---
-name: report-design
+name: report_design
 description: Design polished analytical reports and upgrade legacy HTML from completed insights, aggregate assets, evidence, methodology, and interaction requirements. Use before final report generation so the agent creates a storyboard-backed, publishable report instead of appending chart dumps.
 ---
 
@@ -13,22 +13,39 @@ Do not use this skill for a quick scratch chart or a single draft section. For t
 
 1. Finish the analysis first: notebook cells, validations, EDA findings, hypothesis dispositions, aggregate tables, chart specs, caveats, evidence ids, and methodology.
 2. Use completed outputs from `visualization` and `dashboarding` when those skills were already part of the analysis. If the task never did visual grammar or question-framing work, fetch the missing prerequisite before designing the final report.
-3. Build a short storyboard before calling the tool:
-   - answer/readout
-   - headline metrics
-   - primary insights
-   - evidence sections
-   - interactive controls
-   - methodology, caveats, and evidence trace
+3. Build a short, domain-specific storyboard before calling the tool. It is a
+   variable set of named reader-facing arcs, not a fixed template. For each
+   arc, state the reader question, the supplied claim or topic, the primary
+   visual/table/card/interaction, a concise interpretation, and any material
+   caveat. Use an answer/readout, metrics, explorer, methodology, or appendix
+   only when the supplied material warrants it.
+   - A chart, compact table, map, comparison, or explorer is reader-facing
+     evidence for an analytical claim.
+   - Notebook cells, finding IDs, hypothesis IDs, query cards, and review
+     records are audit provenance. Keep them in the storyboard, receipt, and
+     an optional Sources & reproducibility disclosure; do not render them as
+     the main report story.
+   - Pass those arcs in `requirements.story_arcs` when their order should
+     control the report. Each arc needs a `title` plus either explicit rendered
+     section roles or analyses marked with the same `story_arc` id. Arcs are
+     variable in number and purpose; they may frame a question, comparison,
+     mechanism, scenario, or decision without imposing a fixed set of acts.
 4. Call `report_design_report`, not a sequence of final `report_add_section` calls. Inspect its `analytical_review` and quality result; resolve every `required` finding or obtain an explicit user-approved risk acceptance; resolve or explicitly disclose warnings before calling the report complete.
    The designer performs up to five bounded critique-and-repair passes, stopping early when no further safe repair is available. These passes can improve structure, captions, caveats, and evidence presentation; they never invent analytical validation or silently clear a substantive finding.
-   Keep the default `design_passes=5` unless a deliberately smaller, faster draft is needed. The design passes preserve the full supplied context in the storyboard, pair insights with evidence, add local data notes, carry supplied caveats into chart interpretation, and plan visual emphasis without fabricating content.
-   When supplied assets include category/archetype cards, static visual evidence, and an interactive explorer, set `requirements.editorial_archetype="taxonomy_explorer"`. It makes the page architecture deliberate: **hero → floating KPIs → taxonomy cards → hero visualization → paired diagnostics → findings → explorer → methodology and provenance footer**. The supplied readout becomes the hero abstract, so the report does not duplicate its conclusion before evidence.
+   Keep the default `design_passes=5` unless a deliberately smaller, faster draft is needed. The design passes preserve the full supplied context in the storyboard, retain audit-only provenance mappings, add local data notes, carry supplied caveats into chart interpretation, and plan visual emphasis without fabricating content. They must not create generic `Evidence 01` sections, duplicate an insight beside its supporting chart, or insert filler captions.
+   When supplied assets include category/archetype cards, static visual evidence, and an interactive explorer, set `requirements.editorial_archetype="taxonomy_explorer"`. It makes the page architecture deliberate: **hero → floating KPIs → taxonomy cards → hero visualization → paired diagnostics → findings → explorer → methodology and limitations footer**. The supplied readout becomes the hero abstract, so the report does not duplicate its conclusion before analysis.
    Category-shaped selector items (`archetype`, `category`, `segment`, etc.)
    are automatically shown first as non-interactive cards while the original
    selector remains the later explorer. Reports with visual evidence and an
    explorer but no category system use the same paced `guided_explorer` flow
    without the taxonomy-card act.
+   When a selector's supplied items and an aggregate chart/table share a clear
+   categorical field such as `archetype`, `category`, or `segment`, the
+   designer links them automatically: selection updates the matching chart,
+   table, and local interpretation context. For an ambiguous or nonstandard
+   relationship, set the same explicit contract on both analyses:
+   `selection={"group": "player-archetype", "key": "archetype"}`. Never
+   link sections by display position or manufacture rows to make a link work.
    After the generic critique, the designer runs five page-architecture checks:
    sequence restoration, visual hierarchy, local chart context,
    evidence/explorer pacing, and a final architecture audit. The returned
@@ -141,11 +158,12 @@ report_design_report(
 
 ## What the designer does with the payload
 
-The designer adds contents navigation, phase kickers, local data notes, and
-cross-links between evidence and insights with the same `finding_id`,
-`hypothesis_id`, or evidence ref. Give every insight an honest status:
-`confirmed`/`validated`, `caution`/`weakened`/`unresolved`, or
-`rejected`/`blocked`.
+The designer preserves the provenance links between insights and the supplied
+analysis assets, but it does not expose opaque IDs, `Evidence for` backlinks,
+or copied insight cards in the reader path. Keep an honest internal status for
+every insight. In a final report, render only statuses that change
+interpretation—such as `caution`, `weakened`, `unresolved`, or `blocked`—not
+routine `confirmed` or `validated` badges.
 
 ### Editorial archetypes
 
@@ -168,7 +186,7 @@ keeps the findings after the evidence. It preserves the original inputs and
 the absorbed readout in the storyboard's `source_context` and header metadata.
 Every `report_design_report` result also exposes `design_review`; the report UI
 shows unresolved architecture warnings separately from analytical findings.
-At publish time, responsive browser checks verify desktop/mobile overflow,
+At publish time, desktop/webview browser checks verify overflow,
 diagnostic columns, floating-KPI anchoring, chart mounts, and a compositor
 screenshot when Playwright Chromium is available. An unavailable browser is
 recorded as an explicit review-info finding; design warnings are publish-blocking
@@ -298,8 +316,8 @@ invent a domain's visual language:
 requirements={
     "presentation": {
         "insight_layout": "editorial_list",  # default; use "card_grid" for true peer cards
-        "insight_evidence": "linked",        # concise link into the paired evidence section
-        "evidence_trace": "disclosure",      # keep a long trace available without dominating the story
+        "insight_evidence": "none",          # source IDs are not reader-facing evidence
+        "provenance": "audit",               # use "disclosure" only for an optional Sources appendix
         "require_display_facts": True,         # enforce typed source facts for runtime composition
     },
     "rigor": {
@@ -423,8 +441,9 @@ purely narrative material repeatedly.
   scenarios.
 - `methodology_block` for grain, denominator, validation, review method, and
   assumptions.
-- `evidence_trace` and `evidence_rail` for claims that need notebook cell,
-  filter, artifact, finding, or review references.
+- `evidence_trace` and `evidence_rail` only for an explicitly requested
+  Sources & reproducibility disclosure. Keep notebook cells, filter IDs,
+  artifact IDs, findings, and review references out of the main narrative.
 - `hypothesis_ledger` and `ledger_timeline` for EDA hypotheses, dispositions,
   supersessions, risk acceptance, and review chronology.
 
@@ -468,7 +487,7 @@ targets, evidence-free chart conclusions, missing narrative/deks/table captions,
 unpaired insights, baked chart themes, inaccessible token contrast, external
 assets, typed-display-fact coverage, runtime visual-author fallback, visual-plan
 budget observations, and failed or skipped runtime smoke. Browser review records
-full-page desktop/mobile and desktop key-section screenshot hashes when Playwright
+full-page desktop and desktop key-section screenshot hashes when Playwright
 is available; it also checks rendered-page heading hierarchy, evidence context,
 editorial findings, and nested surfaces. A final-release visual-review request
 requires a named approved review record bound to that exact HTML and those screenshot hashes.

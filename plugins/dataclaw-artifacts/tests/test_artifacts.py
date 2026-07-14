@@ -429,7 +429,10 @@ def test_host_shell_uses_sandboxed_child_and_no_egress_csp():
         artifact_id="art-1234abcd",
         version=1,
         title="Test",
-        source="<html><head><script>window.x = 1</script></head><body><h1>Hello</h1></body></html>",
+        source=(
+            "<html><head><script>Plotly.newPlot('chart', [], {})</script></head>"
+            "<body><h1>Hello</h1><div id='chart'></div></body></html>"
+        ),
         nonce="testnonce",
     )
 
@@ -437,7 +440,8 @@ def test_host_shell_uses_sandboxed_child_and_no_egress_csp():
     assert "frame.srcdoc = artifactSrcdoc" in shell
     assert "artifact_external_link" in shell
     assert "Blocked artifact navigation" in shell
-    assert "artifact-runtime/plotly.min.js" in shell
+    assert "artifact-runtime/plotly.min.js" not in shell
+    assert "window.Plotly" in shell or "Plotly.register" in shell
     assert 'nonce="testnonce"' in shell
     assert 'nonce=\\"testnonce\\"' in shell
     assert "if (!event.isTrusted) return;" in shell
@@ -462,6 +466,39 @@ def test_nonce_injection_does_not_rewrite_script_text():
     assert '<script nonce="testnonce">var fig=' in child
     assert '<script>label' in child
     assert '<script nonce="testnonce">label' not in child
+
+
+def test_nonce_injection_preserves_a_single_doctype():
+    child = _inject_head(
+        '<!doctype html><html><head></head><body>Report</body></html>',
+        "Doctype",
+        nonce="testnonce",
+    )
+
+    assert child.lower().count("<!doctype html>") == 1
+
+
+def test_plotly_report_gets_inline_runtime_inside_the_sandboxed_document():
+    child = _inject_head(
+        '<html><head></head><body><div id="chart"></div><script>Plotly.newPlot("chart", [], {})</script></body></html>',
+        "Interactive",
+        nonce="testnonce",
+    )
+
+    assert 'src="/api/artifacts/artifact-runtime/plotly.min.js"' not in child
+    assert child.count('<script nonce="testnonce">') >= 3
+    assert "window.Plotly" in child or "Plotly.register" in child
+
+
+def test_static_artifact_does_not_receive_an_unused_plotly_runtime():
+    child = _inject_head(
+        '<html><head></head><body><h1>Static</h1></body></html>',
+        "Static",
+        nonce="testnonce",
+    )
+
+    assert "window.Plotly" not in child
+    assert "artifact-runtime/plotly.min.js" not in child
 
 
 def test_theme_style_is_injected_after_author_head_styles():

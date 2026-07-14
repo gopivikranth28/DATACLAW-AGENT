@@ -54,7 +54,14 @@ def _tool_defs():
         "required": ["statement", "rationale", "source"],
     }
     evidence_schema = {
-        "description": "Evidence anchors: notebook_cell, artifact_section, dataset_profile, inline_summary, query_card, or interpretive_note",
+        "description": (
+            "Evidence anchors: notebook_cell, artifact_section, dataset_profile, inline_summary, query_card, or interpretive_note. "
+            "For a validated notebook-backed finding use {kind: 'notebook_cell', cell_id: '<cell id>', source_sha256: '<hash>'}."
+        ),
+        "examples": [
+            {"kind": "notebook_cell", "cell_id": "cell-eda-summary", "source_sha256": "sha256-of-cell-source"},
+            {"kind": "inline_summary", "summary": {"n": 104, "missing_rate": 0.03}},
+        ],
         "oneOf": [{"type": "object"}, {"type": "array", "items": {"type": "object"}}, {"type": "string"}],
     }
     validation_schema = {
@@ -65,7 +72,12 @@ def _tool_defs():
                 "properties": {
                     "status": {"type": "string", "enum": ["validated", "failed", "not_checked"], "default": "not_checked"},
                     "method": {"type": "string", "default": ""},
-                    "evidence_refs": {"type": "array", "items": {"type": "string"}, "default": []},
+                    "evidence_refs": {
+                        "type": "array",
+                        "items": {"type": "string", "examples": ["notebook_cell:cell-eda-summary", "dataset_profile:profile-1"]},
+                        "default": [],
+                        "description": "References attached evidence; an empty list derives references from attached evidence anchors.",
+                    },
                 },
             },
             "external": {

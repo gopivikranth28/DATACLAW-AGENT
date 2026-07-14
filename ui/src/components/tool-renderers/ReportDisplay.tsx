@@ -3,8 +3,11 @@ import { Alert, Button, Tag } from 'antd'
 import { FileTextOutlined, EyeOutlined, PrinterOutlined, ExportOutlined, DownloadOutlined } from '@ant-design/icons'
 import { API } from '../../api'
 import { reportDocumentUrl } from '../reportPreview'
+import { reportPublishState, toolErrorMessage, toolBaseName } from '../reportPublishState'
 
 interface ReportData {
+  success?: boolean
+  published?: boolean
   html_path?: string
   docx_path?: string
   size?: number
@@ -16,6 +19,12 @@ interface ReportData {
   // legacy fields from old PDF-based tool
   path?: string
   format?: string
+  error?: string | {
+    code?: string
+    message?: string
+    detail?: string
+    hint?: string
+  }
 }
 
 interface AnalyticalReviewFinding {
@@ -46,12 +55,33 @@ interface DesignReview {
   passes?: number
 }
 
-export default function ReportDisplay({ data }: { data: ReportData }) {
+export default function ReportDisplay({ data, toolName, status }: {
+  data: ReportData
+  toolName?: string
+  status?: string
+}) {
   const [inlinePreviewOpen, setInlinePreviewOpen] = useState(false)
+  const publishState = toolName && toolBaseName(toolName) === 'report_publish'
+    ? reportPublishState({ name: toolName, status, result: data })
+    : null
+  const publishError = toolErrorMessage(data)
+
+  if (publishState === 'blocked' || publishState === 'failed') {
+    return (
+      <Alert
+        showIcon
+        type="error"
+        message={publishState === 'blocked' ? 'Report publication blocked' : 'Report publication failed'}
+        description={publishError || 'The report was not published. Resolve the reported issue and retry publication.'}
+        style={{ borderRadius: 8 }}
+      />
+    )
+  }
+
   const htmlPath = data.html_path || data.path
   const name = htmlPath?.split('/').pop() || 'report.html'
   const documentUrl = htmlPath ? reportDocumentUrl(htmlPath, data.size !== undefined ? String(data.size) : undefined) : ''
-  const publication = publicationLabel(data)
+  const publication = publicationLabel(data, publishState)
   const reviewFindings = data.analytical_review?.findings || []
   const acceptedFindings = reviewFindings.filter(finding => finding.lifecycle_status === 'accepted_with_rationale')
   const requiredFindings = reviewFindings.filter(
@@ -177,8 +207,10 @@ function AutoHeightReportFrame({ documentUrl, title }: { documentUrl: string; ti
   )
 }
 
-function publicationLabel(data: ReportData): { label: string; color: string } | null {
-  if (data.publication_status === 'published') return { label: 'Published', color: 'success' }
+function publicationLabel(data: ReportData, publishState: ReturnType<typeof reportPublishState>): { label: string; color: string } | null {
+  if (data.publication_status === 'published') {
+    return { label: publishState === 'published' ? 'Published to workspace' : 'Published', color: 'success' }
+  }
   if (data.publication_status === 'designed') return { label: 'Designed · publish required', color: 'processing' }
   if (data.publication_status === 'draft' || data.publish_required) return { label: 'Draft · publish required', color: 'warning' }
   return null

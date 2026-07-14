@@ -17,7 +17,8 @@ def test_direct_tool_invoke_applies_artifact_context_hooks(tmp_path, monkeypatch
                 "title": "Direct Invoke Artifact",
                 "html": (
                     "<!doctype html><html><body><h1>Direct</h1>"
-                    "<script>window.__artifactSmoke = true</script></body></html>"
+                    "<div id='chart'></div><script>window.__artifactSmoke = true; "
+                    "Plotly.newPlot('chart', [], {})</script></body></html>"
                 ),
             },
         })
@@ -50,7 +51,8 @@ def test_direct_tool_invoke_applies_artifact_context_hooks(tmp_path, monkeypatch
         assert "script-src 'nonce-" in served.headers["content-security-policy"]
         assert "connect-src 'none'" in served.headers["content-security-policy"]
         assert 'sandbox="allow-scripts"' in served.text
-        assert "artifact-runtime/plotly.min.js" in served.text
+        assert "artifact-runtime/plotly.min.js" not in served.text
+        assert "window.Plotly" in served.text or "Plotly.register" in served.text
         assert "window.__artifactSmoke" in served.text
 
         wrong_session = client.get(

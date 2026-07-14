@@ -362,7 +362,6 @@ async def test_report_publish_can_require_browser_visual_review_artifacts(cfg, m
         artifacts = []
         for name, kind, viewport in (
             ("desktop-full-page", "full_page", "desktop"),
-            ("mobile-full-page", "full_page", "mobile"),
             ("desktop-hero", "key_section", "desktop"),
         ):
             artifact_path = review_dir / f"{name}.png"
@@ -425,7 +424,7 @@ async def test_report_publish_can_require_browser_visual_review_artifacts(cfg, m
         storyboard_path="reports/final-visual-review.storyboard.json",
         reviewer="Report reviewer",
         decision="approved",
-        notes="Desktop and mobile hierarchy, spacing, and chart framing are reader-ready.",
+        notes="Desktop/webview hierarchy, spacing, and chart framing are reader-ready.",
     )
     assert reviewed["approved"] is True
 
@@ -860,9 +859,16 @@ async def test_report_design_report_infers_explorers_selectors_and_controls(cfg)
         for item in storyboard["interaction_plan"]
         for control in item.get("controls", [])
     )
+    linked = [item["linked_selection"] for item in storyboard["interaction_plan"] if item.get("linked_selection")]
+    assert linked == [
+        {"group": "selection-analysis-2-selector-panel", "key": "archetype"},
+        {"group": "selection-analysis-2-selector-panel", "key": "archetype"},
+    ]
     assert "data-dc-section=\"chart_table_explorer\"" in html
     assert "data-dc-section=\"selector_panel\"" in html
     assert "data-dc-selection-detail" in html
+    assert "data-dc-selection-context" in html
+    assert "subscribeSelection(config" in html
     assert "r-control-reset" in html
     assert "r-control-summary" in html
     assert "role=\"button\"" in html
@@ -1276,7 +1282,7 @@ def test_runtime_smoke_keeps_rendered_layout_failures_fail_closed():
         "status": "failed",
         "checks": [{
             "check": "horizontal_overflow",
-            "detail": "mobile viewport scrolls horizontally (412px > 390px)",
+            "detail": "desktop viewport scrolls horizontally (1448px > 1440px)",
         }],
     })
 
@@ -1350,9 +1356,9 @@ async def test_report_add_section_normalizes_array_table_rows_and_safe_narrative
     assert smoke["status"] in {"passed", "skipped"}
     if smoke["status"] == "passed":
         assert not [check for check in smoke["checks"] if check["check"] == "table_content"]
-        assert {shot["viewport"] for shot in smoke["screenshots"]} == {"desktop", "mobile"}
+        assert {shot["viewport"] for shot in smoke["screenshots"]} == {"desktop"}
         assert all(Path(shot["path"]).is_file() and shot["bytes"] >= 1024 for shot in smoke["screenshots"])
-        assert {shot["viewport"] for shot in smoke["screenshots"] if shot["kind"] == "full_page"} == {"desktop", "mobile"}
+        assert {shot["viewport"] for shot in smoke["screenshots"] if shot["kind"] == "full_page"} == {"desktop"}
         assert any(shot["kind"] == "key_section" for shot in smoke["screenshots"])
 
 
@@ -1482,6 +1488,7 @@ def test_report_shell_parts_keep_original_context_contract():
 
     assert "document.querySelectorAll('.r-hero, .r-section')" in script
     assert "document.querySelector('.r-story-nav')" in script
+    assert "section.classList.contains('is-story-arc')" in script
     assert "document.querySelector('.r-progress span')" in script
     assert "getAttribute('data-dc-section-id')" in script
     assert "IntersectionObserver" in script

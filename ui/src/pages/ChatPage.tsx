@@ -10,9 +10,10 @@ import {
 import { useSearchParams } from 'react-router-dom'
 import { API } from '../api'
 import { useAGUI } from '../hooks/useAGUI'
-import type { AGUIMessage } from '../hooks/useAGUI'
+import type { AGUIMessage, ToolCallState } from '../hooks/useAGUI'
 import MarkdownContent from '../components/MarkdownContent'
 import { groupTranscript, TurnActivity } from '../components/ChatActivity'
+import { toolBaseName } from '../components/reportPublishState'
 import PlanPanel from '../components/PlanPanel'
 import ArtifactPanel from '../components/ArtifactPanel'
 import { usePlans, PlansContext } from '../hooks/usePlans'
@@ -31,6 +32,16 @@ interface QueuedMessage { id: string; text: string; ts: number }
 interface PersistedToolTiming { startedAt?: number; finishedAt?: number }
 interface ReportCounts { published: number; scratch: number }
 type FileSort = 'name' | 'size'
+
+function isSuccessfulArtifactPublish(call: ToolCallState): boolean {
+  if (toolBaseName(call.name) !== 'publish_artifact' || call.status !== 'complete' || !call.result) return false
+  try {
+    const result = typeof call.result === 'string' ? JSON.parse(call.result) : call.result
+    return Boolean(result?.success && result?.artifact_id && result?.version)
+  } catch {
+    return false
+  }
+}
 
 // A chat is a reading surface, not an edge-to-edge document.  The outer
 // workspace retains generous gutters; this shared inner canvas keeps prose,
@@ -394,11 +405,11 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
     () => toolCalls.filter(tc => (tc.name === 'propose_plan' || tc.name === 'update_plan') && tc.status === 'complete').length,
     [toolCalls])
   const artifactToolResultCount = useMemo(
-    () => toolCalls.filter(tc => tc.name === 'publish_artifact' && tc.status === 'complete').length,
+    () => toolCalls.filter(isSuccessfulArtifactPublish).length,
     [toolCalls])
   const latestPublishedArtifact = useMemo(() => {
     for (const tc of [...toolCalls].reverse()) {
-      if (tc.name !== 'publish_artifact' || tc.status !== 'complete' || !tc.result) continue
+      if (!isSuccessfulArtifactPublish(tc) || !tc.result) continue
       try {
         const parsed = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
         if (parsed?.success && parsed?.artifact_id && parsed?.version) {
@@ -1296,7 +1307,7 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
             planCount={plans.length || planToolResultCount}
             planStatus={planStatusTone}
             reportCount={reportCounts.published}
-            reportRunning={toolCalls.some(call => ['build_report', 'report_design_report', 'report_publish', 'publish_artifact'].includes(call.name) && call.status === 'calling')}
+            reportRunning={toolCalls.some(call => ['build_report', 'report_design_report', 'report_publish', 'publish_artifact'].includes(toolBaseName(call.name)) && call.status === 'calling')}
             scopeOffCount={scopeOffCount}
             datasetOffCount={datasetOffCount}
             showFiles={showFilesSidebar}

@@ -404,8 +404,8 @@ def _attach_rendered_layout_review(design_review: dict[str, Any], runtime_smoke:
         findings.append({
             "id": "rendered_layout_smoke_failed",
             "severity": "warning",
-            "claim": "Responsive browser layout checks found a rendered report defect.",
-            "recommendation": "Fix the named desktop or mobile layout check, redesign the report, and publish the regenerated artifact.",
+            "claim": "Desktop/webview layout checks found a rendered report defect.",
+            "recommendation": "Fix the named desktop/webview layout check, redesign the report, and publish the regenerated artifact.",
             "sections": [],
             "checks": checks,
         })
@@ -414,8 +414,8 @@ def _attach_rendered_layout_review(design_review: dict[str, Any], runtime_smoke:
         findings.append({
             "id": "rendered_layout_review_skipped",
             "severity": "info",
-            "claim": "Responsive browser layout review was not available in this publish environment.",
-            "recommendation": "Run publication where Playwright Chromium is available before relying on the desktop/mobile layout evidence.",
+            "claim": "Desktop/webview layout review was not available in this publish environment.",
+            "recommendation": "Run publication where Playwright Chromium is available before relying on the desktop/webview layout evidence.",
             "sections": [],
         })
     return review
@@ -501,9 +501,9 @@ def _require_completed_visual_review(runtime_smoke: dict[str, Any]) -> None:
         for item in artifacts
         if isinstance(item, dict) and item.get("kind") == "key_section" and item.get("path") and item.get("sha256")
     )
-    if not {"desktop", "mobile"}.issubset(full_page_viewports) or key_section_count < 1:
+    if "desktop" not in full_page_viewports or key_section_count < 1:
         raise ValueError(
-            "Report publish visual-review gate failed: browser review is missing required desktop/mobile full-page or key-section screenshot artifacts."
+            "Report publish visual-review gate failed: browser review is missing required desktop full-page or key-section screenshot artifacts."
         )
     semantic = runtime_smoke.get("semantic_visual") if isinstance(runtime_smoke.get("semantic_visual"), dict) else {}
     if semantic.get("visual_semantic_schema") != 1 or semantic.get("status") != "pass":
@@ -773,9 +773,6 @@ const target = process.argv[1];
           if (viewportWidth > 720 && sections.length >= 2 && tracks < 2) {
             failures.push({check: 'diagnostic_pair_desktop', detail: name + ' diagnostic pair ' + index + ' is not two-column'});
           }
-          if (viewportWidth <= 720 && tracks !== 1) {
-            failures.push({check: 'diagnostic_pair_mobile', detail: name + ' diagnostic pair ' + index + ' does not collapse to one column'});
-          }
           const pairRect = pair.getBoundingClientRect();
           sections.forEach((section, childIndex) => {
             const rect = section.getBoundingClientRect();
@@ -810,7 +807,6 @@ const target = process.argv[1];
       return layoutChecks;
     }
     checks.push(...await inspectViewport('desktop', 1440, 900));
-    checks.push(...await inspectViewport('mobile', 390, 844));
     checks.push(...pageErrors.map(detail => ({check: 'browser_error', detail})));
     console.log(JSON.stringify({status: checks.length ? 'failed' : 'passed', checks, screenshots, semantic_visual: semanticVisual}));
   } catch (error) {

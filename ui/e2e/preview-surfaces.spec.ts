@@ -252,6 +252,7 @@ test('renders a published report tool result in chat', async ({ page }) => {
   const reportPath = 'reports/customer-retention.html'
   const publishedReport = {
     type: 'report_publish',
+    published: true,
     publication_status: 'published',
     publish_required: false,
     html_path: reportPath,
@@ -259,6 +260,12 @@ test('renders a published report tool result in chat', async ({ page }) => {
     quality: { status: 'pass', rubric_version: 3 },
     runtime_smoke: { status: 'passed' },
     size: 2048,
+  }
+  const blockedPublish = {
+    type: 'report_publish',
+    publication_status: 'blocked',
+    publish_required: true,
+    error: 'Report publish visual-review gate failed: an approved review for this rendered HTML is required before publication.',
   }
   const openingUpdate = {
     type: 'report',
@@ -324,12 +331,17 @@ test('renders a published report tool result in chat', async ({ page }) => {
           {
             id: 'call-report-publish',
             type: 'function',
-            function: { name: 'report_publish', arguments: JSON.stringify({ html_path: reportPath, export_docx: false }) },
+            function: { name: 'report_publish', arguments: JSON.stringify({ report_path: reportPath, export_docx: false }) },
           },
           {
             id: 'call-report-publish-duplicate',
             type: 'function',
-            function: { name: 'report_publish', arguments: JSON.stringify({ html_path: reportPath, export_docx: false }) },
+            function: { name: 'report_publish', arguments: JSON.stringify({ report_path: reportPath, export_docx: false }) },
+          },
+          {
+            id: 'call-report-publish-blocked',
+            type: 'function',
+            function: { name: 'report_publish', arguments: JSON.stringify({ report_path: reportPath, export_docx: false }) },
           },
         ],
       },
@@ -386,6 +398,12 @@ test('renders a published report tool result in chat', async ({ page }) => {
         role: 'tool',
         toolCallId: 'call-report-publish-duplicate',
         content: JSON.stringify(publishedReport),
+      },
+      {
+        id: 'tool-report-publish-blocked',
+        role: 'tool',
+        toolCallId: 'call-report-publish-blocked',
+        content: JSON.stringify(blockedPublish),
       },
     ],
   }
@@ -457,7 +475,9 @@ test('renders a published report tool result in chat', async ({ page }) => {
   await page.goto(`/chat?session=${threadId}`)
 
   await expect(page.locator('.chat-system-marker')).toContainText('Plan approved')
-  await expect(page.getByText('Publish report')).toHaveCount(1)
+  await expect(page.locator('.chat-evidence').getByText('Report published to workspace', { exact: true })).toHaveCount(1)
+  await expect(page.getByText('Report publication blocked: reports/customer-retention.html', { exact: false })).toBeVisible()
+  await expect(page.getByText('Report publish visual-review gate failed', { exact: false })).toBeVisible()
   await expect(page.getByText('The report is ready.')).toBeVisible()
   await expect(page.getByText('Queried fifa_wc26 — SELECT team, COUNT(*) AS matches FROM fixtures GROUP BY team')).toBeVisible()
   await expect(page.getByText("Ran cell [6] — KeyError: 'market_value_eur'")).toBeVisible()
@@ -469,6 +489,7 @@ test('renders a published report tool result in chat', async ({ page }) => {
   await expect(page.getByText('What changed: Set the report opening: Customer retention outlook — The decision context and forecast horizon.')).toBeVisible()
   await expect(page.getByText('Report updated:')).toHaveCount(0)
   await expect(page.getByText('1 error fixed')).toBeVisible()
+  await expect(page.getByText(/1 error$/)).toBeVisible()
   await expect(page.getByText('Ran a tool')).toHaveCount(0)
   await expect(page.locator('.chat-evidence__gutter')).toHaveCount(0)
   const [turnBox, evidenceBox, narrativeBox, composerBox] = await Promise.all([
@@ -481,7 +502,7 @@ test('renders a published report tool result in chat', async ({ page }) => {
   expect(evidenceBox?.x).toBe(narrativeBox?.x)
   expect(narrativeBox?.x).toBe(composerBox?.x)
   await expect(page.getByText('Report: customer-retention.html')).toBeVisible()
-  await expect(page.getByText('Published', { exact: true })).toBeVisible()
+  await expect(page.getByText('Published to workspace', { exact: true })).toBeVisible()
   await expect(page.getByText('(2.0KB)')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Show full report' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Print' })).toBeVisible()

@@ -8,6 +8,7 @@ import ReportDisplay from './ReportDisplay'
 import MetricDisplay from './MetricDisplay'
 import PublishArtifactCard from './PublishArtifactCard'
 import { reportPreviewUrl } from '../reportPreview'
+import { toolBaseName } from '../reportPublishState'
 
 const AUTO_EXPAND_TOOLS = new Set([
   'execute_cell', 'display_cell_output', 'execute_code',
@@ -32,11 +33,11 @@ const CUSTOM_RENDER_TOOLS = new Set([
 ])
 
 export function shouldAutoExpand(toolName: string): boolean {
-  return AUTO_EXPAND_TOOLS.has(toolName)
+  return AUTO_EXPAND_TOOLS.has(toolBaseName(toolName))
 }
 
 export function hasCustomRenderer(toolName: string): boolean {
-  return CUSTOM_RENDER_TOOLS.has(toolName)
+  return CUSTOM_RENDER_TOOLS.has(toolBaseName(toolName))
 }
 
 export function shouldRenderWhileCalling(_toolName: string): boolean {
@@ -58,9 +59,11 @@ export default function ToolResultRenderer({ toolName, result, args, status, onF
   // change. Safe to ignore parse failures; renderers degrade gracefully.
   const parsedArgs = parseJSON(args)
 
-  if (toolName === 'propose_plan' || toolName === 'update_plan') {
+  const normalizedToolName = toolBaseName(toolName)
+
+  if (normalizedToolName === 'propose_plan' || normalizedToolName === 'update_plan') {
     const parsed = parseJSON(result) ?? {}
-    return <PlanToolNotice data={parsed} draft={parsedArgs} toolName={toolName} status={status} />
+    return <PlanToolNotice data={parsed} draft={parsedArgs} toolName={normalizedToolName} status={status} />
   }
 
   if (result === null) return null
@@ -68,7 +71,7 @@ export default function ToolResultRenderer({ toolName, result, args, status, onF
   const parsed = parseJSON(result)
   if (!parsed) return <GenericResult result={result} />
 
-  switch (toolName) {
+  switch (normalizedToolName) {
     case 'execute_cell':
     case 'display_cell_output':
     case 'execute_code':
@@ -93,7 +96,7 @@ export default function ToolResultRenderer({ toolName, result, args, status, onF
     case 'build_report':
     case 'report_design_report':
     case 'report_publish':
-      return <ReportDisplay data={parsed} />
+      return <ReportDisplay data={parsed} toolName={normalizedToolName} status={status} />
     case 'report_add_section':
       return <ReportUpdateNotice data={parsed} onFileClick={onFileClick} />
     case 'publish_artifact':

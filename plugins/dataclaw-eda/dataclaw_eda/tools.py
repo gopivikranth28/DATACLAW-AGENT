@@ -67,8 +67,11 @@ def _normalize_validation(validation: dict[str, Any] | None, evidence: list[dict
     if basis not in EXTERNAL_VALIDATION_BASES:
         basis = "none"
     evidence_refs = internal.get("evidence_refs")
-    if not isinstance(evidence_refs, list):
+    if not isinstance(evidence_refs, list) or not any(str(ref).strip() for ref in evidence_refs):
         evidence_refs = evidence_helpers.evidence_refs(evidence)
+        if internal_status == "validated":
+            real_refs = _real_internal_evidence_refs(evidence)
+            evidence_refs = [ref for ref in evidence_refs if ref in real_refs]
     return {
         "internal": {
             "status": internal_status,
@@ -412,7 +415,15 @@ async def record_eda_finding(
     )
     effective_selection = normalized_selection or hypothesis_selection or {}
     if internal["status"] == "validated" and not _has_real_internal_evidence_ref(normalized_validation, anchors):
-        return _error("validated_requires_evidence_refs", "Internal validation requires a non-prose evidence_ref")
+        return _error(
+            "validated_requires_evidence_refs",
+            "Internal validation requires an attached non-prose evidence reference",
+            expected_refs=sorted(_real_internal_evidence_refs(anchors)),
+            hint=(
+                "Read or execute the notebook cell that produced the finding, then use "
+                "validation.internal.evidence_refs such as 'notebook_cell:<cell_id>'."
+            ),
+        )
     if internal["status"] == "validated" and _selection_requires_correction(effective_selection):
         return _error(
             "screened_validation_requires_correction",

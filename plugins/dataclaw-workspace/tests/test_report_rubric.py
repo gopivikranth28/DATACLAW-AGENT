@@ -300,7 +300,7 @@ def test_critique_adds_safe_context_without_minting_evidence():
     assert critique["guardrail"].startswith("No evidence identifiers")
 
 
-def test_storyboard_design_refines_adjacent_context_without_losing_inputs():
+def test_storyboard_design_keeps_local_context_without_duplicate_insights():
     insights = [{
         "title": "Creative midfielders separate from the field",
         "detail": "The upper-right cluster combines progressive passing and chance creation.",
@@ -325,12 +325,16 @@ def test_storyboard_design_refines_adjacent_context_without_losing_inputs():
     assert storyboard["design_iterations"]["max_passes"] == 5
     assert storyboard["design_iterations"]["passes"] == 5
     assert storyboard["source_context"]["analyses"][0]["custom_context"] == analyses[0]["custom_context"]
-    assert chart["adjacent_insights"][0]["title"] == insights[0]["title"]
+    assert chart["story_context"][0]["title"] == insights[0]["title"]
+    assert "adjacent_insights" not in chart
     assert chart["interpretation"] == insights[0]["detail"]
     assert chart["caveat"] == insights[0]["caveat"]
     assert chart["data_note"].startswith("Data note:")
     rendered = report_renderer.render_report_from_storyboard(storyboard)
-    assert "r-adjacent-insights" in rendered
+    assert '<div class="r-adjacent-insights">' not in rendered
+    assert "Evidence 01" not in rendered
+    assert "Evidence for:" not in rendered
+    assert "notebook cell: cell-style-map" not in rendered
     assert "Data note:" in rendered
 
 
@@ -357,9 +361,9 @@ def test_taxonomy_explorer_architecture_sequences_evidence_before_findings():
                     {"title": "Runner", "detail": "High ball progression", "accent_color": "#0f766e"},
                 ],
             },
-            {"section_type": "chart_interpretation", "title": "Chance creation landscape", "figure": figure("Landscape"), "interpretation": "The categories separate on chance creation.", "evidence": [{"kind": "notebook_cell", "ref": "cell-landscape"}]},
-            {"section_type": "chart_interpretation", "title": "Progression diagnostic", "figure": figure("Progression"), "interpretation": "Progression distinguishes the runner profile.", "evidence": [{"kind": "notebook_cell", "ref": "cell-progression"}]},
-            {"section_type": "chart_interpretation", "title": "Finishing diagnostic", "figure": figure("Finishing"), "interpretation": "Finishing is more evenly distributed.", "evidence": [{"kind": "notebook_cell", "ref": "cell-finishing"}]},
+            {"section_type": "chart_interpretation", "title": "Chance creation landscape", "caption": "Chance creation by supplied archetype.", "figure": figure("Landscape"), "interpretation": "The categories separate on chance creation.", "evidence": [{"kind": "notebook_cell", "ref": "cell-landscape"}]},
+            {"section_type": "chart_interpretation", "title": "Progression diagnostic", "caption": "Progression by supplied archetype.", "figure": figure("Progression"), "interpretation": "Progression distinguishes the runner profile.", "evidence": [{"kind": "notebook_cell", "ref": "cell-progression"}]},
+            {"section_type": "chart_interpretation", "title": "Finishing diagnostic", "caption": "Finishing by supplied archetype.", "figure": figure("Finishing"), "interpretation": "Finishing is more evenly distributed.", "evidence": [{"kind": "notebook_cell", "ref": "cell-finishing"}]},
             {
                 "section_type": "interactive_table",
                 "title": "Archetype explorer",
@@ -390,7 +394,6 @@ def test_taxonomy_explorer_architecture_sequences_evidence_before_findings():
         "primary_insights",
         "analysis_5_interactive_table",
         "methodology",
-        "evidence_trace",
         "report_epilogue",
     ]
     by_role = {item["layout_role"]: item for item in storyboard["section_plan"]}
@@ -401,13 +404,15 @@ def test_taxonomy_explorer_architecture_sequences_evidence_before_findings():
     assert by_role["analysis_4_chart_interpretation"]["layout_group"] == "diagnostic_pair_1"
 
     rendered = report_renderer.render_report_from_storyboard(storyboard)
-    assert "r-hero is-editorial-dark" in rendered
-    assert "r-section is-floating-kpis" in rendered
+    assert 'class="r-hero is-full-width is-editorial-dark"' in rendered
+    assert "r-section is-full-width is-floating-kpis" in rendered
     assert 'class="sr-only">Headline metrics</h2>' in rendered
     assert ">At a glance<" not in rendered
     assert 'class="r-diagnostic-pair"' in rendered
     assert rendered.index("Player archetypes") < rendered.index("Chance creation landscape")
     assert rendered.index("Finishing diagnostic") < rendered.index("Primary insights") < rendered.index("Archetype explorer")
+    assert '<span class="r-chip good">confirmed</span>' not in rendered.lower()
+    assert by_role["report_epilogue"]["data"]["title"] == "Notes & limits"
 
     # Simulate a caller editing the generated JSON into a visually weak order.
     # The bounded design critique should restore the supplied editorial grammar
@@ -426,7 +431,6 @@ def test_taxonomy_explorer_architecture_sequences_evidence_before_findings():
         by_role["analysis_4_chart_interpretation"],
         by_role["analysis_5_interactive_table"],
         by_role["methodology"],
-        by_role["evidence_trace"],
         by_role["report_epilogue"],
     ]
     critiqued, critique = report_renderer.critique_report_storyboard(storyboard)
@@ -670,7 +674,7 @@ def test_path_dependent_forecast_falls_back_without_a_decision_path():
     assert "decision-path visual" in storyboard["editorial_architecture"]["reason"]
 
 
-def test_editorial_insight_list_supports_semantic_pills_scan_points_and_linked_evidence():
+def test_editorial_insight_list_hides_routine_governance_and_can_link_a_supporting_view():
     html = report_renderer.render_report_section("insight_grid", {
         "title": "Primary insights",
         "caption": "The conclusions readers should scan before the supporting evidence.",
@@ -696,6 +700,9 @@ def test_editorial_insight_list_supports_semantic_pills_scan_points_and_linked_e
     assert "--chip-accent:#0f766e" in html
     assert "Activation occurs earlier." in html
     assert "notebook cell: cell-guided-route" not in html
+    assert ">validated<" not in html
+    assert "See the evidence" not in html
+    assert "Open supporting view" in html
     assert 'href="#sec-guided-route"' in html
 
 
@@ -713,6 +720,112 @@ def test_long_evidence_trace_defaults_to_a_disclosure():
     assert '<details class="r-evidence-disclosure">' in html
     assert "Show 7 registered evidence references" in html
     assert "cell-6" in html
+
+
+def test_storyboard_keeps_provenance_in_audit_by_default_and_can_expose_a_disclosure():
+    inputs = {
+        "report_goal": "Explain the completed relationship.",
+        "insights": [{
+            "title": "The relationship is positive",
+            "detail": "The supplied aggregate shows a positive relationship.",
+            "evidence": [{"kind": "notebook_cell", "ref": "cell-relationship"}],
+        }],
+        "analyses": [{
+            "title": "Relationship view",
+            "figure": {"data": [{"type": "scatter", "x": [1], "y": [2]}]},
+            "interpretation": "The supplied point sits on the positive trend.",
+            "evidence": [{"kind": "notebook_cell", "ref": "cell-relationship"}],
+        }],
+    }
+
+    audit_only = report_renderer.design_report_storyboard(**inputs)
+    audit_roles = [item["layout_role"] for item in audit_only["section_plan"]]
+    assert "evidence_trace" not in audit_roles
+    assert audit_only["source_context"]["insights"][0]["evidence"][0]["ref"] == "cell-relationship"
+
+    disclosed = report_renderer.design_report_storyboard(
+        **inputs,
+        requirements={"presentation": {"provenance": "disclosure"}},
+    )
+    trace = next(item for item in disclosed["section_plan"] if item["layout_role"] == "evidence_trace")
+    assert trace["data"]["title"] == "Sources & reproducibility"
+    assert trace["data"]["presentation"] == "disclosure"
+    assert [item.get("ref") for item in trace["data"]["evidence"]].count("cell-relationship") == 1
+
+
+def test_storyboard_uses_explicit_width_roles_instead_of_type_driven_narrow_sections():
+    storyboard = report_renderer.design_report_storyboard(
+        report_goal="Explain the completed relationship.",
+        insights=[{"title": "Result", "detail": "A completed result."}],
+        requirements={"data_quality": "Coverage is complete for the supplied rows."},
+    )
+    by_role = {item["layout_role"]: item["data"] for item in storyboard["section_plan"]}
+    assert by_role["executive_readout"]["layout_width"] == "reading"
+    assert by_role["data_quality"]["layout_width"] == "content"
+    rendered = report_renderer.render_report_from_storyboard(storyboard)
+    assert "r-section is-content-width" in rendered
+    assert "r-section is-reading-width" in rendered
+    assert "r-section is-narrow" not in rendered
+
+
+def test_story_arcs_allow_variable_reader_questions_to_order_supplied_sections():
+    figure = lambda title: {
+        "data": [{"type": "bar", "x": ["A", "B"], "y": [2, 1]}],
+        "layout": {"title": {"text": title}},
+    }
+    storyboard = report_renderer.design_report_storyboard(
+        report_goal="Explain the completed analysis.",
+        insights=[{"title": "The leading factor separates outcomes", "detail": "The supplied comparison shows a clear separation."}],
+        analyses=[
+            {
+                "section_type": "chart_interpretation",
+                "title": "The separation",
+                "caption": "Compare the supplied groups on the leading factor.",
+                "figure": figure("Separation"),
+                "interpretation": "The leading group separates from the rest.",
+                "story_arc": "signal",
+            },
+            {
+                "section_type": "interactive_table",
+                "title": "Scenario lookup",
+                "caption": "Inspect the supplied aggregate scenarios.",
+                "columns": ["scenario", "outcome"],
+                "rows": [{"scenario": "A", "outcome": "Higher"}],
+                "story_arc": "decision",
+            },
+        ],
+        requirements={
+            "story_arcs": [
+                {
+                    "id": "signal",
+                    "title": "What separates the outcomes?",
+                    "question": "Which factor creates the visible separation?",
+                },
+                {
+                    "id": "decision",
+                    "title": "Where should readers look next?",
+                    "claim": "Use the supplied scenario lookup for the complete comparison.",
+                },
+            ],
+        },
+    )
+
+    assert storyboard["storyboard_schema"] == 2
+    assert [arc["phase"] for arc in storyboard["storyboard"]] == ["signal", "decision"]
+    assert storyboard["storyboard"][0]["sections"] == ["analysis_1_chart_interpretation"]
+    assert storyboard["storyboard"][1]["sections"] == ["analysis_2_interactive_table"]
+    assert [item["layout_role"] for item in storyboard["section_plan"]] == [
+        "opening_context",
+        "story_arc_signal",
+        "analysis_1_chart_interpretation",
+        "story_arc_decision",
+        "analysis_2_interactive_table",
+        "primary_insights",
+    ]
+    rendered = report_renderer.render_report_from_storyboard(storyboard)
+    assert "What separates the outcomes?" in rendered
+    assert "Where should readers look next?" in rendered
+    assert "r-section is-full-width is-quiet-surface is-story-arc" in rendered
 
 
 def test_primary_insight_layout_defaults_to_editorial_list_but_keeps_card_grid_opt_in():
@@ -740,7 +853,7 @@ def test_primary_insight_layout_defaults_to_editorial_list_but_keeps_card_grid_o
     )
     editorial_findings = next(item["data"] for item in editorial["section_plan"] if item["layout_role"] == "primary_insights")
     assert editorial_findings["layout_variant"] == "editorial_list"
-    assert editorial_findings["evidence_presentation"] == "linked"
+    assert editorial_findings["evidence_presentation"] == "none"
 
     explicit_grid = report_renderer.design_report_storyboard(
         report_goal="Forecast renewal along the customer journey.",
@@ -828,7 +941,7 @@ def test_critique_keeps_path_language_as_advisory_without_an_explicit_contract()
     assert findings["possible_path_dependent_forecast"]["severity"] == "info"
     unresolved_refs = findings["unresolved_evidence_anchors"]["evidence"]
     assert {entry["ref"] for entry in unresolved_refs} == {"cell-projection"}
-    assert {entry["section_id"] for entry in unresolved_refs} == {"sec-primary-insights", "evidence_trace"}
+    assert {entry["section_id"] for entry in unresolved_refs} == {"sec-primary-insights"}
 
 
 def test_critique_clears_declared_predictive_review_work_without_false_claims():

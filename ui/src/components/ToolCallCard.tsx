@@ -3,6 +3,7 @@ import { LoadingOutlined, CheckCircleOutlined, ExclamationCircleOutlined, RightO
 import type { ToolCallState } from '../hooks/useAGUI'
 import ToolResultRenderer, { hasCustomRenderer, shouldAutoExpand, shouldRenderWhileCalling } from './tool-renderers/ToolResultRenderer'
 import SubagentProgressPanel from './SubagentProgressPanel'
+import { hasToolError, toolBaseName } from './reportPublishState'
 
 interface Props {
   toolCall: ToolCallState
@@ -13,6 +14,7 @@ interface Props {
 export default function ToolCallCard({ toolCall, onFileClick, sessionId }: Props) {
   const isDelegate = toolCall.name === 'delegate_to_subagent'
   const hasSubagent = isDelegate && !!toolCall.subagent
+  const failed = toolCall.status === 'error' || hasToolError(toolCall.result)
   const canRenderWhileCalling = shouldRenderWhileCalling(toolCall.name)
   const autoExpand = hasSubagent || (shouldAutoExpand(toolCall.name) && (
     (toolCall.status === 'complete' && toolCall.result !== null) || canRenderWhileCalling
@@ -26,9 +28,9 @@ export default function ToolCallCard({ toolCall, onFileClick, sessionId }: Props
 
   const statusIcon = toolCall.status === 'calling'
     ? <LoadingOutlined style={{ color: '#1677ff', fontSize: 13 }} spin />
-    : toolCall.status === 'complete'
-    ? <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 13 }} />
-    : <ExclamationCircleOutlined style={{ color: '#ff4d4f', fontSize: 13 }} />
+    : failed
+      ? <ExclamationCircleOutlined style={{ color: '#ff4d4f', fontSize: 13 }} />
+      : <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 13 }} />
 
   const hasRichRenderer = hasCustomRenderer(toolCall.name)
 
@@ -133,7 +135,8 @@ function toolLabel(toolName: string): string {
     propose_plan: 'Plan proposal',
     update_plan: 'Plan update',
   }
-  return labels[toolName] || toolName
+  const normalized = toolBaseName(toolName)
+  return labels[normalized] || normalized
 }
 
 /** Friendly display for a completed delegate_to_subagent call.

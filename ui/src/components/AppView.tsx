@@ -3,6 +3,7 @@ import { EyeOutlined, EyeInvisibleOutlined, UpOutlined, DownOutlined } from '@an
 import MetricDisplay, { type MetricData } from './tool-renderers/MetricDisplay'
 import PlotlyRenderer, { type PlotlyFigure } from './tool-renderers/PlotlyRenderer'
 import { reportDocumentUrl, reportPreviewUrl } from './reportPreview'
+import { isPublishedReportPayload, toolBaseName } from './reportPublishState'
 
 export interface AppCall {
   name: string
@@ -48,9 +49,15 @@ export function collectAppItems(calls: AppCall[]): AppItem[] {
     let data: any
     try { data = JSON.parse(call.result) } catch { continue }
 
-    if (call.name === 'display_metric' && data?.type === 'metric') {
+    const toolName = toolBaseName(call.name)
+
+    if (toolName === 'display_metric' && data?.type === 'metric') {
       items.push({ id: `metric-${metricSeq++}`, kind: 'metric', metric: data })
-    } else if (REPORT_TOOLS.has(call.name) && data?.html_path) {
+    } else if (REPORT_TOOLS.has(toolName) && data?.html_path) {
+      // A report path in publish arguments or a failed publish response is not
+      // a durable report. Keep report drafts from build/update flows visible,
+      // but never promote an unsuccessful report_publish attempt.
+      if (toolName === 'report_publish' && !isPublishedReportPayload(data)) continue
       const item: ReportItem = {
         id: `report-${data.html_path}`,
         kind: 'report',
@@ -66,7 +73,7 @@ export function collectAppItems(calls: AppCall[]): AppItem[] {
         reportByPath.set(data.html_path, item)
         items.push(item)
       }
-    } else if (CELL_OUTPUT_TOOLS.has(call.name) && Array.isArray(data?.outputs)) {
+    } else if (CELL_OUTPUT_TOOLS.has(toolName) && Array.isArray(data?.outputs)) {
       const caption = typeof data.caption === 'string' && data.caption ? data.caption : undefined
       for (const out of data.outputs) {
         if (out?.type !== 'plotly' || !out.figure) continue
