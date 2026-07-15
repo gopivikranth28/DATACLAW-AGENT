@@ -167,6 +167,21 @@ def build_visual_author_catalog(storyboard: dict[str, Any], config: dict[str, An
                         "status": _clean(item.get("status") or item.get("severity") or item.get("confidence")),
                     })
 
+    # Insight summaries are optional in the reader path.  Keep source insights
+    # available to the visual author even when no duplicate insight grid is
+    # rendered, mapping each fact to its local proof surface (or the opening
+    # readout when the report contains no visual evidence yet).
+    for insight_id, section_id, item in _source_insight_targets(storyboard, section_plan):
+        if insight_id in insight_targets:
+            continue
+        insight_targets[insight_id] = section_id
+        insight_catalog.append({
+            "insight_id": insight_id,
+            "section_id": section_id,
+            "title": _clean(item.get("title") or item.get("headline") or item.get("statement")),
+            "status": _clean(item.get("status") or item.get("severity") or item.get("confidence")),
+        })
+
     facts = _collect_facts(storyboard, config, {entry["section_id"] for entry in sections}, insight_targets)
     return {
         "schema": VISUAL_AUTHOR_SCHEMA,
@@ -452,6 +467,20 @@ def apply_visual_spec(storyboard: dict[str, Any], spec: dict[str, Any], catalog:
         for index, item in enumerate(data.get("items", [])):
             if isinstance(item, dict):
                 by_insight[_insight_id(item, index)] = item
+    by_section = {
+        _section_id(planned, index): planned
+        for index, planned in enumerate(section_plan)
+        if isinstance(planned, dict)
+    }
+    for insight_id, section_id, _source_item in _source_insight_targets(applied, section_plan):
+        if insight_id in by_insight:
+            continue
+        planned = by_section.get(section_id)
+        if not isinstance(planned, dict):
+            continue
+        data = planned.setdefault("data", {})
+        if isinstance(data, dict):
+            by_insight[insight_id] = data
     for choice in spec.get("insights", []):
         item = by_insight.get(choice["insight_id"])
         if item is not None:
@@ -918,7 +947,70 @@ def _collect_facts(
                 add(raw, default_section=section_id, default_insight=insight_id, default_uses=["scan_point"], generated_id=f"{insight_id}-scan-{point_index + 1}")
             for example_index, raw in enumerate(_as_list(item.get("representative_examples") or item.get("examples"))):
                 add(raw, default_section=section_id, default_insight=insight_id, default_uses=["example"], generated_id=f"{insight_id}-example-{example_index + 1}")
+
+    rendered_insights = {
+        _insight_id(item, insight_index)
+        for planned in storyboard.get("section_plan", [])
+        if isinstance(planned, dict) and _clean(planned.get("section_type")).lower() == "insight_grid"
+        for insight_index, item in enumerate((planned.get("data") or {}).get("items", []))
+        if isinstance(item, dict)
+    }
+    for insight_id, section_id, item in _source_insight_targets(storyboard, storyboard.get("section_plan", [])):
+        if insight_id in rendered_insights:
+            continue
+        insight_facts = item.get("display_facts") if item.get("display_facts") is not None else item.get("visual_facts", [])
+        for fact_index, raw in enumerate(insight_facts or []):
+            add(
+                raw,
+                default_section=section_id,
+                default_insight=insight_id,
+                generated_id=f"source-insight-{insight_id}-fact-{fact_index + 1}",
+                explicit=item.get("display_facts") is not None,
+            )
+        for pill_index, raw in enumerate(_as_list(item.get("pills") or item.get("display_pills"))):
+            add(raw, default_section=section_id, default_insight=insight_id, default_uses=["pill"], generated_id=f"{insight_id}-pill-{pill_index + 1}")
+        for point_index, raw in enumerate(_as_list(item.get("bullets") or item.get("scan_points"))):
+            add(raw, default_section=section_id, default_insight=insight_id, default_uses=["scan_point"], generated_id=f"{insight_id}-scan-{point_index + 1}")
+        for example_index, raw in enumerate(_as_list(item.get("representative_examples") or item.get("examples"))):
+            add(raw, default_section=section_id, default_insight=insight_id, default_uses=["example"], generated_id=f"{insight_id}-example-{example_index + 1}")
     return facts
+
+
+def _source_insight_targets(storyboard: dict[str, Any], section_plan: Any) -> list[tuple[str, str, dict[str, Any]]]:
+    """Map non-rendered source insights to the visual/readout that carries them."""
+    if not isinstance(section_plan, list):
+        return []
+    source_context = storyboard.get("source_context") if isinstance(storyboard.get("source_context"), dict) else {}
+    source_insights = source_context.get("insights") if isinstance(source_context.get("insights"), list) else []
+    planned_sections = [
+        (_section_id(planned, index), planned)
+        for index, planned in enumerate(section_plan)
+        if isinstance(planned, dict)
+    ]
+    fallback = next(
+        (section_id for section_id, planned in planned_sections if _clean(planned.get("layout_role")) == "executive_readout"),
+        next((section_id for section_id, _planned in planned_sections), ""),
+    )
+    targets: list[tuple[str, str, dict[str, Any]]] = []
+    for insight_index, item in enumerate(source_insights):
+        if not isinstance(item, dict):
+            continue
+        insight_id = _insight_id(item, insight_index)
+        target = ""
+        anchor = _clean(item.get("evidence_anchor"))
+        for section_id, planned in planned_sections:
+            data = planned.get("data") if isinstance(planned.get("data"), dict) else {}
+            if anchor and anchor in {section_id, _clean(data.get("section_id"))}:
+                target = section_id
+                break
+            for context_index, context in enumerate(data.get("story_context", [])):
+                if isinstance(context, dict) and _insight_id(context, context_index) == insight_id:
+                    target = section_id
+                    break
+            if target:
+                break
+        targets.append((insight_id, target or fallback, item))
+    return [entry for entry in targets if entry[1]]
 
 
 def _normalise_uses(value: Any) -> list[str]:

@@ -33,10 +33,17 @@ Do not use this skill for a quick scratch chart or a single draft section. For t
      records the first supplied evidence-shaped section. Arcs remain variable
      in number and purpose; they may frame a question, comparison, mechanism,
      scenario, or decision without imposing a fixed set of acts.
+   - The opening answer is the default summary. A separate `Primary insights`
+     list is opt-in (`presentation.insight_summary="opening"` or
+     `"after_evidence"`) and may only add a new scan-level view; it must not
+     restate the same conclusion that appears beside a visual.
+   - Navigation is a reader outline, not a process log. Use five to seven
+     named Storyboard-v2 arcs for a substantial report; the renderer otherwise
+     exposes only the answer, major evidence surfaces, and Methods & limits.
 4. Call `report_design_report`, not a sequence of final `report_add_section` calls. Inspect its `analytical_review` and quality result; resolve every `required` finding or obtain an explicit user-approved risk acceptance; resolve or explicitly disclose warnings before calling the report complete.
    The designer performs up to five bounded critique-and-repair passes, stopping early when no further safe repair is available. These passes can improve structure, captions, caveats, and evidence presentation; they never invent analytical validation or silently clear a substantive finding.
    Keep the default `design_passes=5` unless a deliberately smaller, faster draft is needed. The design passes preserve the full supplied context in the storyboard, retain audit-only provenance mappings, carry supplied caveats into chart interpretation, and plan visual emphasis without fabricating content. They preserve a source-authored `data_note` but do not add generic row-count notes unless `presentation.data_notes="automatic"` is explicitly requested for a diagnostic draft. They must not create generic `Evidence 01` sections, duplicate an insight beside its supporting chart, or insert filler captions.
-   When supplied assets include category/archetype cards, static visual evidence, and an interactive explorer, set `requirements.editorial_archetype="taxonomy_explorer"`. It makes the page architecture deliberate: **hero → floating KPIs → taxonomy cards → hero visualization → paired diagnostics → findings → explorer → methodology and limitations footer**. The supplied readout becomes the hero abstract, so the report does not duplicate its conclusion before analysis.
+   When supplied assets include category/archetype cards, static visual evidence, and an interactive explorer, set `requirements.editorial_archetype="taxonomy_explorer"`. It makes the page architecture deliberate: **hero → floating KPIs → taxonomy cards → hero visualization → paired diagnostics → explorer → methodology and limitations footer**. An explicitly requested summary may appear once where its stated purpose warrants it; the supplied readout otherwise lives in the hero rather than duplicating the conclusion before analysis.
    Category-shaped selector items (`archetype`, `category`, `segment`, etc.)
    are automatically shown first as non-interactive cards while the original
    selector remains the later explorer. Reports with visual evidence and an
@@ -259,7 +266,10 @@ satisfy the gate.
 ### Analytical critique contract
 
 For a forecast, prediction, simulation, or other model-based report, include
-an `analysis_review` object in `requirements`. The storyboard critique persists
+both an `analysis_review` and a `claim_contract` in `requirements`. The
+claim contract maps every material reader claim to one primary visual/table,
+its scope, caveat, and registered provenance; it is audit metadata, not a
+reader-visible evidence chip. The storyboard critique persists
 its findings in the returned `critique`, storyboard JSON, and publish receipt.
 It does not rerun the model or invent support; it flags missing declared work
 so the agent can add it before calling the report complete. A `required`
@@ -290,6 +300,13 @@ requirements={
             "result": "Full model improves log loss by 0.04",
             "evidence": {"kind": "notebook_cell", "ref": "cell-ablation"},
         },
+        "validation": {
+            "status": "complete",
+            "split": "time-ordered held-out weeks",
+            "metric": "Brier score 0.14 against 0.19 baseline",
+            "calibration": {"status": "complete", "result": "Reliability slope 0.97"},
+            "evidence": {"kind": "notebook_cell", "ref": "cell-ablation"},
+        },
         "uncertainty": {"method": "block bootstrap", "result": "90% intervals"},
         "assumptions": ["One workflow branch is inferred from historical process logs"],
         "sensitivity": {"status": "complete", "evidence": "cell-path-scenarios"},
@@ -297,25 +314,40 @@ requirements={
         "outcome_distribution": {"status": "complete", "summary": "Outcome distribution"},
         "export_runtime": "local",
     },
+    "claim_contract": {
+        "claims": [{
+            "id": "champion-odds",
+            "text": "Spain lead the completed forecast, within its stated uncertainty.",
+            "claim_type": "predictive",
+            "primary_section": "analysis_1_chart_interpretation",
+            "scope": "The completed forecast input and declared holdout only.",
+            "caveat": "Unplayed fixtures and model assumptions can change the estimate.",
+            "uncertainty": {"status": "complete", "method": "block bootstrap"},
+            "evidence": {"kind": "notebook_cell", "ref": "cell-ablation"},
+        }],
+    },
 }
 ```
 
-The baseline is publish-blocking: it needs a completed status, a method, a
-result, and an evidence reference that resolves to a registered target in
-`requirements.evidence_registry.targets`, with an explicit matching `kind`.
-A bare `status: complete`, prose that mentions a baseline, or an unregistered
-id does not clear the gate.
+The baseline and validation are publish-blocking: a baseline needs a completed
+status, method, result, and registered evidence; validation additionally needs
+a split/holdout or resampling rationale, metric/result, completed calibration
+or reliability result, and registered evidence. A bare `status: complete`,
+prose that mentions a baseline, or an unregistered id does not clear the gate.
+Predictive and scenario claims also require a scope, caveat, uncertainty, a
+primary reader-evidence section, and a matching `claim_id` or `claim_ids` on
+that chart/table/explorer. A causal claim additionally needs a declared causal
+design; association alone cannot be published as causal.
 
-Without this contract, conservative predictive cues still trigger findings for
-a missing baseline, uncertainty, or assumed-input sensitivity. Path language
-such as a journey, workflow, route, tree, bracket, or treatment pathway is only
-an advisory: it never makes a path visual mandatory by itself. Require a
-decision-path or outcome-distribution view only when the structured analysis
-contract declares it or the caller explicitly selects
-`editorial_archetype="path_dependent_forecast"`. Resolve findings by supplying
-the completed evidence or by narrowing/disclosing the report; never mark work
-complete by inventing IDs or validation results. `export_runtime="cdn"` is not
-an export fix: DataClaw reports must stay self-contained.
+Without this contract, conservative predictive cues trigger required findings
+for a missing claim contract, baseline, validation, uncertainty, or
+assumed-input sensitivity. Path language such as a journey, workflow, route,
+tree, bracket, or treatment pathway is only an advisory. Once the structured
+analysis contract declares a decision path—or the caller selects
+`editorial_archetype="path_dependent_forecast"`—a supplied decision-path visual
+is required; a stage bar alone does not satisfy it. Resolve findings by
+supplying the completed evidence or by narrowing/disclosing the report; never
+mark work complete by inventing IDs or validation results.
 
 ## Section choices
 
@@ -330,6 +362,7 @@ invent a domain's visual language:
 ```python
 requirements={
     "presentation": {
+        "insight_summary": "none",           # default; opening answer carries the conclusion
         "insight_layout": "editorial_list",  # default; use "card_grid" for true peer cards
         "insight_evidence": "none",          # source IDs are not reader-facing evidence
         "provenance": "audit",               # use "disclosure" only for an optional Sources appendix
@@ -344,7 +377,8 @@ requirements={
 }
 ```
 
-Use `card_grid` only for genuine peers. For new reports, author pills, scan
+Use `card_grid` only for genuine peers, and only when `insight_summary` is
+explicitly enabled. For new reports, author pills, scan
 points, examples, and annotations as `display_facts`, never as prose the
 renderer must mine. Every fact needs a stable `fact_id`, exact source text,
 allowed `uses` (`pill`, `scan_point`, `example`, `annotation`), and preferably
@@ -474,11 +508,12 @@ failed report shape.
 
 ## Story flows
 
-Use **answer → findings → primary evidence/explorer → trust** for an executive
-readout; add a hypothesis ledger for EDA, entity cards before evidence for a
-taxonomy, and **answer → supplied path → outcomes → mechanism → scenarios →
-lookup → trust** for a path-dependent forecast. These are semantic sequences,
-not domain labels or mandatory templates.
+Use **answer → primary evidence/explorer → methods and limits** for an
+executive readout; add a deliberately non-overlapping summary only when it
+helps scanning. Add a hypothesis ledger for EDA, entity cards before evidence
+for a taxonomy, and **answer → supplied path → outcomes → mechanism →
+scenarios → lookup → trust** for a path-dependent forecast. These are semantic
+sequences, not domain labels or mandatory templates.
 
 ## Quality gate
 

@@ -390,6 +390,7 @@ def test_taxonomy_explorer_architecture_sequences_evidence_before_findings():
         ],
         requirements={
             "editorial_archetype": "taxonomy_explorer",
+            "presentation": {"insight_summary": "after_evidence"},
             "metrics": [{"label": "Archetypes", "value": "2"}],
             "methodology": [{"title": "Grain", "detail": "Supplied aggregate player-archetype rows."}],
         },
@@ -518,6 +519,7 @@ def test_editorial_architecture_materializes_selector_cards_and_honors_story_con
             },
         ],
         requirements={
+            "presentation": {"insight_summary": "after_evidence"},
             "methodology": [{"title": "Grain", "detail": "Supplied aggregate archetype and player rows."}],
         },
     )
@@ -592,7 +594,10 @@ def test_guided_explorer_reorders_visual_evidence_before_findings_without_taxono
                 "columns": ["category", "value"],
             },
         ],
-        requirements={"methodology": [{"title": "Grain", "detail": "Supplied aggregate rows."}]},
+        requirements={
+            "presentation": {"insight_summary": "after_evidence"},
+            "methodology": [{"title": "Grain", "detail": "Supplied aggregate rows."}],
+        },
     )
 
     roles = [item["layout_role"] for item in storyboard["section_plan"]]
@@ -656,6 +661,7 @@ def test_path_dependent_forecast_uses_generic_roles_not_tournament_terms():
         ],
         requirements={
             "editorial_archetype": "path_dependent_forecast",
+            "presentation": {"insight_summary": "after_evidence"},
             "methodology": [{"title": "Grain", "detail": "Customer-level aggregates."}],
         },
     )
@@ -801,7 +807,7 @@ def test_storyboard_compiles_a_bounded_desktop_composition_contract():
     by_role = {item["layout_role"]: item["data"] for item in storyboard["section_plan"]}
     assert by_role["opening_context"]["desktop_composition"] == "opening"
     assert by_role["executive_readout"]["desktop_composition"] == "reader_readout"
-    assert by_role["primary_insights"]["desktop_composition"] == "editorial_findings"
+    assert "primary_insights" not in by_role
     assert by_role["analysis_1_chart_interpretation"]["desktop_composition"] == "guided_visual"
     assert by_role["data_quality"]["desktop_composition"] == "trust_close"
     assert by_role["analysis_1_chart_interpretation"]["layout_width"] == "full"
@@ -883,6 +889,7 @@ def test_story_arcs_allow_variable_reader_questions_to_order_supplied_sections()
             },
         ],
         requirements={
+            "presentation": {"insight_summary": "none"},
             "story_arcs": [
                 {
                     "id": "signal",
@@ -910,12 +917,40 @@ def test_story_arcs_allow_variable_reader_questions_to_order_supplied_sections()
         "analysis_1_chart_interpretation",
         "story_arc_decision",
         "analysis_2_interactive_table",
-        "primary_insights",
     ]
     rendered = report_renderer.render_report_from_storyboard(storyboard)
     assert "What separates the outcomes?" in rendered
     assert "Where should readers look next?" in rendered
     assert "r-section is-full-width is-quiet-surface is-story-arc" in rendered
+    # Storyboard-v2 navigation is an outline of reader acts, not a duplicate
+    # list of the hero, every visual, and every trust component.
+    assert "var navigationCandidates = arcSections.length\n      ? arcSections" in rendered
+
+
+def test_default_navigation_includes_only_answer_evidence_and_methods():
+    figure = lambda title: {
+        "data": [{"type": "bar", "x": ["A", "B"], "y": [2, 1]}],
+        "layout": {"title": {"text": title}},
+    }
+    storyboard = report_renderer.design_report_storyboard(
+        report_goal="Explain the completed comparison.",
+        insights=[{"title": "A leads B", "detail": "The completed aggregate is higher for A."}],
+        analyses=[
+            {
+                "title": f"Comparison {index}",
+                "caption": "Compare the supplied aggregates.",
+                "figure": figure(f"Comparison {index}"),
+                "interpretation": "A leads in the supplied aggregate.",
+            }
+            for index in range(1, 4)
+        ],
+        requirements={"methodology": [{"title": "Grain", "detail": "Supplied aggregate rows."}]},
+    )
+
+    rendered = report_renderer.render_report_from_storyboard(storyboard)
+    assert rendered.count('data-dc-nav="true"') == 5
+    assert 'data-dc-nav-label="Methods &amp; limits"' in rendered
+    assert "primary_insights" not in [item["layout_role"] for item in storyboard["section_plan"]]
 
 
 def test_story_arc_requires_a_reader_question_and_valid_primary_section():
@@ -946,14 +981,12 @@ def test_story_arc_requires_a_reader_question_and_valid_primary_section():
         )
 
 
-def test_primary_insight_layout_defaults_to_editorial_list_but_keeps_card_grid_opt_in():
+def test_insight_summary_is_opt_in_and_keeps_card_grid_available():
     standard = report_renderer.design_report_storyboard(
         report_goal="Explain observed retention.",
         insights=[{"title": "New customers churn first", "detail": "The newest cohort has the lowest observed renewal."}],
     )
-    standard_findings = next(item["data"] for item in standard["section_plan"] if item["layout_role"] == "primary_insights")
-    assert standard_findings["layout_variant"] == "editorial_list"
-    assert "is-editorial_list" in report_renderer.render_report_from_storyboard(standard)
+    assert not [item for item in standard["section_plan"] if item["layout_role"] == "primary_insights"]
 
     analysis = {
         "section_type": "chart_interpretation",
@@ -967,7 +1000,10 @@ def test_primary_insight_layout_defaults_to_editorial_list_but_keeps_card_grid_o
         report_goal="Forecast renewal along the customer journey.",
         insights=[{"title": "Guided onboarding leads", "detail": "The guided route has the highest renewal forecast."}],
         analyses=[analysis],
-        requirements={"editorial_archetype": "path_dependent_forecast"},
+        requirements={
+            "editorial_archetype": "path_dependent_forecast",
+            "presentation": {"insight_summary": "after_evidence"},
+        },
     )
     editorial_findings = next(item["data"] for item in editorial["section_plan"] if item["layout_role"] == "primary_insights")
     assert editorial_findings["layout_variant"] == "editorial_list"
@@ -979,7 +1015,7 @@ def test_primary_insight_layout_defaults_to_editorial_list_but_keeps_card_grid_o
         analyses=[analysis],
         requirements={
             "editorial_archetype": "path_dependent_forecast",
-            "presentation": {"insight_layout": "card_grid"},
+            "presentation": {"insight_summary": "opening", "insight_layout": "card_grid"},
         },
     )
     explicit_findings = next(item["data"] for item in explicit_grid["section_plan"] if item["layout_role"] == "primary_insights")
@@ -1052,14 +1088,13 @@ def test_critique_keeps_path_language_as_advisory_without_an_explicit_contract()
     assert critique["analytical_review"]["status"] == "attention_required"
     assert critiqued["analytical_review"] == critique["analytical_review"]
     assert findings["missing_baseline_comparison"]["severity"] == "required"
+    assert findings["missing_claim_contract"]["severity"] == "required"
+    assert findings["missing_predictive_validation"]["severity"] == "required"
     assert "missing_uncertainty_quantification" in findings
     assert "missing_assumption_sensitivity" in findings
     assert "missing_decision_path_visual" not in findings
     assert "missing_outcome_distribution" not in findings
     assert findings["possible_path_dependent_forecast"]["severity"] == "info"
-    unresolved_refs = findings["unresolved_evidence_anchors"]["evidence"]
-    assert {entry["ref"] for entry in unresolved_refs} == {"cell-projection"}
-    assert {entry["section_id"] for entry in unresolved_refs} == {"sec-primary-insights"}
 
 
 def test_critique_clears_declared_predictive_review_work_without_false_claims():
@@ -1074,12 +1109,14 @@ def test_critique_clears_declared_predictive_review_work_without_false_claims():
         analyses=[
             {
                 "title": "Bracket decision path",
+                "claim_id": "title-odds",
                 "figure": {"data": [{"type": "scatter", "x": [0, 1], "y": [0, 1]}]},
                 "interpretation": "The bracket tree shows advance probabilities for each matchup.",
                 "evidence": [{"kind": "notebook_cell", "ref": "cell-bracket"}],
             },
             {
                 "title": "Quarter-final scoreline heatmaps",
+                "claim_id": "scoreline-distribution",
                 "figure": {"data": [{"type": "heatmap", "z": [[1]]}]},
                 "interpretation": "The outcome distribution shows draw and leading-scoreline probabilities.",
                 "evidence": [{"kind": "notebook_cell", "ref": "cell-scorelines"}],
@@ -1093,7 +1130,32 @@ def test_critique_clears_declared_predictive_review_work_without_false_claims():
                     {"id": "cell-bracket", "kind": "notebook_cell", "present": True},
                     {"id": "cell-pairing-scenarios", "kind": "notebook_cell", "present": True},
                     {"id": "cell-scorelines", "kind": "notebook_cell", "present": True},
+                    {"id": "cell-validation", "kind": "notebook_cell", "present": True},
                 ]
+            },
+            "claim_contract": {
+                "claims": [
+                    {
+                        "id": "title-odds",
+                        "text": "Spain and France are statistically tied in the title forecast.",
+                        "claim_type": "predictive",
+                        "primary_section": "analysis_1_chart_interpretation",
+                        "scope": "Remaining World Cup knockout matches in the supplied scenario.",
+                        "caveat": "Bracket pairing assumptions remain material.",
+                        "uncertainty": {"status": "complete", "method": "block bootstrap"},
+                        "evidence": {"kind": "notebook_cell", "ref": "cell-bootstrap"},
+                    },
+                    {
+                        "id": "scoreline-distribution",
+                        "text": "The supplied heatmap shows the modelled scoreline distribution.",
+                        "claim_type": "scenario",
+                        "primary_section": "analysis_2_chart_interpretation",
+                        "scope": "Quarter-final matchups in the supplied scenario.",
+                        "caveat": "Distribution reflects model inputs rather than observed future results.",
+                        "uncertainty": {"status": "complete", "method": "block bootstrap"},
+                        "evidence": {"kind": "notebook_cell", "ref": "cell-scorelines"},
+                    },
+                ],
             },
             "analysis_review": {
                 "mode": "predictive",
@@ -1104,6 +1166,13 @@ def test_critique_clears_declared_predictive_review_work_without_false_claims():
                     "evidence": {"kind": "notebook_cell", "ref": "cell-ablation"},
                 },
                 "uncertainty": {"method": "block bootstrap", "result": "90% intervals"},
+                "validation": {
+                    "status": "complete",
+                    "split": "Five-fold time-aware cross-validation",
+                    "metric": "Held-out log loss",
+                    "calibration": {"status": "complete", "result": "Reliability curve near diagonal"},
+                    "evidence": {"kind": "notebook_cell", "ref": "cell-validation"},
+                },
                 "assumptions": ["One bracket pairing is inferred"],
                 "sensitivity": {"status": "complete", "evidence": "cell-pairing-scenarios"},
                 "decision_path": {"status": "complete", "summary": "Bracket visual"},
@@ -1136,6 +1205,50 @@ def test_critique_requires_resolvable_baseline_evidence_and_results():
     findings = {finding["id"] for finding in critique["analytical_review"]["findings"]}
 
     assert "missing_baseline_comparison" in findings
+
+
+def test_critique_requires_a_resolvable_causal_design_for_causal_claims():
+    storyboard = report_renderer.design_report_storyboard(
+        report_goal="Estimate the completed onboarding intervention effect.",
+        insights=[{"title": "Guided onboarding improves retention", "detail": "The completed estimate is positive."}],
+        analyses=[{
+            "title": "Estimated retention effect",
+            "claim_id": "onboarding-effect",
+            "caption": "Compare the completed treated and matched control aggregates.",
+            "figure": {"data": [{"type": "bar", "x": ["Control", "Guided"], "y": [0.61, 0.69]}]},
+            "interpretation": "The completed estimate is higher for guided onboarding.",
+            "evidence": [{"kind": "notebook_cell", "ref": "cell-effect"}],
+        }],
+        requirements={
+            "rigor": {"require_claim_contract": True},
+            "evidence_registry": {"targets": [
+                {"id": "cell-effect", "kind": "notebook_cell", "present": True},
+                {"id": "cell-design", "kind": "notebook_cell", "present": True},
+            ]},
+            "claim_contract": {"claims": [{
+                "id": "onboarding-effect",
+                "text": "Guided onboarding causes higher retention in the completed analysis.",
+                "claim_type": "causal",
+                "primary_section": "analysis_1_chart_interpretation",
+                "scope": "Completed eligible customers in the observed period.",
+                "caveat": "The estimate depends on the stated matching assumptions.",
+                "evidence": {"kind": "notebook_cell", "ref": "cell-effect"},
+            }]},
+        },
+    )
+
+    _critiqued, critique = report_renderer.critique_report_storyboard(storyboard)
+    findings = {finding["id"] for finding in critique["analytical_review"]["findings"]}
+    assert "claim_causal_design_missing" in findings
+
+    storyboard["claim_contract"]["claims"][0]["causal_design"] = {
+        "status": "complete",
+        "method": "Matched difference-in-differences with pre-period balance checks",
+        "evidence": {"kind": "notebook_cell", "ref": "cell-design"},
+    }
+    _critiqued, completed = report_renderer.critique_report_storyboard(storyboard)
+    completed_ids = {finding["id"] for finding in completed["analytical_review"]["findings"]}
+    assert "claim_causal_design_missing" not in completed_ids
 
 
 def test_critique_does_not_apply_forecast_checks_to_a_descriptive_report():
