@@ -482,7 +482,7 @@ async def test_report_publish_blocks_missing_required_display_facts(cfg):
 
 
 @pytest.mark.asyncio
-async def test_report_publish_blocks_unresolved_design_review_findings(cfg):
+async def test_report_publish_returns_design_warnings_as_attention_items(cfg):
     designed = await report_design_report(
         cfg=cfg,
         report_goal="Explain the category evidence and let readers inspect the rows.",
@@ -516,13 +516,20 @@ async def test_report_publish_blocks_unresolved_design_review_findings(cfg):
     assert "guided_visual_evidence_missing" in {
         finding["id"] for finding in designed["design_review"]["findings"]
     }
-    with pytest.raises(ValueError, match="design-review gate failed: guided_visual_evidence_missing"):
-        await report_publish(
-            cfg=cfg,
-            report_path="reports/needs-design-repair.html",
-            storyboard_path="reports/needs-design-repair.storyboard.json",
-            export_docx=False,
-        )
+    # Warning-severity design findings are repairable advice: publication
+    # proceeds and returns them as actionable attention items instead of
+    # rejecting the report (only fail-severity rendered defects block).
+    published = await report_publish(
+        cfg=cfg,
+        report_path="reports/needs-design-repair.html",
+        storyboard_path="reports/needs-design-repair.storyboard.json",
+        export_docx=False,
+    )
+    assert published["published"] is True
+    attention_ids = {item["id"] for item in published["design_attention"]}
+    assert "guided_visual_evidence_missing" in attention_ids
+    for item in published["design_attention"]:
+        assert item["recommendation"]
 
 
 @pytest.mark.asyncio

@@ -109,7 +109,11 @@ async def test_independent_chat_files_only_use_its_session_workspace(tmp_home):
 
     files = await get_chat_session_files(session["id"])
 
-    assert files == {
-        "files": [{"name": "notes.txt", "path": str(session_dir / "notes.txt"), "is_dir": False, "size": 21}],
-        "kind": "session",
-    }
+    assert files["kind"] == "session"
+    [entry] = files["files"]
+    assert entry["name"] == "notes.txt"
+    assert entry["path"] == str(session_dir / "notes.txt")
+    assert entry["is_dir"] is False
+    assert entry["size"] == 21
+    # Recency sorting in the Files pane needs the modification time.
+    assert entry["modified"] == pytest.approx((session_dir / "notes.txt").stat().st_mtime)

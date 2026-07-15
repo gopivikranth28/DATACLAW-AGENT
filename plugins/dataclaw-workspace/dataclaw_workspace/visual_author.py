@@ -88,11 +88,21 @@ def visual_author_config(requirements: dict[str, Any] | None, override: dict[str
     """
     supplied = override if isinstance(override, dict) else (requirements or {}).get("visual_author")
     if supplied is None:
-        # Every report still receives the renderer's bounded desktop/editorial
-        # visual system.  Runtime authoring is opt-in because an LLM must not
-        # become a prerequisite for a reproducible report; expose the default
-        # in the receipt so "off" cannot be mistaken for an unstyled fallback.
-        return {"mode": "off", "baseline": "deterministic_desktop_editorial"}
+        # Runtime authoring is the default because it fails safe: an
+        # unavailable or invalid model preserves the storyboard and renders
+        # the deterministic desktop/editorial baseline, so an LLM never
+        # becomes a prerequisite for a reproducible report. The resolved
+        # default is recorded in the receipt so a fallback render cannot be
+        # mistaken for a deliberately unstyled report. Pass mode="off" to
+        # pin the deterministic baseline explicitly.
+        return {
+            "mode": "runtime",
+            "baseline": "deterministic_desktop_editorial",
+            "source": "default",
+            "timeout_seconds": _DEFAULT_TIMEOUT_SECONDS,
+            "max_output_chars": _DEFAULT_MAX_OUTPUT_CHARS,
+            "allow_story_reorder": False,
+        }
     if not isinstance(supplied, dict):
         raise ValueError("visual_author must be a dictionary when supplied")
     config = copy.deepcopy(supplied)
@@ -274,6 +284,12 @@ async def author_report_visuals(
         return original, record
 
     record: dict[str, Any] = {"schema": VISUAL_AUTHOR_SCHEMA, "mode": mode}
+    if _clean(cfg.get("source")) == "default":
+        # Carried into fallback records so quality analysis can distinguish
+        # "the unrequested default had no provider" from an explicit runtime
+        # request that failed. A successful run overwrites this with the
+        # applied source.
+        record["source"] = "default"
     try:
         catalog = build_visual_author_catalog(original, cfg)
     except ValueError as exc:

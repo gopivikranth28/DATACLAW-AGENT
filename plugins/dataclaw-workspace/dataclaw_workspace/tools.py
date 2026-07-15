@@ -44,6 +44,7 @@ from dataclaw_workspace.report_renderer import (
     review_storyboard_authoring as _review_storyboard_authoring,
     review_storyboard_analysis as _review_storyboard_analysis,
     typed_report_section as _typed_report_section,
+    unescape_display_text as _unescape_display_text,
     verify_fact_bound_html as _verify_fact_bound_html,
 )
 from dataclaw_workspace.visual_author import (
@@ -411,11 +412,18 @@ def _attach_rendered_layout_review(design_review: dict[str, Any], runtime_smoke:
     review["rendered_layout"] = runtime_smoke
     if runtime_smoke.get("status") == "failed":
         checks = runtime_smoke.get("checks") if isinstance(runtime_smoke.get("checks"), list) else []
+        named = ", ".join(
+            str(check.get("id") or check.get("name") or "unnamed")
+            for check in checks
+            if isinstance(check, dict)
+        ) or "unnamed"
         findings.append({
+            # A browser-verified rendering defect is fail severity: unlike a
+            # composition warning it describes what the reader actually sees.
             "id": "rendered_layout_smoke_failed",
-            "severity": "warning",
+            "severity": "fail",
             "claim": "Desktop browser layout checks found a rendered report defect.",
-            "recommendation": "Fix the named desktop layout check, redesign the report, and publish the regenerated artifact.",
+            "recommendation": f"Fix the failed rendered checks ({named}), redesign the report, and publish the regenerated artifact.",
             "sections": [],
             "checks": checks,
         })
@@ -705,6 +713,37 @@ const target = process.argv[1];
         }
       });
       document.querySelectorAll('.r-empty-state').forEach(node => failures.push({check: 'empty_state', detail: node.textContent.trim()}));
+      // Rendered-reality checks: a chart that mounts but draws meaningless
+      // marks is a report defect the DOM-structure checks above cannot see.
+      document.querySelectorAll('.js-plotly-plot').forEach((plot, index) => {
+        const data = plot._fullData || [];
+        const layout = plot._fullLayout || {};
+        const axisFor = ref => layout[(ref || 'x').replace(/^([a-z]+)(\\d*)$/, '$1axis$2')] || {};
+        data.forEach((trace, traceIndex) => {
+          if (!trace || trace.visible === false || trace.type !== 'bar') return;
+          const horizontal = trace.orientation === 'h';
+          const values = horizontal ? trace.x : trace.y;
+          const valueAxis = axisFor(horizontal ? trace.xaxis : trace.yaxis);
+          const isNumericValue = v => (typeof v === 'number' && isFinite(v)) || (typeof v === 'string' && v.trim() !== '' && isFinite(Number(v)));
+          const numeric = (Array.isArray(values) ? values : []).filter(isNumericValue);
+          if (!numeric.length) {
+            failures.push({check: 'chart_bar_values', detail: 'chart ' + index + ' bar trace ' + traceIndex + ' has no numeric bar lengths; its value binding resolves to non-numbers'});
+          }
+          if (valueAxis.type === 'category') {
+            failures.push({check: 'chart_value_axis_not_numeric', detail: 'chart ' + index + ' bar trace ' + traceIndex + ' value axis resolved to categories; the chart x/y bindings are crossed'});
+          }
+        });
+      });
+      const entityRe = /&(?:amp|lt|gt|quot|#0*39|#x0*27);/i;
+      const entityNodes = document.querySelectorAll('title, h1, h2, h3, .r-section-kicker, .r-section-dek, .r-caption, .r-contents a, .r-metric-label, .r-insight-card h3');
+      const entitySamples = new Set();
+      entityNodes.forEach(node => {
+        const value = (node.textContent || '').trim();
+        if (entityRe.test(value)) entitySamples.add(value.slice(0, 80));
+      });
+      Array.from(entitySamples).slice(0, 5).forEach(sample => {
+        failures.push({check: 'literal_html_entity', detail: 'visible text contains an unrendered HTML entity: ' + sample});
+      });
       return failures;
     });
     const semanticVisual = await page.evaluate(() => {
@@ -1132,6 +1171,7 @@ async def build_report(
     contract fact via ``data-fact-id``. Verification is fail-closed here and
     re-run at publication.
     """
+    title = _unescape_display_text(title)
     if not html and not html_path:
         raise ValueError("Provide either 'html' (raw HTML string) or 'html_path' (path to HTML file)")
     if html and html_path:
@@ -1501,15 +1541,47 @@ async def report_publish(
     )
     storyboard["design_review"] = design_review
     storyboard["authoring_review"] = authoring_review
+    # Publication blocks only on fail-severity findings (verified rendering
+    # defects). Warning findings are repairable composition advice: they are
+    # returned with per-section remediation instead of rejecting the publish,
+    # so the same storyboard cannot pass the design-time quality gate and then
+    # be vetoed here by the identical findings.
     design_blockers = [
         finding for finding in design_review.get("findings", [])
+        if isinstance(finding, dict) and str(finding.get("severity") or "").strip().lower() == "fail"
+    ]
+    design_attention = [
+        {
+            "id": str(finding.get("id") or "unknown").strip(),
+            "claim": str(finding.get("claim") or "").strip(),
+            "recommendation": str(finding.get("recommendation") or "").strip(),
+            "sections": finding.get("sections") or [],
+        }
+        for finding in design_review.get("findings", [])
         if isinstance(finding, dict) and str(finding.get("severity") or "").strip().lower() == "warning"
     ]
     if design_blockers:
-        finding_ids = ", ".join(str(finding.get("id") or "unknown").strip() for finding in design_blockers)
+        remediation = "; ".join(
+            f"{finding.get('id') or 'unknown'} ({', '.join(finding.get('sections') or []) or 'report'}): "
+            f"{finding.get('recommendation') or finding.get('claim') or 'fix the rendered defect'}"
+            for finding in design_blockers
+        )
+        # A rejection must stay debuggable: persist the recomputed review and
+        # smoke evidence beside the report instead of discarding them with the
+        # error message.
+        rejection_path = resolved_html.with_name(f"{resolved_html.stem}.publish-rejected.json")
+        rejection_path.write_text(json.dumps({
+            "publish_rejection_schema": 1,
+            "rejected_at": datetime.now(timezone.utc).isoformat(),
+            "html_path": str(resolved_html),
+            "html_sha256": actual_html_hash,
+            "design_blockers": design_blockers,
+            "design_attention": design_attention,
+            "runtime_smoke": runtime_smoke,
+        }, indent=2, default=str), encoding="utf-8")
         raise ValueError(
-            "Report publish design-review gate failed: "
-            f"{finding_ids}. Redesign the report with the supplied assets, then publish the regenerated artifact."
+            f"Report publish design-review gate failed: {remediation}. "
+            f"Rejection evidence: {rejection_path}"
         )
     # Recompute instead of trusting the stored critique. A storyboard may have
     # been edited after design, and publication must not accept a stale pass.
@@ -1594,6 +1666,7 @@ async def report_publish(
         },
         "quality": quality,
         "design_review": design_review,
+        "design_attention": design_attention,
         "authoring_review": authoring_review,
         "analytical_review": analytical_review,
         "review_lifecycle": review_lifecycle,
@@ -1622,6 +1695,7 @@ async def report_publish(
         "recipe_path": regeneration_recipe.get("path") if regeneration_recipe else None,
         "quality": quality,
         "design_review": design_review,
+        "design_attention": design_attention,
         "analytical_review": analytical_review,
         "review_lifecycle": review_lifecycle,
         "runtime_smoke": runtime_smoke,
@@ -1663,6 +1737,16 @@ async def report_design_report(
     This is the report-designer layer: it plans the story, layout, controls,
     evidence sections, and quality checks before creating the HTML report.
     """
+    title = _unescape_display_text(title)
+    for collection in (insights, analyses):
+        if not isinstance(collection, list):
+            continue
+        for item in collection:
+            if not isinstance(item, dict):
+                continue
+            for display_key in ("title", "caption"):
+                if isinstance(item.get(display_key), str):
+                    item[display_key] = _unescape_display_text(item[display_key])
     if not isinstance(insights, list):
         raise ValueError("insights must be a list of insight dictionaries")
     if not any(isinstance(item, dict) for item in insights):
@@ -1825,6 +1909,11 @@ async def report_add_section(
     computation, while this tool builds the readable report surface as findings
     emerge.
     """
+    title = _unescape_display_text(title)
+    if isinstance(data, dict):
+        for display_key in ("title", "caption"):
+            if isinstance(data.get(display_key), str):
+                data[display_key] = _unescape_display_text(data[display_key])
     if not report_path.endswith(".html"):
         report_path = report_path.rsplit(".", 1)[0] + ".html"
 

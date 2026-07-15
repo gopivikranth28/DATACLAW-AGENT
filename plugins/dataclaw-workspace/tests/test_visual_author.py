@@ -290,16 +290,21 @@ async def test_disabled_visual_author_bypasses_legacy_fact_catalog_validation():
 
 
 @pytest.mark.asyncio
-async def test_default_visual_author_records_the_deterministic_desktop_baseline():
+async def test_default_visual_author_is_runtime_with_deterministic_fallback():
     config = visual_author_config({})
-    assert config == {"mode": "off", "baseline": "deterministic_desktop_editorial"}
+    assert config["mode"] == "runtime"
+    assert config["baseline"] == "deterministic_desktop_editorial"
+    assert config["source"] == "default"
+    assert config["allow_story_reorder"] is False
 
+    # Without an LLM provider the default must fail safe: the storyboard is
+    # preserved and the receipt records a fallback, never an error.
     authored, record = await author_report_visuals(_storyboard(), config=config)
 
-    assert record["mode"] == "off"
-    assert record["status"] == "disabled"
-    assert record["baseline"] == "deterministic_desktop_editorial"
-    assert record["source"] == "renderer"
+    assert record["mode"] == "runtime"
+    assert record["status"] == "fallback"
+    assert record["applied"] is False
+    assert "No LLM provider" in record["reason"]
     assert authored["visual_author"] == record
 
 

@@ -31,7 +31,7 @@ interface Session { id: string; title: string; createdAt: string; projectId?: st
 interface QueuedMessage { id: string; text: string; ts: number }
 interface PersistedToolTiming { startedAt?: number; finishedAt?: number }
 interface ReportCounts { published: number; scratch: number }
-type FileSort = 'name' | 'size'
+type FileSort = 'name' | 'size' | 'modified' | 'type'
 
 function isSuccessfulArtifactPublish(call: ToolCallState): boolean {
   if (toolBaseName(call.name) !== 'publish_artifact' || call.status !== 'complete' || !call.result) return false
@@ -973,6 +973,11 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
           color: #98a2b3;
           font-style: italic;
         }
+        .dataclaw-session-panel .ant-select-selection-item,
+        .dataclaw-session-panel .ant-select-selection-placeholder,
+        .dataclaw-session-panel .ant-btn-sm {
+          font-size: 12px;
+        }
       `}</style>
       {/* Main chat area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
@@ -1182,7 +1187,7 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
               onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
             />
           )}
-        {panelOpen && <aside aria-label="Session panel" style={{
+        {panelOpen && <aside className="dataclaw-session-panel" aria-label="Session panel" style={{
           width: panelWidth,
           minWidth: 0,
           flex: '0 1 auto',
@@ -1194,12 +1199,16 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
           height: panelOverlay ? '100%' : undefined,
           borderLeft: '1px solid var(--line)',
         }}>
-          <div style={{ flex: '0 0 auto', minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, minHeight: 50, padding: '8px 12px 8px 18px', borderBottom: '1px solid var(--line)' }}>
-            <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--ink)', fontSize: 13, fontWeight: 650 }}>{panelTitle}</span>
-            <Button type="text" size="small" onClick={() => { setPlanReaderExpanded(false); setSidebarCollapsed(true) }} aria-label="Close side panel" style={{ marginLeft: 'auto', color: 'var(--muted)' }}>×</Button>
+          <div style={{ flex: '0 0 auto', minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, minHeight: 42, padding: '6px 10px 6px 14px', borderBottom: '1px solid var(--line)' }}>
+            <span style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--ink)', fontSize: 14, fontWeight: 650 }}>{panelTitle}</span>
+            {sidebarTab === 'artifacts' && <>
+              <Tag style={{ flex: '0 0 auto', margin: 0, fontSize: 11 }}>{reportCounts.published} published</Tag>
+              <Tag color="blue" style={{ flex: '0 0 auto', margin: 0, fontSize: 11 }}>{reportCounts.scratch} scratch</Tag>
+            </>}
+            <Button type="text" size="small" onClick={() => { setPlanReaderExpanded(false); setSidebarCollapsed(true) }} aria-label="Close side panel" style={{ flex: '0 0 auto', color: 'var(--muted)' }}>×</Button>
           </div>
 
-          <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', padding: 12 }}>
+          <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', padding: '8px 10px 10px' }}>
             {/* Plans tab — read-only companion view; decisions live in the plan card */}
             {sidebarTab === 'plans' && showPlansSidebar && (
               <PlanPanel plans={plans} focusedPlan={focusedPlan} onFileClick={previewFile}
@@ -1211,26 +1220,27 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
             {/* Files tab */}
             {sidebarTab === 'files' && showFilesSidebar && (
               <div style={{ minWidth: 0, maxWidth: '100%' }}>
-                <div style={{ display: 'flex', minWidth: 0, alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: 8 }}>
-                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--muted)', fontSize: 11 }}>{effectiveProjectId ? `Project + session workspace · ${projectName || 'project'}` : 'Session workspace'}</span>
-                  <Button size="small" type="text" icon={<ReloadOutlined />} onClick={loadProjectFiles} aria-label="Refresh files" style={{ flex: '0 0 auto', fontSize: 11 }} />
-                </div>
-                {projectFiles.length > 0 && <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
-                  <Button size="small" type={foldersFirst ? 'default' : 'text'} onClick={() => setFoldersFirst(value => !value)} style={{ fontSize: 10.5 }}>
-                    {foldersFirst ? 'Folders first' : 'Mixed items'}
-                  </Button>
-                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--muted)', fontSize: 10.5 }}>
-                    Sort
-                    <select aria-label="Sort files" value={fileSort} onChange={event => setFileSort(event.target.value as FileSort)} style={{ height: 24, border: '1px solid var(--line)', borderRadius: 5, padding: '0 5px', color: 'var(--ink)', background: 'var(--bg)', fontSize: 10.5 }}>
+                <div style={{ display: 'flex', minWidth: 0, alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: projectFiles.length ? 8 : 0 }}>
+                  <span style={{ flex: '1 1 118px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--muted)', fontSize: 12 }}>
+                    {effectiveProjectId ? `Workspace · ${projectName || 'project'}` : 'Session workspace'}
+                  </span>
+                  {projectFiles.length > 0 && <>
+                    <Button size="small" type={foldersFirst ? 'default' : 'text'} onClick={() => setFoldersFirst(value => !value)} style={{ flex: '0 0 auto', fontSize: 11.5, paddingInline: 7 }}>
+                      {foldersFirst ? 'Folders first' : 'Mixed items'}
+                    </Button>
+                    <select aria-label="Sort files" value={fileSort} onChange={event => setFileSort(event.target.value as FileSort)} style={{ flex: '0 0 auto', height: 25, minWidth: 82, border: '1px solid var(--line)', borderRadius: 5, padding: '0 5px', color: 'var(--ink)', background: 'var(--bg)', fontSize: 11.5 }}>
                       <option value="name">Name</option>
+                      <option value="modified">Recent</option>
+                      <option value="type">File type</option>
                       <option value="size">Largest</option>
                     </select>
-                  </label>
-                </div>}
+                  </>}
+                  <Button size="small" type="text" icon={<ReloadOutlined />} onClick={loadProjectFiles} aria-label="Refresh files" style={{ flex: '0 0 auto', fontSize: 12, paddingInline: 3 }} />
+                </div>
                 {fileLoadError ? (
                   <Alert type="warning" showIcon message="Files unavailable" description={fileLoadError} />
                 ) : displayedProjectFiles.length ? (
-                  <ChatFileTree items={displayedProjectFiles} depth={0} onPreview={(path, name) => setFilePreviewTarget({ name, path })} />
+                  <ChatFileTree items={displayedProjectFiles} depth={0} showModified={fileSort === 'modified'} onPreview={(path, name) => setFilePreviewTarget({ name, path })} />
                 ) : (
                   <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No files in this workspace yet" />
                 )}
@@ -1502,8 +1512,8 @@ function PanelRail({ active, planCount, planStatus, reportCount, reportRunning, 
     <Tooltip title={label} placement="left" key={tab}>
       <button type="button" onClick={() => onOpen(tab)} aria-label={label} aria-pressed={active === tab} style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, width: 34, minHeight: 62, padding: '9px 3px 10px', border: 0, borderRadius: 9, color: active === tab ? 'var(--accent)' : 'var(--faint)', background: active === tab ? 'var(--accent-soft)' : 'transparent', cursor: 'pointer' }}>
         {status && <span aria-label={status === 'pending' ? 'Needs review' : status === 'running' ? 'Running' : 'Up to date'} style={{ position: 'absolute', top: 5, left: 5, width: 6, height: 6, borderRadius: '50%', background: status === 'pending' ? 'var(--warn)' : status === 'running' ? 'var(--accent)' : 'var(--good)', boxShadow: status === 'running' ? '0 0 0 3px var(--accent-soft)' : undefined }} />}
-        <span style={{ fontSize: 13, lineHeight: 1 }}>{icon}</span>
-        <span style={{ writingMode: 'vertical-rl', fontSize: 10, fontWeight: 600, letterSpacing: '.05em', lineHeight: 1 }}>{label}</span>
+        <span style={{ fontSize: 14, lineHeight: 1 }}>{icon}</span>
+        <span style={{ writingMode: 'vertical-rl', fontSize: 11, fontWeight: 600, letterSpacing: '.04em', lineHeight: 1 }}>{label}</span>
         {badge ? <span style={{ position: 'absolute', right: -2, top: 2, minWidth: 13, height: 13, padding: '0 3px', borderRadius: 7, color: '#fff', background: tab === 'scope' ? 'var(--warn)' : 'var(--accent)', fontSize: 9, lineHeight: '13px' }}>{badge}</span> : null}
       </button>
     </Tooltip>
@@ -1571,14 +1581,14 @@ function DatasetPanel({ projectName, datasets, selectedIds, onChange }: {
 }) {
   const enabledCount = selectedIds === null ? datasets.length : selectedIds.length
   return (
-    <section aria-label="Session datasets" style={{ color: 'var(--ink)' }}>
-      <p style={{ margin: '0 0 14px', color: 'var(--muted)', fontSize: 12, lineHeight: 1.45 }}>
-        {projectName ? <>Project context · <b>{projectName}</b><br />Choose the datasets available to this session.</> : 'Choose the datasets available to this independent session.'}
-      </p>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-        <span style={{ color: 'var(--muted)', fontSize: 11 }}>{enabledCount} of {datasets.length} enabled</span>
-        <Button size="small" type="text" onClick={() => onChange(null)} style={{ marginLeft: 'auto', fontSize: 11 }}>Use all</Button>
-        <Button size="small" type="text" onClick={() => onChange([])} style={{ fontSize: 11 }}>Clear</Button>
+    <section aria-label="Session datasets. Choose the datasets available to this session." style={{ color: 'var(--ink)' }}>
+      <div style={{ display: 'flex', minWidth: 0, alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+        <span title={projectName ? `Project context · ${projectName}` : 'Independent session'} style={{ flex: '1 1 120px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--muted)', fontSize: 12 }}>
+          {projectName ? <>Project · <b>{projectName}</b></> : 'Independent session'}
+        </span>
+        <span style={{ flex: '0 0 auto', color: 'var(--muted)', fontSize: 11.5 }}>{enabledCount}/{datasets.length} enabled</span>
+        <Button size="small" type="text" onClick={() => onChange(null)} style={{ marginLeft: 'auto', fontSize: 12 }}>Use all</Button>
+        <Button size="small" type="text" onClick={() => onChange([])} style={{ fontSize: 12 }}>Clear</Button>
       </div>
       {datasets.length === 0 ? (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No datasets available" />
@@ -1588,17 +1598,17 @@ function DatasetPanel({ projectName, datasets, selectedIds, onChange }: {
             const enabled = selectedIds === null || selectedIds.includes(dataset.id)
             const name = dataset.name || dataset.title || humanizeScopeId(dataset.id)
             return (
-              <div key={dataset.id} style={{ display: 'flex', minWidth: 0, alignItems: 'center', gap: 9, padding: '9px 10px', border: '1px solid var(--line)', borderRadius: 8, background: 'var(--bg)' }}>
+              <div key={dataset.id} style={{ display: 'flex', minWidth: 0, alignItems: 'center', gap: 8, padding: '7px 9px', border: '1px solid var(--line)', borderRadius: 8, background: 'var(--bg)' }}>
                 <Switch size="small" checked={enabled} onChange={checked => {
                   const current = selectedIds === null ? datasets.map(item => item.id) : selectedIds
                   onChange(checked ? [...current, dataset.id] : current.filter(id => id !== dataset.id))
                 }} />
                 <div style={{ flex: '1 1 auto', minWidth: 0 }}>
-                  <div title={name} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, fontWeight: 600 }}>{name}</div>
-                  <div title={dataset.id} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--faint)', fontFamily: 'var(--mono)', fontSize: 10 }}>{dataset.id}</div>
-                  {dataset.description && <div title={dataset.description} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--muted)', fontSize: 10, marginTop: 2 }}>{dataset.description}</div>}
+                  <div title={name} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, fontWeight: 600 }}>{name}</div>
+                  <div title={dataset.id} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--faint)', fontFamily: 'var(--mono)', fontSize: 11 }}>{dataset.id}</div>
+                  {dataset.description && <div title={dataset.description} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--muted)', fontSize: 11, marginTop: 2 }}>{dataset.description}</div>}
                 </div>
-                {dataset.type && <Tag style={{ flex: '0 0 auto', marginInlineEnd: 0, fontSize: 10 }}>{dataset.type}</Tag>}
+                {dataset.type && <Tag style={{ flex: '0 0 auto', marginInlineEnd: 0, fontSize: 11 }}>{dataset.type}</Tag>}
               </div>
             )
           })}
@@ -1623,7 +1633,7 @@ function ScopePanel({
 }) {
   return (
     <section aria-label="Session scope" style={{ color: 'var(--ink)' }}>
-      <p style={{ margin: '0 0 14px', color: 'var(--muted)', fontSize: 12, lineHeight: 1.45 }}>
+      <p style={{ margin: '0 0 14px', color: 'var(--muted)', fontSize: 13, lineHeight: 1.45 }}>
         {projectName ? <>Project defaults · <b>{projectName}</b><br />Changes below are session-only overrides.</> : 'Independent session scope'}
       </p>
       <ScopeGroup name="Tools" items={tools} selectedIds={selectedToolIds} getId={item => item.name} getName={item => item.label || item.display_name || item.name} describe={item => item.source} onChange={onToolChange} mono />
@@ -1653,9 +1663,9 @@ function ScopeGroup({ name, items, selectedIds, getId, getName, describe, onChan
     <div style={{ borderTop: '1px solid var(--line)', padding: '10px 0' }}>
       <button type="button" onClick={() => setExpanded(value => !value)} aria-expanded={expanded} style={{ display: 'flex', width: '100%', alignItems: 'center', gap: 7, border: 0, padding: 0, background: 'transparent', color: 'var(--ink)', cursor: 'pointer', textAlign: 'left' }}>
         <RightOutlined style={{ fontSize: 9, transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform .15s' }} />
-        <span style={{ fontSize: 12, fontWeight: 600 }}>{name}</span>
-        <span style={{ color: 'var(--faint)', fontSize: 11 }}>{items.length}</span>
-        <span style={{ marginLeft: 'auto', color: off ? 'var(--warn)' : 'var(--good)', fontSize: 11 }}>{items.length ? off ? `${off} off` : 'all on' : 'none defined'}</span>
+        <span style={{ fontSize: 13, fontWeight: 600 }}>{name}</span>
+        <span style={{ color: 'var(--faint)', fontSize: 11.5 }}>{items.length}</span>
+        <span style={{ marginLeft: 'auto', color: off ? 'var(--warn)' : 'var(--good)', fontSize: 11.5 }}>{items.length ? off ? `${off} off` : 'all on' : 'none defined'}</span>
       </button>
       {expanded && visible.map(item => {
         const id = getId(item)
@@ -1670,14 +1680,14 @@ function ScopeGroup({ name, items, selectedIds, getId, getName, describe, onChan
               onChange(checked ? [...current, id] : current.filter(value => value !== id))
             }} />
             <div style={{ flex: '1 1 auto', minWidth: 0 }}>
-              <div title={displayName} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: mono ? 'var(--mono)' : undefined, fontSize: 12 }}>{displayName}</div>
-              {displayName !== id && <div title={id} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--faint)', fontFamily: 'var(--mono)', fontSize: 10 }}>{id}</div>}
+              <div title={displayName} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: mono ? 'var(--mono)' : undefined, fontSize: 13 }}>{displayName}</div>
+              {displayName !== id && <div title={id} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--faint)', fontFamily: 'var(--mono)', fontSize: 11 }}>{id}</div>}
             </div>
-            {detail && <span title={detail} style={{ flex: '0 1 34%', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', color: 'var(--faint)', fontSize: 10, textAlign: 'right', whiteSpace: 'nowrap' }}>{detail}</span>}
+            {detail && <span title={detail} style={{ flex: '0 1 34%', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', color: 'var(--faint)', fontSize: 11, textAlign: 'right', whiteSpace: 'nowrap' }}>{detail}</span>}
           </div>
         )
       })}
-      {expanded && items.length > 6 && <button type="button" onClick={() => setShowAll(value => !value)} style={{ border: 0, margin: '8px 0 0 18px', padding: 0, color: 'var(--accent)', background: 'transparent', cursor: 'pointer', fontSize: 11 }}>{showAll ? 'Show less' : `Show ${items.length - 6} more…`}</button>}
+      {expanded && items.length > 6 && <button type="button" onClick={() => setShowAll(value => !value)} style={{ border: 0, margin: '8px 0 0 18px', padding: 0, color: 'var(--accent)', background: 'transparent', cursor: 'pointer', fontSize: 12 }}>{showAll ? 'Show less' : `Show ${items.length - 6} more…`}</button>}
     </div>
   )
 }
@@ -1692,13 +1702,13 @@ function SessionExperimentsPanel({ sessionId, runs, loading, onRefresh }: {
     <section aria-label="Session experiments" style={{ minWidth: 0, color: 'var(--ink)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 12, fontWeight: 600 }}>MLflow runs</div>
-          <div title={sessionId} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--faint)', fontFamily: 'var(--mono)', fontSize: 10 }}>{sessionId}</div>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>MLflow runs</div>
+          <div title={sessionId} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--faint)', fontFamily: 'var(--mono)', fontSize: 11 }}>{sessionId}</div>
         </div>
         <Button size="small" type="text" icon={<ReloadOutlined />} onClick={onRefresh} aria-label="Refresh experiments" style={{ marginLeft: 'auto' }} />
       </div>
       {loading ? (
-        <div style={{ padding: 32, color: 'var(--muted)', fontSize: 12, textAlign: 'center' }}>Loading experiments…</div>
+        <div style={{ padding: 32, color: 'var(--muted)', fontSize: 13, textAlign: 'center' }}>Loading experiments…</div>
       ) : runs.length === 0 ? (
         <Empty description="No MLflow runs recorded yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />
       ) : (
@@ -1710,19 +1720,19 @@ function SessionExperimentsPanel({ sessionId, runs, loading, onRefresh }: {
             return (
               <article key={run.run_id || index} style={{ minWidth: 0, border: '1px solid var(--line)', borderRadius: 8, padding: 10, background: 'var(--bg)' }}>
                 <div style={{ display: 'flex', minWidth: 0, alignItems: 'center', gap: 8 }}>
-                  <span title={runName} style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, fontWeight: 600 }}>{runName}</span>
-                  <Tag color={run.status === 'FINISHED' ? 'green' : run.status === 'RUNNING' ? 'blue' : 'default'} style={{ flex: '0 0 auto', marginInlineEnd: 0, fontSize: 10 }}>{run.status || 'UNKNOWN'}</Tag>
+                  <span title={runName} style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, fontWeight: 600 }}>{runName}</span>
+                  <Tag color={run.status === 'FINISHED' ? 'green' : run.status === 'RUNNING' ? 'blue' : 'default'} style={{ flex: '0 0 auto', marginInlineEnd: 0, fontSize: 11 }}>{run.status || 'UNKNOWN'}</Tag>
                 </div>
-                <div style={{ display: 'flex', minWidth: 0, gap: 6, marginTop: 5, color: 'var(--faint)', fontSize: 10 }}>
+                <div style={{ display: 'flex', minWidth: 0, gap: 6, marginTop: 5, color: 'var(--faint)', fontSize: 11 }}>
                   <code title={run.run_id}>{run.run_id?.slice(0, 8) || 'no run id'}</code>
                   {run.start_time && <span>{formatExperimentTime(run.start_time)}</span>}
                   {run.artifacts?.length > 0 && <span>{run.artifacts.length} file{run.artifacts.length === 1 ? '' : 's'}</span>}
                 </div>
                 {metrics.length > 0 && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 8 }}>
-                  {metrics.map(([key, value]) => <Tag key={key} color="green" style={{ maxWidth: '100%', marginInlineEnd: 0, overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 10 }}>{key}: {formatExperimentValue(value)}</Tag>)}
+                  {metrics.map(([key, value]) => <Tag key={key} color="green" style={{ maxWidth: '100%', marginInlineEnd: 0, overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 11 }}>{key}: {formatExperimentValue(value)}</Tag>)}
                 </div>}
                 {params.length > 0 && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
-                  {params.map(([key, value]) => <Tag key={key} color="blue" style={{ maxWidth: '100%', marginInlineEnd: 0, overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 10 }}>{key}: {formatExperimentValue(value)}</Tag>)}
+                  {params.map(([key, value]) => <Tag key={key} color="blue" style={{ maxWidth: '100%', marginInlineEnd: 0, overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 11 }}>{key}: {formatExperimentValue(value)}</Tag>)}
                 </div>}
               </article>
             )
@@ -1868,6 +1878,31 @@ function CompactionDivider({ message }: { message: AGUIMessage }) {
   )
 }
 
+function fileExtension(name: unknown): string {
+  const base = String(name || '')
+  const dot = base.lastIndexOf('.')
+  return dot > 0 ? base.slice(dot + 1).toLowerCase() : ''
+}
+
+// A folder is as recent as its most recently touched descendant, so active
+// work areas surface with their files under a recency sort.
+function effectiveModified(item: any): number {
+  const own = Number(item?.modified) || 0
+  if (!item?.is_dir || !Array.isArray(item?.children)) return own
+  return item.children.reduce((latest: number, child: any) => Math.max(latest, effectiveModified(child)), own)
+}
+
+function relativeFileTime(modified: unknown): string {
+  const seconds = Number(modified)
+  if (!Number.isFinite(seconds) || seconds <= 0) return ''
+  const delta = Date.now() / 1000 - seconds
+  if (delta < 60) return 'now'
+  if (delta < 3600) return `${Math.floor(delta / 60)}m`
+  if (delta < 86400) return `${Math.floor(delta / 3600)}h`
+  if (delta < 7 * 86400) return `${Math.floor(delta / 86400)}d`
+  return new Date(seconds * 1000).toLocaleDateString()
+}
+
 function sortFileTree(items: any[], sort: FileSort, foldersFirst: boolean): any[] {
   const virtualRoots: any[] = []
   const ordinary: any[] = []
@@ -1883,6 +1918,12 @@ function sortFileTree(items: any[], sort: FileSort, foldersFirst: boolean): any[
     if (sort === 'size') {
       const sizeDifference = (Number(right?.size) || 0) - (Number(left?.size) || 0)
       if (sizeDifference) return sizeDifference
+    } else if (sort === 'modified') {
+      const recencyDifference = effectiveModified(right) - effectiveModified(left)
+      if (recencyDifference) return recencyDifference
+    } else if (sort === 'type') {
+      const typeDifference = fileExtension(left?.name).localeCompare(fileExtension(right?.name))
+      if (typeDifference) return typeDifference
     }
     return String(left?.name || '').localeCompare(String(right?.name || ''), undefined, { numeric: true, sensitivity: 'base' })
   })
@@ -1890,7 +1931,7 @@ function sortFileTree(items: any[], sort: FileSort, foldersFirst: boolean): any[
   return [...virtualRoots, ...ordinary]
 }
 
-function ChatFileTree({ items, depth, onPreview }: { items: any[]; depth: number; onPreview?: (path: string, name: string) => void }) {
+function ChatFileTree({ items, depth, onPreview, showModified }: { items: any[]; depth: number; onPreview?: (path: string, name: string) => void; showModified?: boolean }) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(items.filter(item => item.path?.startsWith('__')).map(item => item.path)))
   useEffect(() => {
     const virtualRootPaths = items.filter(item => item.path?.startsWith('__')).map(item => item.path)
@@ -1904,18 +1945,22 @@ function ChatFileTree({ items, depth, onPreview }: { items: any[]; depth: number
       {items.map((item: any, i: number) => (
         <div key={item.path || `${item.name}-${i}`}>
           <div onClick={() => item.is_dir ? toggle(item.path) : onPreview?.(item.path, item.name)} style={{
-            padding: '3px 6px', fontSize: 12, fontFamily: 'monospace', cursor: 'pointer',
+            padding: '3px 6px', fontSize: 13, fontFamily: 'monospace', cursor: 'pointer',
             display: 'flex', minWidth: 0, alignItems: 'center', gap: 4, borderRadius: 3,
             color: item.is_dir ? '#1677ff' : '#555',
           }}
             onMouseEnter={e => (e.currentTarget.style.background = '#f5f5f5')}
             onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
           >
-            {item.is_dir ? (expanded.has(item.path) ? <FolderOpenOutlined style={{ fontSize: 11 }} /> : <FolderOutlined style={{ fontSize: 11 }} />) : <FileIcon name={item.name} />}
+            {item.is_dir ? (expanded.has(item.path) ? <FolderOpenOutlined style={{ fontSize: 12 }} /> : <FolderOutlined style={{ fontSize: 12 }} />) : <FileIcon name={item.name} />}
             <span title={item.name} style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
-            {!item.is_dir && <span style={{ flex: '0 0 auto', color: '#bbb', fontSize: 10, marginLeft: 'auto' }}>{(item.size / 1024).toFixed(1)}K</span>}
+            {!item.is_dir && (
+              <span style={{ flex: '0 0 auto', color: '#999', fontSize: 11, marginLeft: 'auto' }}>
+                {showModified ? (relativeFileTime(item.modified) || `${(item.size / 1024).toFixed(1)}K`) : `${(item.size / 1024).toFixed(1)}K`}
+              </span>
+            )}
           </div>
-          {item.is_dir && expanded.has(item.path) && item.children && <ChatFileTree items={item.children} depth={depth + 1} onPreview={onPreview} />}
+          {item.is_dir && expanded.has(item.path) && item.children && <ChatFileTree items={item.children} depth={depth + 1} onPreview={onPreview} showModified={showModified} />}
         </div>
       ))}
     </div>

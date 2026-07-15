@@ -256,6 +256,7 @@ def write_artifact_version(
     base_version: int | None = None,
     session_id: str = "default",
     project_id: str | None = None,
+    gating: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     encoded = html.encode("utf-8")
     if len(encoded) > MAX_PUBLISHED_ARTIFACT_BYTES:
@@ -341,13 +342,18 @@ def write_artifact_version(
             "latest_version": version,
             "updated_at": now,
         })
-        meta.setdefault("versions", []).append({
+        if gating is not None:
+            meta["gating"] = gating
+        version_record = {
             "version": version,
             "label": label,
             "sha256": digest,
             "bytes": len(encoded),
             "created_at": now,
-        })
+        }
+        if gating is not None:
+            version_record["gating"] = gating
+        meta.setdefault("versions", []).append(version_record)
         _atomic_write_text(meta_path, json.dumps(meta, indent=2, default=str))
 
     return {

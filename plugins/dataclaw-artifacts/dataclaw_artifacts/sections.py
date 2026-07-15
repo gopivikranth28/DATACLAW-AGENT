@@ -362,6 +362,24 @@ def clean_text(value: Any) -> str:
     return _CONTROL_CHARS.sub("?", "" if value is None else str(value))
 
 
+def unescape_display_text(value: Any) -> str:
+    """Resolve HTML entities in display text (titles, captions) before storage.
+
+    Authored tool arguments and text extracted from existing HTML routinely
+    arrive pre-escaped ("Archetypes &amp; Segmentation"); rendering escapes
+    again and the reader sees the literal entity. Unescape until stable so a
+    double-escaped source ("&amp;amp;") also resolves, then let the renderer
+    apply the single canonical escape.
+    """
+    text = clean_text(value)
+    for _ in range(3):
+        unescaped = html_lib.unescape(text)
+        if unescaped == text:
+            break
+        text = unescaped
+    return text
+
+
 def _figure_from_data(data: dict[str, Any]) -> dict[str, Any]:
     figure = data.get("figure")
     if not figure and data.get("figure_json"):
