@@ -157,7 +157,12 @@ class WorkspacePlugin:
 
         ctx.tool_registry.register_tool(PythonTool(
             name="build_report",
-            description="Normalize raw HTML into a typed, storyboard-backed report while preserving the source HTML beside it. The output includes a storyboard, critique record, and quality result; provide either raw HTML or a workspace HTML path.",
+            description=(
+                "Normalize raw HTML into a typed, storyboard-backed report while preserving the source HTML beside it. "
+                "The output includes a storyboard, critique record, and quality result; provide either raw HTML or a workspace HTML path. "
+                "Supplying 'facts' opts into the verified-freeform tier: the authored page is preserved as the report itself, and every "
+                "displayed number/claim must be bound to a contract fact via data-fact-id; verification is fail-closed here and re-run at publish."
+            ),
             fn=lambda **kw: build_report(cfg=cfg, **kw),
             parameters={
                 "type": "object",
@@ -170,6 +175,7 @@ class WorkspacePlugin:
                     "title": {"type": "string", "description": "Optional report title override"},
                     "audience": {"type": "string", "description": "Target reader/audience"},
                     "quality_gate": {"type": "string", "description": "Report-quality behavior after normalization", "enum": ["warn", "fail", "off"], "default": "warn"},
+                    "facts": {"type": "array", "description": "Verified-freeform fact contract: [{fact_id, text}] entries that data-fact-id elements in the supplied HTML must carry verbatim. When present, the source HTML is preserved as the report and fact verification gates both this call and publication.", "items": {"type": "object"}},
                 },
             },
         ))
@@ -195,7 +201,7 @@ class WorkspacePlugin:
                     "title": {"type": "string", "description": "Report title", "default": "Analysis Report"},
                     "quality_gate": {"type": "string", "description": "Report-quality behavior: warn and write, fail on required quality regressions, or off", "enum": ["warn", "fail", "off"], "default": "fail"},
                     "design_passes": {"type": "integer", "description": "Bounded storyboard refinement passes (1-5); default 5 preserves supplied context while improving the desktop composition, adjacent evidence, and chart interpretation without adding generic report copy", "minimum": 1, "maximum": 5, "default": 5},
-                    "visual_author": {"type": "object", "description": "Optional runtime visual-author contract. Set mode='runtime' to let the configured LLM choose a named theme, section surfaces, and selections of only supplied typed fact IDs. Facts may belong to an insight (insight_id/finding_id) or any supported section (section_id/layout_role), with text and uses (pill, scan_point, example, annotation); the model cannot create report copy or HTML. Set allow_story_reorder=true only with declared visual_author_story_zone/block source fields, so it may reorder whole blocks within a zone. Runtime output is bounded and fallback is recorded; mode='provided' uses a reproducible validated spec, while mode='required' stops and writes a failure audit."},
+                    "visual_author": {"type": "object", "description": "Optional runtime visual-author contract. Set mode='runtime' to let the configured LLM choose a named theme, section surfaces, per-chart interpretation_placement (caption, takeaway_panel, side_rail, figure_annotation), and selections of only supplied typed fact IDs. Facts may belong to an insight (insight_id/finding_id) or any supported section (section_id/layout_role), with text and uses (pill, scan_point, example, annotation); the model cannot create report copy or HTML. Set allow_story_reorder=true only with declared visual_author_story_zone/block source fields, so it may reorder whole blocks within a zone. Runtime output is bounded and fallback is recorded; mode='provided' uses a reproducible validated spec, while mode='required' stops and writes a failure audit."},
                 },
                 "required": ["report_goal", "insights"],
             },
@@ -204,8 +210,10 @@ class WorkspacePlugin:
         ctx.tool_registry.register_tool(PythonTool(
             name="report_review_visuals",
             description=(
-                "Capture full-page and key-section browser screenshots for a structured report, then record a named human or vision-review decision "
-                "bound to the exact HTML hash. Use before publishing reports that require visual review."
+                "Record a named human or vision-review decision bound to the exact HTML hash and to the screenshot bytes the reviewer inspected. "
+                "Reuses the existing verified screenshot capture for this HTML when present; captures fresh full-page and key-section browser "
+                "screenshots only when none exists. To approve, first call once to capture, inspect the screenshots, then call again with "
+                "decision='approved'. Use before publishing reports that require visual review."
             ),
             fn=lambda **kw: report_review_visuals(cfg=cfg, **kw),
             parameters={
@@ -228,8 +236,9 @@ class WorkspacePlugin:
                 "fail severity. Writes a durable publish receipt and records the DOCX export result. "
                 "The receipt binds the exact rendered HTML and analytical-review contract for artifact publication. "
                 "When visual review is required, an approved report_review_visuals record for the exact HTML is also required. "
-                "Use after report_design_report or a structured build_report result; "
-                "low-confidence preserved source must be redesigned before publishing."
+                "Use after report_design_report or a build_report result. A report carrying a fact contract has its "
+                "data-fact-id bindings re-verified against the published document; a low-confidence preserved page "
+                "without a fact contract is blocked — rebuild it with build_report(facts=[...]) or redesign it."
             ),
             fn=lambda **kw: report_publish(cfg=cfg, **kw),
             parameters={
@@ -239,7 +248,7 @@ class WorkspacePlugin:
                     "storyboard_path": {"type": "string", "description": "Storyboard JSON created for the report"},
                     "receipt_path": {"type": "string", "description": "Publish receipt JSON path (defaults beside the report)"},
                     "export_docx": {"type": "boolean", "description": "Attempt DOCX export and record its outcome", "default": True},
-                    "require_visual_review": {"type": "boolean", "description": "Require a named approved report_review_visuals record, bound to passed Playwright desktop/webview full-page and key-section screenshot artifacts, for this final release. When omitted, uses requirements.publication.require_visual_review."},
+                    "require_visual_review": {"type": "boolean", "description": "Require a named approved report_review_visuals record, bound to passed Playwright desktop full-page and key-section screenshot artifacts, for this final release. When omitted, uses requirements.publication.require_visual_review."},
                 },
                 "required": ["report_path", "storyboard_path"],
             },

@@ -10,6 +10,7 @@ See docs/report-builder-architecture.md, Appendix A, for the full specification.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -50,7 +51,8 @@ def _validate(rubric: Any) -> None:
     if not isinstance(thresholds, dict):
         raise RubricError("rubric must define a thresholds mapping")
     for key, value in thresholds.items():
-        if not isinstance(value, int):
+        # bool is an int subclass; a YAML true/false is never a valid threshold.
+        if not isinstance(value, int) or isinstance(value, bool):
             raise RubricError(f"threshold {key!r} must be an integer, got {value!r}")
     criteria = rubric.get("criteria")
     if not isinstance(criteria, list) or not criteria:
@@ -72,9 +74,12 @@ def _validate(rubric: Any) -> None:
             raise RubricError(f"criterion {cid!r} has invalid severity {criterion['severity']!r}")
         if criterion["status"] not in _VALID_STATUSES:
             raise RubricError(f"criterion {cid!r} has invalid status {criterion['status']!r}")
+    # Second pass: a replaced criterion must not exist anywhere in the file,
+    # regardless of declaration order.
+    for criterion in criteria:
         replaces = criterion.get("replaces")
         if replaces is not None and (not isinstance(replaces, str) or replaces in seen):
-            raise RubricError(f"criterion {cid!r} has invalid replaces {replaces!r}")
+            raise RubricError(f"criterion {criterion['id']!r} has invalid replaces {replaces!r}")
 
 
 def rubric_version() -> int:
@@ -82,12 +87,14 @@ def rubric_version() -> int:
 
 
 def rubric_thresholds() -> dict[str, int]:
-    return load_report_rubric()["thresholds"]
+    # Copies: the loader's cache is process-wide, so a caller mutation must
+    # never poison the rubric for everyone else.
+    return dict(load_report_rubric()["thresholds"])
 
 
 def rubric_criteria() -> dict[str, dict[str, Any]]:
     """All criteria keyed by id, in file order."""
-    return {criterion["id"]: criterion for criterion in load_report_rubric()["criteria"]}
+    return {criterion["id"]: deepcopy(criterion) for criterion in load_report_rubric()["criteria"]}
 
 
 def live_criterion_ids() -> list[str]:

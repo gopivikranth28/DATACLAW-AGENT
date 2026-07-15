@@ -14,7 +14,7 @@
 # promotion to `fail`, except a versioned criterion that closes a material
 # publish-gate bypass. rubric_version bumps on any criteria/threshold change.
 
-rubric_version: 7
+rubric_version: 8
 
 # Gate thresholds — every value matches the live gate (analyze_report_quality).
 thresholds:
@@ -301,11 +301,16 @@ criteria:
     status: live
     scope: report
     applies_to: [report]
-    signal: Report contains at least one typed DataClaw section metadata block.
+    signal: >-
+      Report contains at least one typed DataClaw section metadata block, OR the
+      document carries a passing fact-contract verification (verified-freeform
+      tier: every displayed number/claim bound via data-fact-id).
     remediable: true
     on_fail: block
-    remediation: migrate_to_structured_storyboard
-    rationale: A publish gate cannot assess a raw document with no typed section metadata.
+    remediation: migrate_to_structured_storyboard_or_supply_fact_contract
+    rationale: >-
+      A publish gate cannot assess a raw document with no typed section metadata;
+      a fact-verified freeform document is assessable through its bindings instead.
 
   - id: oversized_report
     axis: integrity

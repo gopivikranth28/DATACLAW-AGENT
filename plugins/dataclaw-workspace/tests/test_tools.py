@@ -280,7 +280,7 @@ async def test_report_publish_regates_and_writes_receipt(cfg):
     assert published["docx_export"] == {"requested": False, "status": "skipped"}
     assert published["runtime_smoke"]["status"] in {"passed", "skipped"}
     assert receipt["status"] == "published"
-    assert receipt["quality"]["rubric_version"] == 7
+    assert receipt["quality"]["rubric_version"] == 8
     assert receipt["analytical_review"] == published["analytical_review"]
     assert published["analytical_review"]["status"] == "pass"
     assert receipt["runtime_smoke"] == published["runtime_smoke"]
@@ -344,8 +344,14 @@ async def test_report_publish_can_require_browser_visual_review_artifacts(cfg, m
         requirements={"publication": {"require_visual_review": True}},
     )
 
-    async def skipped_smoke(_path):
+    async def skipped_smoke(_path, **_kwargs):
         return {"status": "skipped", "reason": "Playwright unavailable"}
+
+    def clear_capture():
+        # Each stage injects a different fake smoke; drop the prior capture so
+        # the review captures fresh instead of binding to the inspected one.
+        html_abs = workspace_tools._resolve_path("default", "reports/final-visual-review.html")
+        workspace_tools._visual_review_capture_path(html_abs).unlink(missing_ok=True)
 
     monkeypatch.setattr(workspace_tools, "_run_report_runtime_smoke", skipped_smoke)
     with pytest.raises(ValueError, match="visual-review gate failed"):
@@ -356,7 +362,7 @@ async def test_report_publish_can_require_browser_visual_review_artifacts(cfg, m
             export_docx=False,
         )
 
-    async def reviewed_smoke(_path):
+    async def reviewed_smoke(_path, **_kwargs):
         review_dir = _path.with_name(f"{_path.stem}.visual-review")
         review_dir.mkdir(parents=True, exist_ok=True)
         artifacts = []
@@ -379,7 +385,7 @@ async def test_report_publish_can_require_browser_visual_review_artifacts(cfg, m
             "semantic_visual": {"visual_semantic_schema": 1, "status": "pass", "findings": []},
         }
 
-    async def semantic_attention_smoke(_path):
+    async def semantic_attention_smoke(_path, **_kwargs):
         result = await reviewed_smoke(_path)
         result["semantic_visual"] = {
             "visual_semantic_schema": 1,
@@ -399,13 +405,14 @@ async def test_report_publish_can_require_browser_visual_review_artifacts(cfg, m
             notes="Semantic review requires repair before approval.",
         )
 
-    async def outside_review_dir_smoke(_path):
+    async def outside_review_dir_smoke(_path, **_kwargs):
         result = await reviewed_smoke(_path)
         artifact = result["screenshots"][0]
         artifact["path"] = str(_path)
         artifact["sha256"] = hashlib.sha256(_path.read_bytes()).hexdigest()
         return result
 
+    clear_capture()
     monkeypatch.setattr(workspace_tools, "_run_report_runtime_smoke", outside_review_dir_smoke)
     with pytest.raises(ValueError, match="outside the report review directory"):
         await report_review_visuals(
@@ -417,6 +424,7 @@ async def test_report_publish_can_require_browser_visual_review_artifacts(cfg, m
             notes="Review artifacts must remain bound to the report review directory.",
         )
 
+    clear_capture()
     monkeypatch.setattr(workspace_tools, "_run_report_runtime_smoke", reviewed_smoke)
     reviewed = await report_review_visuals(
         cfg=cfg,
@@ -682,13 +690,6 @@ async def test_build_report_normalizes_raw_html_for_publish(cfg):
         output_path="reports/raw.html",
     )
 
-    published = await report_publish(
-        cfg=cfg,
-        report_path="reports/raw.html",
-        storyboard_path="reports/raw.storyboard.json",
-        export_docx=False,
-    )
-
     assert built["normalization"]["mode"] == "preserved_low_confidence"
     assert Path(built["source_html_path"]).read_text() == "<html><body><h1>Legacy report</h1></body></html>"
     assert Path(built["storyboard_path"]).is_file()
@@ -697,7 +698,16 @@ async def test_build_report_normalizes_raw_html_for_publish(cfg):
     recipe = json.loads(Path(built["recipe_path"]).read_text())
     assert storyboard["regeneration_recipe"]["recipe_schema"] == 1
     assert recipe["source_context_sha256"] == storyboard["regeneration_recipe"]["source_context_sha256"]
-    assert published["published"] is True
+
+    # The skill rule is mechanical now: a low-confidence rebuild is not
+    # publishable without a fact contract (verified-freeform upgrade path).
+    with pytest.raises(ValueError, match="has no fact contract"):
+        await report_publish(
+            cfg=cfg,
+            report_path="reports/raw.html",
+            storyboard_path="reports/raw.storyboard.json",
+            export_docx=False,
+        )
 
 
 @pytest.mark.asyncio
@@ -901,6 +911,9 @@ async def test_report_design_report_requires_completed_insights(cfg):
 
 @pytest.mark.asyncio
 async def test_report_design_report_default_gate_rejects_noninteractive_chart_stack(cfg):
+    # The rubric exempts small reports: the explorer requirement applies at
+    # >= explorer_required_min_sections sections AND >= explorer_required_min_charts
+    # chart-like sections, so this stack must be large enough to cross both.
     with pytest.raises(ValueError, match="missing_interactive_explorer"):
         await report_design_report(
             cfg=cfg,
@@ -916,9 +929,32 @@ async def test_report_design_report_default_gate_rejects_noninteractive_chart_st
             ],
             analyses=[
                 {"title": f"Chart {i}", "figure": {"data": [{"type": "bar", "x": ["A"], "y": [i]}]}}
-                for i in range(3)
+                for i in range(5)
             ],
         )
+
+
+@pytest.mark.asyncio
+async def test_small_reports_are_exempt_from_the_explorer_requirement(cfg):
+    """A compact report with three interpreted charts publishes without an explorer."""
+    designed = await report_design_report(
+        cfg=cfg,
+        quality_gate="warn",
+        report_goal="Explain the compact chart trio.",
+        title="Compact Trio",
+        report_path="reports/compact-trio.html",
+        insights=[{
+            "title": "One insight exists",
+            "detail": "The compact report carries its evidence in three interpreted charts.",
+            "finding_id": "find-compact",
+        }],
+        analyses=[
+            {"title": f"Chart {i}", "figure": {"data": [{"type": "bar", "x": ["A"], "y": [i]}]}}
+            for i in range(3)
+        ],
+    )
+    codes = {warning.get("code") for warning in designed["quality"].get("warnings", [])}
+    assert "missing_interactive_explorer" not in codes
 
 
 @pytest.mark.asyncio
@@ -1696,3 +1732,32 @@ def test_report_sections_use_artifact_contract():
     assert first["section_id"] == second["section_id"]
     assert first["payload"]["metric_count"] == 1
     assert "--dc-danger" in first["tokens"]
+
+
+@pytest.mark.asyncio
+async def test_publish_rejects_a_storyboard_edited_after_rendering(cfg):
+    """The recipe gate recomputes hashes: a post-render section_plan edit fails."""
+    designed = await report_design_report(
+        cfg=cfg,
+        quality_gate="warn",
+        report_goal="Explain the completed finding.",
+        title="Recipe binding",
+        report_path="reports/recipe-bind.html",
+        storyboard_path="reports/recipe-bind.storyboard.json",
+        insights=[{
+            "title": "The completed finding holds",
+            "detail": "The supplied evidence supports the completed finding.",
+            "finding_id": "recipe-bind-finding",
+        }],
+    )
+    storyboard_path = Path(designed["storyboard_path"])
+    storyboard = json.loads(storyboard_path.read_text())
+    storyboard["section_plan"][0]["data"]["title"] = "Tampered after render"
+    storyboard_path.write_text(json.dumps(storyboard, indent=2, default=str))
+
+    with pytest.raises(ValueError, match="edited after rendering"):
+        await report_publish(
+            cfg=cfg,
+            report_path="reports/recipe-bind.html",
+            storyboard_path="reports/recipe-bind.storyboard.json",
+        )

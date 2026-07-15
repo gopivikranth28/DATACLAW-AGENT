@@ -36,7 +36,15 @@ THEME_TOKENS: dict[str, dict[str, str]] = {
     "forest": {"accent": "#166534", "accent_2": "#0f766e", "accent_3": "#b45309", "accent_soft": "#dcfce7"},
     "plum": {"accent": "#6d28d9", "accent_2": "#0f766e", "accent_3": "#c2410c", "accent_soft": "#f3e8ff"},
     "slate": {"accent": "#334155", "accent_2": "#0f766e", "accent_3": "#b45309", "accent_soft": "#e2e8f0"},
+    "ember": {"accent": "#c2410c", "accent_2": "#0f766e", "accent_3": "#2563eb", "accent_soft": "#ffedd5"},
+    "indigo": {"accent": "#4f46e5", "accent_2": "#0f766e", "accent_3": "#b45309", "accent_soft": "#e0e7ff"},
+    "crimson": {"accent": "#be185d", "accent_2": "#0f766e", "accent_3": "#b45309", "accent_soft": "#fce7f3"},
 }
+
+# Canonical placement vocabulary for a chart's interpretation
+# (docs/report-design-variance.md, D2). The renderer owns the deterministic
+# default; the visual author may only pick one of these validated values.
+INTERPRETATION_PLACEMENTS = {"caption", "takeaway_panel", "side_rail", "figure_annotation"}
 
 _VALID_MODES = {"off", "runtime", "required", "provided"}
 _VALID_SURFACES = {"strong", "quiet", "evidence", "trust"}
@@ -130,6 +138,11 @@ def build_visual_author_catalog(storyboard: dict[str, Any], config: dict[str, An
             continue
         section_type = _clean(planned.get("section_type") or planned.get("kind")).lower()
         section_id = _section_id(planned, index)
+        # Freeze the resolved id onto the section: an index-derived fallback id
+        # would otherwise shift when a composition reorder moves the section
+        # between validation and apply, mis-targeting or dropping a validated
+        # choice.
+        planned.setdefault("visual_author_section_id", section_id)
         data = planned.get("data") if isinstance(planned.get("data"), dict) else {}
         capability = _section_capability(section_type)
         if capability is None:
@@ -148,6 +161,8 @@ def build_visual_author_catalog(storyboard: dict[str, Any], config: dict[str, An
             entry["layouts"] = capability["layouts"]
         if "evidence_presentations" in capability:
             entry["evidence_presentations"] = capability["evidence_presentations"]
+        if "interpretation_placements" in capability:
+            entry["interpretation_placements"] = capability["interpretation_placements"]
         entry["item_count"] = len(data.get("items", data.get("insights", []))) if isinstance(data.get("items", data.get("insights", [])), list) else 0
         sections.append(entry)
         if section_type == "insight_grid":
@@ -209,7 +224,7 @@ The JSON shape is:
   "schema": 1,
   "theme": "blue",
   "sections": [
-    {"section_id": "...", "surface": "quiet|evidence|trust|strong", "layout": "editorial_list|card_grid", "evidence_presentation": "linked|chips|compact|rail|disclosure|expanded", "pills": [{"fact_id": "...", "tone": "accent|good|warn|danger|neutral"}], "scan_points": ["..."], "examples": ["..."], "annotations": ["..."]}
+    {"section_id": "...", "surface": "quiet|evidence|trust|strong", "layout": "editorial_list|card_grid", "evidence_presentation": "linked|chips|compact|rail|disclosure|expanded", "interpretation_placement": "caption|takeaway_panel|side_rail|figure_annotation", "pills": [{"fact_id": "...", "tone": "accent|good|warn|danger|neutral"}], "scan_points": ["..."], "examples": ["..."], "annotations": ["..."]}
   ],
   "insights": [
     {
@@ -258,15 +273,23 @@ async def author_report_visuals(
         original["visual_author"] = record
         return original, record
 
-    catalog = build_visual_author_catalog(original, cfg)
+    record: dict[str, Any] = {"schema": VISUAL_AUTHOR_SCHEMA, "mode": mode}
+    try:
+        catalog = build_visual_author_catalog(original, cfg)
+    except ValueError as exc:
+        # Source-declaration errors must not bypass the required-mode audit
+        # sidecar: record what failed, then fail with the same contract as a
+        # runtime failure. Provided mode keeps the plain caller-facing error.
+        if mode == "provided":
+            raise
+        record["stage"] = "catalog"
+        return _fallback_or_raise(original, record, mode, f"catalog: {exc}")
     catalog_hash = _stable_sha256(catalog)
-    record: dict[str, Any] = {
-        "schema": VISUAL_AUTHOR_SCHEMA,
-        "mode": mode,
+    record.update({
         "catalog_sha256": catalog_hash,
         "fact_count": len(catalog["facts"]),
         "section_count": len(catalog["sections"]),
-    }
+    })
 
     if mode == "provided":
         candidate = cfg.get("spec")
@@ -313,7 +336,10 @@ async def author_report_visuals(
     except Exception as exc:  # A malformed generation must not alter the report.
         return _fallback_or_raise(original, record, mode, f"{type(exc).__name__}: {exc}")
 
-    applied = apply_visual_spec(original, spec, catalog)
+    try:
+        applied = apply_visual_spec(original, spec, catalog)
+    except Exception as exc:  # Applying a validated spec must also fail safe.
+        return _fallback_or_raise(original, record, mode, f"{type(exc).__name__}: {exc}")
     record.update({
         "status": "applied",
         "applied": True,
@@ -367,6 +393,11 @@ def validate_visual_spec(candidate: Any, catalog: dict[str, Any]) -> dict[str, A
             if evidence not in capability.get("evidence_presentations", []):
                 raise ValueError(f"evidence_presentation {evidence!r} is not allowed for {section_id!r}")
             normalized["evidence_presentation"] = evidence
+        placement = _clean(item.get("interpretation_placement")).lower().replace("-", "_")
+        if placement:
+            if placement not in capability.get("interpretation_placements", []):
+                raise ValueError(f"interpretation_placement {placement!r} is not allowed for {section_id!r}")
+            normalized["interpretation_placement"] = placement
         for field, fact_use in _DISPLAY_FACT_FIELDS.items():
             selections = _validate_fact_selections(
                 item.get(field, []),
@@ -456,6 +487,8 @@ def apply_visual_spec(storyboard: dict[str, Any], spec: dict[str, Any], catalog:
             data["evidence_presentation"] = choice["evidence_presentation"]
             if _clean(planned.get("section_type")).lower() == "evidence_trace":
                 data["presentation"] = choice["evidence_presentation"]
+        if choice.get("interpretation_placement"):
+            data["interpretation_placement"] = choice["interpretation_placement"]
 
         _apply_display_fact_choices(data, choice, facts=facts)
 
@@ -500,7 +533,13 @@ def _section_capability(section_type: str) -> dict[str, list[str]] | None:
             "layouts": sorted(_VALID_INSIGHT_LAYOUTS),
             "evidence_presentations": sorted(_VALID_INSIGHT_EVIDENCE),
         }
-    if section_type in {"chart", "chart_interpretation", "filterable_chart", "chart_table_explorer", "interactive_table", "table", "selector_panel"}:
+    if section_type in {"chart", "chart_interpretation"}:
+        return {
+            "surfaces": ["strong", "evidence"],
+            "evidence_presentations": sorted(_VALID_CHART_EVIDENCE),
+            "interpretation_placements": sorted(INTERPRETATION_PLACEMENTS),
+        }
+    if section_type in {"filterable_chart", "chart_table_explorer", "interactive_table", "table", "selector_panel"}:
         return {"surfaces": ["strong", "evidence"], "evidence_presentations": sorted(_VALID_CHART_EVIDENCE)}
     if section_type == "evidence_trace":
         return {"surfaces": ["trust"], "evidence_presentations": sorted(_VALID_TRACE_EVIDENCE)}
@@ -568,6 +607,7 @@ def _apply_display_fact_choices(
     legacy_insight_slots: bool = False,
 ) -> None:
     """Write model-selected source facts into renderer-owned display slots."""
+    applied_fact_ids: list[str] = []
     for field, fact_use in _DISPLAY_FACT_FIELDS.items():
         selected = choice.get(field)
         if not selected:
@@ -578,8 +618,10 @@ def _apply_display_fact_choices(
                 {"label": facts[selection["fact_id"]]["text"], "tone": selection["tone"]}
                 for selection in selected
             ]
+            applied_fact_ids.extend(selection["fact_id"] for selection in selected)
         else:
             data[target] = [facts[fact_id]["text"] for fact_id in selected]
+            applied_fact_ids.extend(selected)
         if legacy_insight_slots:
             legacy_key = {
                 "pills": "display_pills",
@@ -588,6 +630,13 @@ def _apply_display_fact_choices(
                 "annotations": "annotations",
             }[field]
             data[legacy_key] = copy.deepcopy(data[target])
+    if applied_fact_ids:
+        # Provenance for the authoring review: everything written above is
+        # validated catalog fact text, not untyped author copy.
+        existing = data.get("visual_author_applied_facts")
+        merged = list(existing) if isinstance(existing, list) else []
+        merged.extend(fact_id for fact_id in applied_fact_ids if fact_id not in merged)
+        data["visual_author_applied_facts"] = merged
 
 
 def review_visual_plan(spec: dict[str, Any], catalog: dict[str, Any]) -> dict[str, Any]:

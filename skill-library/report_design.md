@@ -208,11 +208,16 @@ keeps the findings after the evidence. It preserves the original inputs and
 the absorbed readout in the storyboard's `source_context` and header metadata.
 Every `report_design_report` result also exposes `design_review`; the report UI
 shows unresolved architecture warnings separately from analytical findings.
-At publish time, desktop/webview browser checks verify overflow,
-diagnostic columns, floating-KPI anchoring, chart mounts, and a compositor
-screenshot when Playwright Chromium is available. An unavailable browser is
-recorded as an explicit review-info finding; design warnings are publish-blocking
-until the report is redesigned from its supplied assets.
+At publish time, desktop browser checks (one 1440×900 Chromium viewport, when
+Playwright is available) verify rendering outcomes only: horizontal overflow,
+viewport clipping, chart mounts, diagnostic-grid integrity, floating-KPI
+anchoring, blank interactive tables, and a compositor screenshot. Prescriptive
+template checks (composition widths, section spacing, interpretation-rail
+ratios, card density) were removed — composition quality is the vision
+review's job (docs/report-design-variance.md, D5). An unavailable browser, or
+a browser run exceeding the 20-second publish budget, is recorded as an
+explicit skipped/review-info result rather than a fake pass; design warnings
+are publish-blocking until the report is redesigned from its supplied assets.
 
 ```python
 analyses=[
@@ -518,27 +523,34 @@ sequences, not domain labels or mandatory templates.
 ## Quality gate
 
 The gate loads its criteria from the report rubric (`report_rubric.yaml`,
-currently v7) — the canonical machine-readable definition of a good dataclaw
+currently v8) — the canonical machine-readable definition of a good dataclaw
 report. Every quality result cites the `rubric_version` it was judged by.
-Before calling a report complete, the quality result must not include:
+Before calling a report complete, the quality result must not include any
+fail-severity code (these block `quality_gate="fail"` and publication):
 
 - `consecutive_plain_charts`
 - `chart_dump`
 - `plain_chart_overuse`
-- `missing_interactive_explorer`
+- `missing_interactive_explorer` (applies at ≥6 sections with ≥3 chart-like sections)
 - `missing_primary_insights`
 - `missing_insight_sections`
+- `stale_installed_skills`
+- `oversized_report`
+- `unstructured_report` (a passing verified-freeform fact contract satisfies
+  this in place of typed section metadata)
+
+and treat these warn-severity codes as work to resolve or disclose before
+presenting the report — they do not mechanically block, which is not
+permission to ignore them:
+
 - `unsourced_claim` (formerly `missing_evidence_ids`)
 - `chart_interpretation_missing_evidence`
 - `missing_table_caption`
-- `stale_installed_skills`
-- `oversized_report`
-- `unstructured_report`
 
 If any of these appear, revise the storyboard or analysis payloads. Do not
 present a failed report as complete.
 
-The live v7 rubric also reports warning-level remediation for unresolved evidence
+The live v8 rubric also reports warning-level remediation for unresolved evidence
 targets, evidence-free chart conclusions, missing narrative/deks/table captions,
 unpaired insights, baked chart themes, inaccessible token contrast, external
 assets, typed-display-fact coverage, runtime visual-author fallback, visual-plan
@@ -550,6 +562,49 @@ requires a named approved review record bound to that exact HTML and those scree
 Treat warnings
 as work to resolve or disclose; compatible warning
 severity is not permission to ignore them.
+
+## Design variance & verified-freeform
+
+The renderer varies output deterministically so reports stop looking like one
+template (docs/report-design-variance.md):
+
+- **Semantic color bindings.** An entity (card title or chart trace name)
+  appearing in two or more sections is bound to a stable `--dc-cat-N`
+  categorical slot; its entity-card accent and every chart trace that names it
+  render in the same theme-reactive hue. Bindings are stored on the storyboard
+  as `color_bindings`; an explicit `accent_color` always wins.
+- **Interpretation placement.** A chart's interpretation lays out by content
+  shape: one short sentence renders as an unlabeled caption; 2–5 discrete
+  `takeaways` render as a numbered "What this reveals" panel; a
+  `display_facts` entry with `use: "annotation"` plus coordinates (`x`/`y`, or
+  `axis` + `value`) is drawn inside the figure as an append-only reference
+  line/label; long-form prose or caveats/evidence keep the side rail. Set
+  `interpretation_placement` (`caption`, `takeaway_panel`, `side_rail`,
+  `figure_annotation`) on the section data to override; the runtime visual
+  author may also choose it per chart section.
+- **Components.** `callout` accepts `layout_variant: "note"` with an optional
+  `tone` (`good`/`warn`/`danger`/`neutral`) for a compact tinted aside; a
+  `layout_group` pair accepts `layout_group_ratio: "60-40"` or `"40-60"` for
+  asymmetric splits.
+- **Seeded art direction.** When neither the author nor the visual author sets
+  a theme, the render derives one deterministically from the report's
+  title/goal, from eight curated palettes (`blue`, `ocean`, `forest`, `plum`,
+  `slate`, `ember`, `indigo`, `crimson`) — regeneration reproduces the choice.
+- **Archetype aliases.** `editorial_archetype` also accepts the aliases
+  `archetype_explorer`/`editorial` (→ `taxonomy_explorer`),
+  `guided_argument` (→ `guided_explorer`), and `forecast_knockout`/
+  `scenario_path_forecast`/`decision_path_forecast`
+  (→ `path_dependent_forecast`). Top-level
+  `requirements.require_visual_review` is a legacy alias for
+  `requirements.publication.require_visual_review`.
+- **Verified-freeform tier.** A freeform-authored page (bespoke HTML/CSS) is
+  publishable through `build_report(html=..., facts=[{fact_id, text}, ...])`:
+  the page is preserved byte-for-byte as the report, every displayed
+  number/claim must sit in an element carrying `data-fact-id` whose visible
+  text carries the contract fact verbatim, and numerals outside any binding
+  fail the gate. Verification is fail-closed at build time and recomputed at
+  publish. A `preserved_low_confidence` normalization without a fact contract
+  is mechanically blocked at publish — the fact contract is its upgrade path.
 
 ## Anti-patterns
 
