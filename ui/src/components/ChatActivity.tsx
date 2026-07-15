@@ -276,6 +276,12 @@ function isEvidenceCall(call: ToolCallState) {
   // own durable output surface.
   const toolName = toolBaseName(call.name)
   if (toolName === 'report_publish') return reportPublishState(call) === 'published'
+  if (toolName === 'report_review_visuals') {
+    // A visual review with captured screenshots is reader-facing evidence:
+    // the reviewer must be able to inspect exactly what the decision covers.
+    const screenshots = parse(call.result)?.runtime_smoke?.screenshots
+    return Array.isArray(screenshots) && screenshots.length > 0
+  }
   if (toolName === 'display_metric' || toolName === 'display_image') return true
   if (!['execute_cell', 'execute_code', 'display_cell_output'].includes(toolName)) return false
   const data = parse(call.result)
@@ -330,7 +336,7 @@ function stepLabel(call: ToolCallState): string {
     case 'propose_plan': return `Submitted plan ${args.name || result.plan?.name || 'for review'}${suffix}`
     case 'update_plan': return `Updated plan${planChange(args, result)}${suffix}`
     case 'delegate_to_subagent': return `Delegated to ${args.subagent_name || call.subagent?.name || 'subagent'}${call.subagent ? ` · ${call.subagent.currentTurn || 0} turns` : ''}${suffix}`
-    case 'build_report': return `Built report ${displayName(args.title || path || 'report')}${args.report_goal ? ` — ${compactInline(args.report_goal, 110)}` : ''}${suffix}`
+    case 'build_report': return `Built report ${displayName(args.title || path || 'report')}${args.report_goal ? ` — ${compactInline(args.report_goal, 110)}` : ''}${normalizationSuffix(result)}${suffix}`
     case 'report_design_report': return reportDesignLabel(args, result, path, suffix)
     case 'report_review_visuals': return `Reviewed report visuals for ${displayName(path || 'report')}${suffix}`
     case 'report_publish': return reportPublishLabel(call, suffix)
@@ -338,6 +344,14 @@ function stepLabel(call: ToolCallState): string {
     case 'report_note': return `Added note to the ${args.page || 'report'} report${suffix}`
     default: return genericStepLabel(call, args, result, suffix, durationSuffix)
   }
+}
+
+function normalizationSuffix(result: any): string {
+  const normalization = result?.normalization
+  if (!normalization || typeof normalization !== 'object') return ''
+  if (normalization.authoring_tier === 'verified_freeform') return ' · verified freeform'
+  if (normalization.mode === 'preserved_low_confidence') return ' · preserved (low confidence)'
+  return ''
 }
 
 function reportDesignLabel(args: any, result: any, path: unknown, suffix: string) {

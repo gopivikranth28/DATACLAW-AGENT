@@ -4,6 +4,20 @@ import { FileTextOutlined, EyeOutlined, PrinterOutlined, ExportOutlined, Downloa
 import { API } from '../../api'
 import { reportDocumentUrl } from '../reportPreview'
 import { reportPublishState, toolErrorMessage, toolBaseName } from '../reportPublishState'
+import ReportTrustStrip from './ReportTrustStrip'
+import type {
+  FactVerification,
+  NormalizationSummary,
+  QualityResult,
+  RuntimeSmoke,
+  VisualReviewSummary,
+} from './ReportTrustStrip'
+
+interface DocxExport {
+  requested?: boolean
+  status?: 'created' | 'failed' | 'skipped' | string
+  error?: string
+}
 
 interface ReportData {
   success?: boolean
@@ -16,6 +30,14 @@ interface ReportData {
   publish_required?: boolean
   design_review?: DesignReview
   analytical_review?: AnalyticalReview
+  quality?: QualityResult
+  runtime_smoke?: RuntimeSmoke
+  visual_review?: VisualReviewSummary
+  fact_verification?: FactVerification
+  normalization?: NormalizationSummary
+  docx_export?: DocxExport
+  receipt_path?: string
+  recipe_path?: string
   // legacy fields from old PDF-based tool
   path?: string
   format?: string
@@ -134,6 +156,22 @@ export default function ReportDisplay({ data, toolName, status }: {
           )}
         </div>
       </div>
+      <ReportTrustStrip
+        quality={data.quality}
+        runtimeSmoke={data.runtime_smoke}
+        visualReview={data.visual_review}
+        factVerification={data.fact_verification}
+        normalization={data.normalization}
+      />
+      {data.docx_export?.status === 'failed' && (
+        <Alert
+          showIcon
+          type="warning"
+          style={{ marginBottom: 12 }}
+          message="Word export failed"
+          description={data.docx_export.error || 'The report published, but the DOCX companion could not be generated.'}
+        />
+      )}
       {reviewFindings.length > 0 && (
         <Alert
           showIcon
@@ -170,6 +208,30 @@ export default function ReportDisplay({ data, toolName, status }: {
             </ul>
           }
         />
+      )}
+      {(data.receipt_path || data.recipe_path) && (
+        <div style={{ fontSize: 11, color: '#98a2b3', marginBottom: 8, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          {data.receipt_path && (
+            <a
+              href={`${API}/workspace/files?path=${encodeURIComponent(data.receipt_path)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: '#667085' }}
+            >
+              Publish receipt
+            </a>
+          )}
+          {data.recipe_path && (
+            <a
+              href={`${API}/workspace/files?path=${encodeURIComponent(data.recipe_path)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: '#667085' }}
+            >
+              Regeneration recipe
+            </a>
+          )}
+        </div>
       )}
       {inlinePreviewOpen && documentUrl && <AutoHeightReportFrame documentUrl={documentUrl} title={name} />}
     </div>
