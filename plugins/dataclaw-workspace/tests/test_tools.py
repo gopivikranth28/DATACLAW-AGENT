@@ -225,7 +225,7 @@ async def test_report_design_report_storyboards_then_renders_cohesive_html(cfg):
     assert result["type"] == "report_design"
     assert result["publication_status"] == "designed"
     assert result["publish_required"] is True
-    assert result["section_count"] >= 5
+    assert result["section_count"] >= 6
     assert result["interaction_count"] == 1
     assert "World Cup Archetype Report" in html
     assert "Creator archetype separates from finishers" in html
@@ -534,14 +534,9 @@ async def test_report_publish_blocks_required_analytical_review_findings(cfg):
         finding["id"] for finding in designed["analytical_review"]["findings"]
         if finding["severity"] == "required"
     }
-    assert required == {
-        "missing_claim_contract",
-        "missing_baseline_comparison",
-        "missing_predictive_validation",
-        "missing_uncertainty_quantification",
-    }
+    assert required == {"missing_baseline_comparison"}
 
-    with pytest.raises(ValueError, match="analytical-review gate failed"):
+    with pytest.raises(ValueError, match="analytical-review gate failed: missing_baseline_comparison"):
         await report_publish(
             cfg=cfg,
             report_path="reports/needs-baseline.html",
@@ -565,23 +560,20 @@ async def test_report_review_lifecycle_supports_explicit_risk_acceptance(cfg):
         }],
     )
     lifecycle = designed["review_lifecycle"]
-    baseline = next(finding for finding in lifecycle["findings"] if finding["report_finding_id"] == "missing_baseline_comparison")
-    required_ids = {
-        finding["id"] for finding in designed["analytical_review"]["findings"]
-        if finding["severity"] == "required"
-    }
-    required_findings = [finding for finding in lifecycle["findings"] if finding["report_finding_id"] in required_ids]
+    baseline = next(
+        finding for finding in lifecycle["findings"]
+        if finding["report_finding_id"] == "missing_baseline_comparison"
+    )
     assert lifecycle["gate"]["gate"] == "fail"
 
-    for finding in required_findings:
-        accepted = await resolve_review_finding(
-            finding_id=finding["finding_id"],
-            status="accepted_with_rationale",
-            rationale="The stakeholder explicitly accepted this missing control for the exploratory forecast.",
-            session_id="default",
-        )
-        assert accepted["success"] is True
-        assert accepted["status"] == "accepted_with_rationale"
+    accepted = await resolve_review_finding(
+        finding_id=baseline["finding_id"],
+        status="accepted_with_rationale",
+        rationale="The stakeholder explicitly accepted the missing historical comparison for this exploratory forecast.",
+        session_id="default",
+    )
+    assert accepted["success"] is True
+    assert accepted["status"] == "accepted_with_rationale"
 
     published = await report_publish(
         cfg=cfg,
@@ -610,7 +602,7 @@ async def test_report_publish_recomputes_a_tampered_analytical_review(cfg):
     storyboard["analytical_review"] = {"status": "pass", "findings": []}
     storyboard_path.write_text(json.dumps(storyboard), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="analytical-review gate failed"):
+    with pytest.raises(ValueError, match="analytical-review gate failed: missing_baseline_comparison"):
         await report_publish(
             cfg=cfg,
             report_path="reports/tampered-review.html",
@@ -717,8 +709,7 @@ async def test_build_report_extracts_prose_and_tables_into_storyboard(cfg):
     storyboard = json.loads(Path(built["storyboard_path"]).read_text())
     section_types = [section["section_type"] for section in storyboard["section_plan"]]
     assert built["normalization"]["mode"] == "structured_rebuild"
-    assert "insight_grid" not in section_types
-    assert "narrative_band" in section_types
+    assert "insight_grid" in section_types
     assert "interactive_table" in section_types
     assert storyboard["normalization"]["extracted"]["tables"] == 1
     assert storyboard["critique"]["passes"] <= 2

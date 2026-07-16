@@ -1554,22 +1554,19 @@ def report_shell_script() -> str:
     var arcSections = sections.filter(function(section) {
       return section.classList.contains('is-story-arc');
     });
-    var authoredNavSections = sections.filter(function(section) {
-      return section.getAttribute('data-dc-nav') === 'true';
-    });
     // When the author supplied Storyboard v2 arcs, keep navigation at the
     // reader's conceptual level instead of listing every chart and callout.
     // Legacy reports retain the section-by-section navigation behavior.
     var navigationCandidates = arcSections.length
-      ? arcSections
-      : (authoredNavSections.length ? authoredNavSections : sections);
+      ? sections.filter(function(section) { return section.classList.contains('r-hero') || section.classList.contains('is-story-arc'); })
+      : sections;
     var navigationSections = navigationCandidates.filter(function(section) {
       var heading = section.querySelector('h1, h2, h3');
       return Boolean(heading && heading.textContent.trim());
     });
     navigationSections.forEach(function(section, index) {
       var heading = section.querySelector('h1, h2, h3');
-      var label = section.getAttribute('data-dc-nav-label') || heading.textContent.trim();
+      var label = heading.textContent.trim();
       if (nav && navigationSections.length > 1) {
         var link = document.createElement('a');
         link.href = '#' + section.id;
@@ -1857,14 +1854,6 @@ def analyze_report_quality(
         payload = section.get("payload") if isinstance(section.get("payload"), dict) else {}
         if kind in {"findings", "insight_grid"} and isinstance(payload.get("items"), list) and payload.get("items"):
             primary_insight_count += 1
-        # A concise answer in the hero/readout can be the report's sole
-        # reader-facing conclusion. Do not force a second findings grid merely
-        # to satisfy the quality rubric.
-        if kind in {"header", "narrative_band"} and clean_text(
-            payload.get("semantic_role") or ""
-        ).lower().replace("-", "_") == "answer":
-            if clean_text(payload.get("abstract") or payload.get("summary") or section.get("title") or ""):
-                primary_insight_count += 1
 
     run = 0
     longest_run = 0
@@ -1905,10 +1894,14 @@ def analyze_report_quality(
     if len(kinds) >= thresholds["insight_required_min_sections"] and primary_insight_count == 0:
         warn(
             "missing_primary_insights",
-            "Report has multiple sections but no completed findings/insight grid or concise answer/readout carrying the conclusion.",
+            "Report has multiple sections but no findings or insight grid carrying completed insight items.",
             details={"section_count": len(kinds)},
         )
-    if chart_like_count >= thresholds["explorer_required_min_charts"] and interactive_count == 0:
+    if (
+        len(kinds) >= thresholds["explorer_required_min_sections"]
+        and chart_like_count >= thresholds["explorer_required_min_charts"]
+        and interactive_count == 0
+    ):
         warn(
             "missing_interactive_explorer",
             "Analytical report has several charts but no interactive table, selector, filterable chart, or chart-table explorer.",
@@ -2209,11 +2202,6 @@ def _rigor_contract(requirements: dict[str, Any], analysis_contract: dict[str, A
         "methodology_required": bool(raw.get("require_methodology", False)),
         "data_quality_required": bool(raw.get("require_data_quality", False)),
         "uncertainty_required": bool(raw.get("require_uncertainty", False)) or predictive,
-        # A forecast turns evidence into a reader-facing decision.  Unlike a
-        # descriptive scratch report, its claims must therefore identify the
-        # exact visual and validation that support them.  Other reports can
-        # opt in while their recipes are migrated.
-        "claim_contract_required": bool(raw.get("require_claim_contract", False)) or predictive,
         "recipe_required": bool(raw.get("require_recipe", True)),
         "component_semantics_required": bool(raw.get("require_component_semantics", False)),
     }
@@ -2224,77 +2212,13 @@ def _report_contract_for_storyboard(storyboard: dict[str, Any]) -> dict[str, Any
     requirements = source_context.get("requirements") if isinstance(source_context.get("requirements"), dict) else {}
     analysis_contract = storyboard.get("analysis_contract") if isinstance(storyboard.get("analysis_contract"), dict) else {}
     return {
-        "report_contract_schema": 2,
+        "report_contract_schema": 1,
         "rigor": _rigor_contract(requirements, analysis_contract),
-        "claim_contract": {
-            "required": bool((storyboard.get("claim_contract") or {}).get("required", False)),
-            "claim_count": len((storyboard.get("claim_contract") or {}).get("claims", [])),
-        },
         "source_context_sha256": _stable_json_sha256({
             "insights": source_context.get("insights", []),
             "analyses": source_context.get("analyses", []),
             "requirements": requirements,
         }),
-    }
-
-
-_CLAIM_TYPES = {"descriptive", "predictive", "causal", "diagnostic", "scenario"}
-
-
-def _normalize_claim_contract(requirements: dict[str, Any], analysis_contract: dict[str, Any], *, required: bool) -> dict[str, Any]:
-    """Normalize the audit-only mapping from reader claims to proof surfaces.
-
-    Evidence references answer *where the computation came from*.  A claim
-    contract additionally answers *where a reader can evaluate the claim*.
-    It deliberately stores IDs and semantic metadata only; it never renders
-    notebook provenance as report furniture.
-    """
-    supplied = requirements.get("claim_contract")
-    if supplied is None:
-        supplied = analysis_contract.get("claim_contract")
-    if supplied is None:
-        supplied = requirements.get("claims", analysis_contract.get("claims", []))
-    if isinstance(supplied, list):
-        supplied = {"claims": supplied}
-    if supplied in (None, ""):
-        supplied = {}
-    if not isinstance(supplied, dict):
-        raise ValueError("requirements.claim_contract must be a dictionary or a list of claim dictionaries")
-
-    raw_claims = supplied.get("claims", [])
-    if raw_claims is None:
-        raw_claims = []
-    if not isinstance(raw_claims, list):
-        raise ValueError("requirements.claim_contract.claims must be a list")
-
-    claims: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for index, raw in enumerate(raw_claims):
-        if not isinstance(raw, dict):
-            raise ValueError(f"requirements.claim_contract.claims[{index}] must be a dictionary")
-        claim = dict(raw)
-        claim_id = clean_text(claim.get("id") or claim.get("claim_id") or "")
-        if not claim_id:
-            raise ValueError(f"requirements.claim_contract.claims[{index}] requires an id")
-        if claim_id in seen:
-            raise ValueError(f"requirements.claim_contract contains duplicate claim id '{claim_id}'")
-        seen.add(claim_id)
-        text = clean_text(claim.get("text") or claim.get("claim") or claim.get("title") or "")
-        if not text:
-            raise ValueError(f"requirements.claim_contract.claims[{index}] requires text")
-        claim_type = clean_text(claim.get("claim_type") or claim.get("type") or "descriptive").lower()
-        if claim_type not in _CLAIM_TYPES:
-            allowed = ", ".join(sorted(_CLAIM_TYPES))
-            raise ValueError(f"requirements.claim_contract.claims[{index}].claim_type must be one of: {allowed}")
-        claim["id"] = claim_id
-        claim["text"] = text
-        claim["claim_type"] = claim_type
-        claims.append(claim)
-
-    return {
-        "claim_contract_schema": 1,
-        "required": bool(supplied.get("required", required)),
-        "claims": claims,
     }
 
 
@@ -2445,13 +2369,7 @@ def build_evidence_registry(storyboard: dict[str, Any]) -> dict[str, Any]:
         for planned in section_plan:
             data = planned.get("data") if isinstance(planned, dict) and isinstance(planned.get("data"), dict) else {}
             section_id = clean_text(data.get("section_id") or planned.get("layout_role") or "")
-            for source in [
-                data,
-                *_as_list(data.get("items")),
-                *_as_list(data.get("findings")),
-                *_as_list(data.get("hypotheses")),
-                *_as_list(data.get("story_context")),
-            ]:
+            for source in [data, *_as_list(data.get("items")), *_as_list(data.get("findings")), *_as_list(data.get("hypotheses"))]:
                 references.extend({"section_id": section_id, **reference} for reference in _source_evidence_refs(source))
             item_groups = [data.get("items"), data.get("findings"), data.get("hypotheses")]
             for group in item_groups:
@@ -2889,162 +2807,6 @@ def _review_storyboard_analysis(storyboard: dict[str, Any], registry: dict[str, 
         if isinstance(target, dict) and clean_text(target.get("id") or target.get("ref") or "")
     }
 
-    def claim_ids(value: Any) -> set[str]:
-        if isinstance(value, dict):
-            raw = value.get("claim_ids", value.get("claim_id", value.get("claims", [])))
-        else:
-            raw = value
-        if isinstance(raw, str):
-            raw = [raw]
-        return {
-            clean_text(item.get("id") if isinstance(item, dict) else item)
-            for item in _as_list(raw)
-            if clean_text(item.get("id") if isinstance(item, dict) else item)
-        }
-
-    claim_contract = storyboard.get("claim_contract")
-    claim_contract = claim_contract if isinstance(claim_contract, dict) else {}
-    # Predictive language is itself a material decision claim even when a
-    # legacy caller omitted analysis_review.mode. Do not let an inferred
-    # forecast evade the claim contract merely because its mode was absent.
-    claim_required = bool(claim_contract.get("required", False)) or is_predictive
-    claims = claim_contract.get("claims", [])
-    claims = claims if isinstance(claims, list) else []
-    section_plan = storyboard.get("section_plan")
-    section_plan = section_plan if isinstance(section_plan, list) else []
-    by_role = {
-        clean_text(item.get("layout_role") or ""): item
-        for item in section_plan
-        if isinstance(item, dict) and clean_text(item.get("layout_role") or "")
-    }
-    reader_evidence_kinds = CHART_SECTION_KINDS | INTERACTIVE_SECTION_KINDS | {
-        "table", "comparison", "entity_card_grid",
-    }
-    if claim_required and not claims:
-        add(
-            "missing_claim_contract",
-            category="claim_contract",
-            severity="required",
-            claim="This report's rigor contract requires a reader-facing claim contract, but none was supplied.",
-            recommendation="Declare each material claim with its type, scope, caveat, registered evidence, and primary visual/table section before publication.",
-        )
-    elif claims:
-        known_claims = {clean_text(item.get("id") or "") for item in claims if isinstance(item, dict)}
-        for raw_claim in claims:
-            if not isinstance(raw_claim, dict):
-                continue
-            claim_id = clean_text(raw_claim.get("id") or "")
-            if not claim_id:
-                continue
-            claim_type = clean_text(raw_claim.get("claim_type") or "descriptive").lower()
-            primary_role = clean_text(raw_claim.get("primary_section") or raw_claim.get("reader_evidence_section") or "")
-            scope = clean_text(raw_claim.get("scope") or raw_claim.get("population") or "")
-            caveat = clean_text(raw_claim.get("caveat") or raw_claim.get("limitation") or "")
-            claim_evidence = _evidence_refs_from_value(
-                raw_claim.get("evidence", raw_claim.get("evidence_refs"))
-            )
-            if not primary_role or primary_role not in by_role:
-                add(
-                    "claim_primary_section_missing",
-                    category="claim_contract",
-                    severity="required",
-                    claim=f"Claim '{claim_id}' has no primary reader-facing section in the storyboard.",
-                    recommendation="Set primary_section to the chart, table, comparison, or explorer that lets readers evaluate this claim.",
-                )
-            else:
-                primary = by_role[primary_role]
-                primary_type = clean_text(primary.get("section_type") or "")
-                primary_data = primary.get("data") if isinstance(primary.get("data"), dict) else {}
-                if primary_type not in reader_evidence_kinds:
-                    add(
-                        "claim_primary_section_not_evidence",
-                        category="claim_contract",
-                        severity="required",
-                        claim=f"Claim '{claim_id}' points to '{primary_role}', which is not a reader-facing visual or data surface.",
-                        recommendation="Point primary_section at a chart, comparison, table, or interactive explorer rather than a summary or method section.",
-                    )
-                elif claim_id not in claim_ids(primary_data):
-                    add(
-                        "claim_primary_section_unmapped",
-                        category="claim_contract",
-                        severity="required",
-                        claim=f"Claim '{claim_id}' is not mapped back from its declared primary section.",
-                        recommendation="Add claim_id or claim_ids to the primary analysis asset so the audit contract and reader evidence agree.",
-                    )
-            if not scope:
-                add(
-                    "claim_scope_missing",
-                    category="claim_contract",
-                    severity="required",
-                    claim=f"Claim '{claim_id}' has no declared scope or population.",
-                    recommendation="State the completed sample, period, scenario, or population that bounds the claim.",
-                )
-            if not caveat:
-                add(
-                    "claim_caveat_missing",
-                    category="claim_contract",
-                    severity="required",
-                    claim=f"Claim '{claim_id}' has no declared limitation or caveat.",
-                    recommendation="Declare the material uncertainty, assumption, exclusion, or non-causal limitation next to this claim.",
-                )
-            if not claim_evidence or _unresolved_evidence_refs([], target_map, claim_evidence):
-                add(
-                    "claim_evidence_missing",
-                    category="claim_contract",
-                    severity="required",
-                    claim=f"Claim '{claim_id}' has no completed, resolvable evidence reference.",
-                    recommendation="Attach a registered notebook, query, model, or artifact target that produced the claim's displayed values.",
-                )
-            if claim_type == "causal" and not _causal_design_complete(raw_claim.get("causal_design"), target_map):
-                add(
-                    "claim_causal_design_missing",
-                    category="claim_contract",
-                    severity="required",
-                    claim=f"Causal claim '{claim_id}' has no declared causal design.",
-                    recommendation="Provide the causal identification/design evidence, or reclassify and rewrite the claim as descriptive.",
-                )
-            if claim_type in {"predictive", "scenario"} and not _review_item_complete(
-                raw_claim.get("uncertainty", contract.get("uncertainty"))
-            ):
-                add(
-                    "claim_uncertainty_missing",
-                    category="claim_contract",
-                    severity="required",
-                    claim=f"Predictive claim '{claim_id}' has no completed uncertainty declaration.",
-                    recommendation="Provide the interval, sensitivity, posterior, bootstrap, or other stated uncertainty method for this displayed prediction.",
-                )
-
-        for item in section_plan:
-            if not isinstance(item, dict):
-                continue
-            section_type = clean_text(item.get("section_type") or "")
-            data = item.get("data") if isinstance(item.get("data"), dict) else {}
-            if section_type in CHART_SECTION_KINDS and clean_text(
-                data.get("interpretation") or data.get("conclusion") or data.get("insight") or ""
-            ) and not claim_ids(data):
-                add(
-                    "chart_interpretation_claim_unmapped",
-                    category="claim_contract",
-                    severity="required",
-                    claim=f"Chart section '{clean_text(item.get('layout_role') or section_type)}' has an interpretation but no claim mapping.",
-                    recommendation="Add claim_id or claim_ids to every conclusion-bearing chart and register the claim's primary evidence surface.",
-                )
-            if section_type == "metric_row":
-                for metric in _as_list(data.get("metrics")):
-                    if not isinstance(metric, dict):
-                        continue
-                    role = clean_text(metric.get("metric_role") or metric.get("role") or "").lower()
-                    if role in {"method", "process", "validation", "reproducibility", "context"}:
-                        continue
-                    if not (claim_ids(metric) & known_claims):
-                        add(
-                            "headline_metric_claim_unmapped",
-                            category="claim_contract",
-                            severity="required",
-                            claim=f"Headline metric '{clean_text(metric.get('label') or metric.get('name') or metric.get('key') or 'unnamed')}' has no claim mapping.",
-                            recommendation="Map decision KPIs to a claim_id, or mark method/process context with metric_role so it moves out of the headline row.",
-                        )
-
     if is_predictive:
         if not _baseline_review_complete(contract.get("baseline"), target_map):
             add(
@@ -3054,19 +2816,11 @@ def _review_storyboard_analysis(storyboard: dict[str, Any], registry: dict[str, 
                 claim="This predictive report has no completed, resolvable baseline comparison with a method and result.",
                 recommendation="Compare the production approach with a simple baseline on a shared holdout, report the primary metric plus the delta, and cite a registered evidence target for that output.",
             )
-        if not _predictive_validation_complete(contract.get("validation"), target_map):
-            add(
-                "missing_predictive_validation",
-                category="model_validation",
-                severity="required",
-                claim="This predictive report has no completed, resolvable validation contract covering a held-out split and calibration or reliability check.",
-                recommendation="Declare the holdout or cross-validation split, primary validation metric, calibration/reliability result, and a registered evidence target before publication.",
-            )
         if not _review_item_complete(contract.get("uncertainty")) and not _contains_any(delivered_text, _UNCERTAINTY_REVIEW_TERMS):
             add(
                 "missing_uncertainty_quantification",
                 category="uncertainty",
-                severity="required",
+                severity="warning",
                 claim="This predictive report presents point estimates without a declared uncertainty method.",
                 recommendation="Add intervals or uncertainty bands derived from a stated method (for example bootstrap, posterior draws, or an appropriate analytical interval).",
             )
@@ -3077,7 +2831,7 @@ def _review_storyboard_analysis(storyboard: dict[str, Any], registry: dict[str, 
         add(
             "missing_assumption_sensitivity",
             category="assumption_sensitivity",
-            severity="required" if is_predictive else "warning",
+            severity="warning",
             claim="The report includes an inferred or assumed input without a declared sensitivity analysis.",
             recommendation="Run the material plausible alternatives and show whether the decision or ranking changes; otherwise label the assumption as unresolved.",
         )
@@ -3109,7 +2863,7 @@ def _review_storyboard_analysis(storyboard: dict[str, Any], registry: dict[str, 
             add(
                 "missing_decision_path_visual",
                 category="presentation",
-                severity="required",
+                severity="warning",
                 claim="This path-dependent forecast has no declared visual of the route that leads to its outcome.",
                 recommendation="Add the supplied journey, route, tree, bracket, or pathway with its relevant stage probabilities or transitions so readers can follow how the forecast is formed.",
             )
@@ -3202,49 +2956,6 @@ def _baseline_review_complete(value: Any, target_map: dict[str, dict[str, Any]])
     references = _evidence_refs_from_value(evidence)
     return (
         bool(references)
-        and all(reference["kind"] != "unknown" for reference in references)
-        and not _unresolved_evidence_refs([], target_map, references)
-    )
-
-
-def _predictive_validation_complete(value: Any, target_map: dict[str, dict[str, Any]]) -> bool:
-    """Require validation design, not just a favorable score in prose.
-
-    Probability forecasts need a partition/validation design and a reliability
-    result.  This is intentionally a contract check: it verifies that the
-    model work was supplied and linked, not that the renderer independently
-    re-ran a model.
-    """
-    if not isinstance(value, dict):
-        return False
-    status = clean_text(value.get("status") or "").lower()
-    if status not in {"complete", "completed", "done", "pass", "passed", "validated", "included"}:
-        return False
-    split = clean_text(value.get("split") or value.get("holdout") or value.get("resampling") or "")
-    metric = clean_text(value.get("metric") or value.get("result") or value.get("summary") or "")
-    calibration = value.get("calibration", value.get("reliability"))
-    if not split or not metric or not _review_item_complete(calibration):
-        return False
-    references = _evidence_refs_from_value(value.get("evidence", value.get("evidence_refs")))
-    return (
-        bool(references)
-        and all(reference["kind"] != "unknown" for reference in references)
-        and not _unresolved_evidence_refs([], target_map, references)
-    )
-
-
-def _causal_design_complete(value: Any, target_map: dict[str, dict[str, Any]]) -> bool:
-    """Require a declared identification design, not a causal status label."""
-    if not isinstance(value, dict):
-        return False
-    status = clean_text(value.get("status") or "").lower()
-    if status not in {"complete", "completed", "done", "pass", "passed", "validated", "included"}:
-        return False
-    method = clean_text(value.get("method") or value.get("design") or value.get("identification") or "")
-    references = _evidence_refs_from_value(value.get("evidence", value.get("evidence_refs")))
-    return (
-        bool(method)
-        and bool(references)
         and all(reference["kind"] != "unknown" for reference in references)
         and not _unresolved_evidence_refs([], target_map, references)
     )
@@ -3473,19 +3184,11 @@ def _presentation_options(requirements: dict[str, Any]) -> dict[str, str]:
     ).lower().replace("-", "_")
     if data_notes not in {"source_only", "automatic"}:
         raise ValueError("presentation.data_notes must be 'source_only' or 'automatic'")
-    insight_summary = clean_text(
-        supplied.get("insight_summary")
-        or requirements.get("insight_summary")
-        or "none"
-    ).lower().replace("-", "_")
-    if insight_summary not in {"none", "opening", "after_evidence"}:
-        raise ValueError("presentation.insight_summary must be 'none', 'opening', or 'after_evidence'")
     return {
         "insight_layout": insight_layout,
         "insight_evidence": insight_evidence,
         "provenance": provenance,
         "data_notes": data_notes,
-        "insight_summary": insight_summary,
     }
 
 
@@ -3852,11 +3555,6 @@ def design_report_storyboard(
     if "assumptions" not in analysis_contract and isinstance(requirements.get("assumptions"), list):
         analysis_contract["assumptions"] = requirements["assumptions"]
     rigor = _rigor_contract(requirements, analysis_contract)
-    claim_contract = _normalize_claim_contract(
-        requirements,
-        analysis_contract,
-        required=rigor["claim_contract_required"],
-    )
     analyses = analyses or []
     clean_goal = clean_text(report_goal or title)
     clean_audience = clean_text(audience or requirements.get("audience") or "decision-maker")
@@ -3866,21 +3564,6 @@ def design_report_storyboard(
         raise ValueError(
             "report_design_report requires at least one completed insight; use report_add_section for low-level drafts."
         )
-    # Store the same predictive expectation that the publish review will
-    # enforce. A caller cannot suppress the contract merely by omitting
-    # analysis_review.mode while making forecast claims in the supplied copy.
-    supplied_text = " ".join(
-        clean_text(value)
-        for item in [*normalized_insights, *normalized_analyses]
-        for value in (
-            item.get("title"), item.get("headline"), item.get("detail"), item.get("summary"),
-            item.get("interpretation"), item.get("conclusion"),
-        )
-        if clean_text(value)
-    )
-    if _contains_any(f"{clean_goal} {supplied_text}", _PREDICTIVE_REVIEW_TERMS):
-        rigor["claim_contract_required"] = True
-        claim_contract["required"] = True
     section_plan: list[dict[str, Any]] = []
 
     def add(section_type: str, role: str, rationale: str, data: dict[str, Any]) -> None:
@@ -3897,7 +3580,6 @@ def design_report_storyboard(
         "title": title,
         "subtitle": clean_goal,
         "kicker": requirements.get("kicker", "DataClaw report"),
-        "semantic_role": "answer",
         "layout_width": "full",
     })
 
@@ -3937,7 +3619,6 @@ def design_report_storyboard(
     add("narrative_band", "executive_readout", "State the answer before the reader reaches supporting evidence.", {
         "title": requirements.get("readout_title", "The answer"),
         "kicker": "Executive readout",
-        "semantic_role": "answer",
         "summary": readout,
         "layout_width": "reading",
         "bullets": [
@@ -3947,19 +3628,18 @@ def design_report_storyboard(
         ],
     })
 
-    if paired_insights and presentation["insight_summary"] != "none":
+    if paired_insights:
         add("insight_grid", "primary_insights", "Separate the material conclusions from the notebook execution trail.", {
             "title": requirements.get("insights_title", "Primary insights"),
             "kicker": "What changed",
             "section_id": "sec-primary-insights",
-            "caption": "A deliberately requested summary of findings already supported in the story.",
+            "caption": "Findings promoted from completed analysis, with caveats and next actions where available.",
             "layout_variant": (
                 "editorial_list"
                 if presentation["insight_layout"] == "auto"
                 else presentation["insight_layout"]
             ),
             "evidence_presentation": presentation["insight_evidence"],
-            "summary_position": presentation["insight_summary"],
             "layout_width": "content",
             "items": paired_insights,
         })
@@ -4034,15 +3714,10 @@ def design_report_storyboard(
     interaction_plan = _storyboard_interactions(section_plan)
     storyboard_steps = [
         {"phase": "readout", "purpose": "Answer the report goal in one screen.", "sections": ["opening_context", "executive_kpis", "executive_readout"]},
+        {"phase": "insights", "purpose": "Promote only decision-changing findings.", "sections": ["primary_insights"]},
         {"phase": "analysis", "purpose": "Use the supplied visuals, controls, tables, and interpretation to answer the question.", "sections": [item["layout_role"] for item in section_plan if item["layout_role"].startswith("analysis_")]},
         {"phase": "trust", "purpose": "Close with methodology, limitations, and optional reproducibility material.", "sections": ["methodology", "hypothesis_dispositions", "evidence_trace"]},
     ]
-    if paired_insights and presentation["insight_summary"] != "none":
-        storyboard_steps.insert(1, {
-            "phase": "insights",
-            "purpose": "Present the explicitly requested summary without repeating evidence copy.",
-            "sections": ["primary_insights"],
-        })
 
     editorial_architecture = _apply_editorial_architecture(section_plan, requirements)
     supplied_story_arcs = _apply_story_arcs(section_plan, requirements)
@@ -4073,7 +3748,6 @@ def design_report_storyboard(
             "policy": "Embed aggregate, ranked, or sampled payloads only. Do not fetch live data or embed raw full datasets.",
             "interactive_section_kinds": sorted(INTERACTIVE_SECTION_KINDS),
         },
-        "claim_contract": claim_contract,
         "intake": {
             "methodology": requirements.get("methodology") or requirements.get("methods") or [],
             "checks": requirements.get("checks") or [],
@@ -4395,16 +4069,10 @@ def _apply_editorial_architecture(
                 ordered.append(item)
                 added.add(id(item))
 
-    # Orientation → summary → taxonomy → visual evidence → optional editorial
-    # summary → reader-led exploration → provenance.  Findings are not
-    # mandatory furniture: a report normally makes the conclusion once, in the
-    # hero/readout or beside the evidence.  Keep a summary only when the author
-    # explicitly asked for one.
-    summary_position = clean_text(
-        (findings.get("data", {}) if isinstance(findings, dict) else {}).get("summary_position") or ""
-    )
-    append(header, metrics, findings if summary_position == "opening" else None, taxonomy if use_taxonomy else None, hero_visual)
-    append(*diagnostics, *remaining_evidence, findings if summary_position == "after_evidence" else None, *interactive, *trust)
+    # Orientation → summary → taxonomy → visual evidence → diagnostics →
+    # conclusions → reader-led exploration → provenance.
+    append(header, metrics, taxonomy if use_taxonomy else None, hero_visual)
+    append(*diagnostics, *remaining_evidence, findings, *interactive, *trust)
     for item in section_plan:
         if item is not readout:
             append(item)
@@ -4434,17 +4102,10 @@ def _apply_editorial_architecture(
         {"phase": "orientation", "purpose": "Frame the question before the reader encounters detail.", "sections": ["opening_context"]},
         {"phase": "summary", "purpose": "Anchor the report with the headline KPIs.", "sections": ["executive_kpis"]},
         {"phase": "analysis", "purpose": "Lead with the hero visual and pair diagnostic views in a shared grid.", "sections": [item.get("layout_role") for item in [hero_visual, *diagnostics, *remaining_evidence] if item]},
+        {"phase": "findings", "purpose": "State the conclusions after the supporting evidence.", "sections": ["primary_insights"]},
         {"phase": "exploration", "purpose": "Let the reader inspect the supplied aggregate data after the guided argument.", "sections": [item.get("layout_role") for item in interactive]},
         {"phase": "trust", "purpose": "Close with methodology, caveats, and optional sources.", "sections": [item.get("layout_role") for item in [*trust] if item] + (["report_epilogue"] if trust else [])},
     ]
-    if findings:
-        findings_act = {
-            "phase": "findings",
-            "purpose": "State the explicitly requested summary after the supporting evidence.",
-            "sections": ["primary_insights"],
-        }
-        insert_at = 3 if summary_position == "after_evidence" else 2
-        narrative_acts.insert(insert_at, findings_act)
     if use_taxonomy:
         narrative_acts.insert(2, {
             "phase": "taxonomy",
@@ -4547,8 +4208,7 @@ def _apply_path_dependent_forecast_architecture(
         complete_lookup.setdefault("data", {})["layout_variant"] = "reader_explorer"
 
     # The thesis belongs in the hero and model validation belongs with method
-    # trust.  A scenarios summary is opt-in; otherwise repeating the outcome
-    # after its charts adds length without adding evidence.
+    # trust. Keep the grid for decision-relevant scenarios.
     if findings:
         _promote_primary_insights(section_plan)
         finding_data = findings.setdefault("data", {})
@@ -4594,11 +4254,7 @@ def _apply_path_dependent_forecast_architecture(
                 ordered.append(item)
                 added.add(id(item))
 
-    summary_position = clean_text(
-        (findings.get("data", {}) if isinstance(findings, dict) else {}).get("summary_position") or ""
-    )
-    append(header, metrics, findings if summary_position == "opening" else None, decision_path, outcome_race, mechanism, outcome_distribution)
-    append(findings if summary_position == "after_evidence" else None, complete_lookup, *remaining, *trust)
+    append(header, metrics, decision_path, outcome_race, mechanism, outcome_distribution, findings, complete_lookup, *remaining, *trust)
     for item in section_plan:
         if item is not readout:
             append(item)
@@ -4629,27 +4285,21 @@ def _apply_path_dependent_forecast_architecture(
         })
 
     section_plan[:] = ordered
-    narrative_acts = [
-        {"phase": "answer", "purpose": "State the forecast and its uncertainty in one screen.", "sections": ["opening_context", "executive_kpis"]},
-        {"phase": "decision_path", "purpose": "Show the path that leads to the forecast outcome.", "sections": [decision_path.get("layout_role")] if decision_path else []},
-        {"phase": "outcome_race", "purpose": "Compare the likelihood of the key outcomes or routes.", "sections": [outcome_race.get("layout_role")] if outcome_race else []},
-        {"phase": "mechanism", "purpose": "Explain the factors that drive the leading outcome.", "sections": [item.get("layout_role") for item in (mechanism, outcome_distribution) if item]},
-        {"phase": "complete_lookup", "purpose": "Offer the complete lookup after the story is clear.", "sections": [complete_lookup.get("layout_role")] if complete_lookup else []},
-        {"phase": "trust", "purpose": "Close with validation, assumptions, and optional sources.", "sections": [item.get("layout_role") for item in trust] + ["report_epilogue"]},
-    ]
-    if findings:
-        narrative_acts.insert(4, {
-            "phase": "pivotal_scenarios",
-            "purpose": "Surface the explicitly requested scenarios most likely to change the decision.",
-            "sections": ["primary_insights"],
-        })
     return {
         "archetype": "path_dependent_forecast",
         "requested": "path_dependent_forecast",
         "reason": "The supplied forecast includes a decision-path visual, an outcome comparison, a mechanism, and a complete lookup.",
         "absorbed_sections": ["executive_readout"],
         "guardrail": "The architecture reorders supplied sections and promotes the supplied readout into the hero; it never creates analytical claims or evidence.",
-        "narrative_acts": narrative_acts,
+        "narrative_acts": [
+            {"phase": "answer", "purpose": "State the forecast and its uncertainty in one screen.", "sections": ["opening_context", "executive_kpis"]},
+            {"phase": "decision_path", "purpose": "Show the path that leads to the forecast outcome.", "sections": [decision_path.get("layout_role")] if decision_path else []},
+            {"phase": "outcome_race", "purpose": "Compare the likelihood of the key outcomes or routes.", "sections": [outcome_race.get("layout_role")] if outcome_race else []},
+            {"phase": "mechanism", "purpose": "Explain the factors that drive the leading outcome.", "sections": [item.get("layout_role") for item in (mechanism, outcome_distribution) if item]},
+            {"phase": "pivotal_scenarios", "purpose": "Surface the scenarios most likely to change the decision.", "sections": ["primary_insights"]},
+            {"phase": "complete_lookup", "purpose": "Offer the complete lookup after the story is clear.", "sections": [complete_lookup.get("layout_role")] if complete_lookup else []},
+            {"phase": "trust", "purpose": "Close with validation, assumptions, and optional sources.", "sections": [item.get("layout_role") for item in trust] + ["report_epilogue"]},
+        ],
     }
 
 
@@ -5202,7 +4852,6 @@ def review_storyboard_authoring(storyboard: dict[str, Any]) -> dict[str, Any]:
 
     target_count = 0
     covered_target_count = 0
-    rendered_insight_owners: set[str] = set()
     for section_index, planned in enumerate(storyboard.get("section_plan", [])):
         if not isinstance(planned, dict):
             continue
@@ -5233,7 +4882,6 @@ def review_storyboard_authoring(storyboard: dict[str, Any]) -> dict[str, Any]:
             if not isinstance(item, dict):
                 continue
             insight_owner = clean_text(item.get("visual_author_insight_id") or item.get("finding_id") or f"insight-{insight_index + 1}")
-            rendered_insight_owners.add(insight_owner)
             local_explicit = add_facts(item.get("display_facts", item.get("visual_facts")), owner=insight_owner)
             legacy = any(item.get(key) for key in (
                 "pills", "display_pills", "visual_pills", "bullets", "scan_points", "visual_scan_points",
@@ -5260,44 +4908,6 @@ def review_storyboard_authoring(storyboard: dict[str, Any]) -> dict[str, Any]:
                 ),
                 "recommendation": "Add display_facts to the insight or provide visual_author.facts owned by this insight; use exact source text and explicit allowed uses.",
             })
-
-    # Insight summaries are opt-in. When the compiler instead carries a
-    # finding into its local visual, review the original source finding here so
-    # that removing duplicated cards cannot bypass the display-fact contract.
-    source_context = storyboard.get("source_context") if isinstance(storyboard.get("source_context"), dict) else {}
-    source_insights = source_context.get("insights") if isinstance(source_context.get("insights"), list) else []
-    for insight_index, item in enumerate(source_insights):
-        if not isinstance(item, dict):
-            continue
-        insight_owner = clean_text(item.get("visual_author_insight_id") or item.get("finding_id") or f"insight-{insight_index + 1}")
-        if insight_owner in rendered_insight_owners:
-            continue
-        local_explicit = add_facts(item.get("display_facts", item.get("visual_facts")), owner=insight_owner)
-        legacy = any(item.get(key) for key in (
-            "pills", "display_pills", "visual_pills", "bullets", "scan_points", "visual_scan_points",
-            "examples", "representative_examples", "visual_examples", "annotations", "visual_annotations",
-        ))
-        if legacy:
-            legacy_fact_count += 1
-        is_completed = bool(clean_text(item.get("title") or item.get("headline") or item.get("statement") or item.get("detail") or item.get("summary")))
-        if not requested or not is_completed:
-            continue
-        target_count += 1
-        has_explicit = local_explicit > 0 or any(item_owner == insight_owner for item_owner, _ in declared)
-        if has_explicit:
-            covered_target_count += 1
-            continue
-        findings.append({
-            "id": "legacy_insight_display_semantics" if legacy else "missing_insight_display_facts",
-            "severity": "warning",
-            "section": "source_context",
-            "insight_id": insight_owner,
-            "claim": (
-                "Insight uses untyped display copy that a runtime visual author cannot safely audit."
-                if legacy else "Insight has no typed source fact available for a pill, scan point, example, or annotation."
-            ),
-            "recommendation": "Add display_facts to the insight or provide visual_author.facts owned by this insight; use exact source text and explicit allowed uses.",
-        })
 
     return {
         "status": "attention_recommended" if findings else "pass",
@@ -5502,13 +5112,6 @@ def render_report_from_storyboard(storyboard: dict[str, Any], *, title: str | No
     html_sections: list[str] = []
     include_plotly = False
     active_group = ""
-    explicit_story_arcs = bool(
-        str(storyboard.get("storyboard_schema") or "1").strip() in {"2", "v2"}
-        and any(
-            isinstance(item, dict) and clean_text(item.get("layout_role") or "").startswith("story_arc_")
-            for item in section_plan
-        )
-    )
     for index, planned in enumerate(section_plan):
         if not isinstance(planned, dict):
             continue
@@ -5518,18 +5121,6 @@ def render_report_from_storyboard(storyboard: dict[str, Any], *, title: str | No
             raise ValueError(f"storyboard section {index} is missing section_type")
         data = dict(data)
         data.setdefault("semantic_key", planned.get("layout_role") or f"section-{index}")
-        # Storyboard-v2 dividers own navigation when they are present.  Older
-        # or archetype-generated reports still need a compact reader outline,
-        # so include only the answer, evidence surfaces, and one trust close—
-        # never KPIs, duplicated summaries, or every supporting callout.
-        if not explicit_story_arcs and "nav_include" not in data:
-            data["nav_include"] = (
-                section_type == "header"
-                or section_type in CHART_SECTION_KINDS
-                or planned.get("layout_role") == "methodology"
-            )
-            if planned.get("layout_role") == "methodology":
-                data.setdefault("nav_label", "Methods & limits")
         typed = typed_report_section(section_type, data)
         include_plotly = include_plotly or typed.get("kind") in CHART_SECTION_KINDS
         group = clean_text(planned.get("layout_group") or "")
@@ -5576,12 +5167,7 @@ def _storyboard_metrics(
                 if isinstance(metric, dict):
                     label = metric.get("label") or metric.get("name") or metric.get("key")
                     if label and metric.get("value") not in (None, ""):
-                        role = clean_text(metric.get("metric_role") or metric.get("role") or "").lower()
-                        # Simulation count, validation diagnostics, and other
-                        # method context belong with the method/validation
-                        # story unless an author deliberately promotes them.
-                        if role not in {"method", "process", "validation", "reproducibility", "context"}:
-                            metrics.append(metric)
+                        metrics.append(metric)
     seen: set[str] = set()
     unique: list[dict[str, Any]] = []
     for metric in metrics:
@@ -5637,7 +5223,7 @@ def _evidence_ref_keys(source: dict[str, Any]) -> set[str]:
 
 
 def _pair_insights_with_evidence(insights: list[dict[str, Any]], planned_analyses: list[dict[str, Any]]) -> None:
-    """Anchor source insights to supporting sections without rendering duplicates."""
+    """Anchor each insight to its supporting section without reader-facing backlinks."""
     analysis_refs = []
     for planned in planned_analyses:
         data = planned.get("data", {})
@@ -5656,19 +5242,6 @@ def _pair_insights_with_evidence(insights: list[dict[str, Any]], planned_analyse
                 if not anchor:
                     continue
                 insight["evidence_anchor"] = anchor
-                context = {
-                    key: copy.deepcopy(insight[key])
-                    for key in (
-                        "title", "detail", "status", "severity", "confidence", "caveat",
-                        "limitation", "next_action", "action", "metrics", "evidence", "evidence_refs",
-                        "finding_id", "hypothesis_id", "claim_id", "claim_ids",
-                    )
-                    if key in insight
-                }
-                existing = planned["data"].get("story_context")
-                existing = existing if isinstance(existing, list) else []
-                if context and context not in existing:
-                    planned["data"]["story_context"] = [*existing, context]
                 break
 
 
@@ -6110,17 +5683,9 @@ def render_report_section(section_type: str, data: dict[str, Any], typed: dict[s
         classes.append(f"is-composition-{composition.replace('_', '-')}")
     if classes:
         wrapper = "r-hero" if st == "header" else "r-section"
-        nav_include = data.get("nav_include") is True
-        nav_label = clean_text(data.get("nav_label") or "")
-        nav_attrs = (
-            ' data-dc-nav="true"'
-            + (f' data-dc-nav-label="{_esc(nav_label)}"' if nav_label else "")
-            if nav_include else ""
-        )
         html = html.replace(
             f'class="{wrapper}"',
             f'class="{wrapper} {" ".join(classes)}" data-dc-composition="{_esc(composition)}"'
-            + nav_attrs
             + (f' data-dc-layout-exception="true"' if layout_exception else ""),
             1,
         )

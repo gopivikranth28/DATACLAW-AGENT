@@ -257,15 +257,14 @@ criteria:
     severity: fail
     status: live
     scope: report
-    applies_to: [header, narrative_band, findings, insight_grid]
+    applies_to: [findings, insight_grid]
     signal: >-
-      Reports with >= insight_required_min_sections sections carry either a
-      concise answer/readout or a findings/insight-grid section with completed
-      insight items.
+      Reports with >= insight_required_min_sections sections carry at least one
+      findings/insight-grid section with completed insight items.
     remediable: partial
     on_fail: block
-    remediation: add_a_reader_answer_or_findings_layer
-    rationale: Findings are first-class content, but repeating them after each visual is not required.
+    remediation: promote_intake_insights_into_insight_grid   # block only if intake has none (§5.5)
+    rationale: Findings are first-class content, not an afterthought.
 
   - id: missing_insight_sections
     axis: narrative

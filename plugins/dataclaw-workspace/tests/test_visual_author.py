@@ -55,7 +55,6 @@ def _storyboard() -> dict:
             "bullets": ["Lowest renewal rate", "Largest recoverable account base"],
             "representative_examples": ["Self-serve customers", "New enterprise accounts"],
         }],
-        requirements={"presentation": {"insight_summary": "after_evidence"}},
     )
 
 
@@ -267,8 +266,8 @@ async def test_runtime_visual_author_uses_same_typed_fact_contract_across_domain
     }
     authored, record = await author_report_visuals(storyboard, config={"mode": "runtime"}, llm=_JSONLLM(response))
     assert record["status"] == "applied"
-    readout = next(item for item in authored["section_plan"] if item["layout_role"] == "executive_readout")
-    assert readout["data"]["visual_scan_points"] == [fact_text]
+    primary = next(item for item in authored["section_plan"] if item["layout_role"] == "primary_insights")
+    assert primary["data"]["items"][0]["scan_points"] == [fact_text]
 
 
 @pytest.mark.asyncio
@@ -409,7 +408,6 @@ async def test_report_design_report_runs_runtime_visual_author_with_explicit_fac
             "title": "Activation drops in the first week",
             "detail": "Observed activation is below the target in the first seven days.",
         }],
-        requirements={"presentation": {"insight_summary": "after_evidence"}},
         visual_author={
             "mode": "runtime",
             "facts": [
