@@ -55,10 +55,11 @@ interface DesignReview {
   passes?: number
 }
 
-export default function ReportDisplay({ data, toolName, status }: {
+export default function ReportDisplay({ data, toolName, status, sessionId }: {
   data: ReportData
   toolName?: string
   status?: string
+  sessionId?: string | null
 }) {
   const [inlinePreviewOpen, setInlinePreviewOpen] = useState(false)
   const publishState = toolName && toolBaseName(toolName) === 'report_publish'
@@ -80,7 +81,7 @@ export default function ReportDisplay({ data, toolName, status }: {
 
   const htmlPath = data.html_path || data.path
   const name = htmlPath?.split('/').pop() || 'report.html'
-  const documentUrl = htmlPath ? reportDocumentUrl(htmlPath, data.size !== undefined ? String(data.size) : undefined) : ''
+  const documentUrl = htmlPath ? reportDocumentUrl(htmlPath, data.size !== undefined ? String(data.size) : undefined, { sessionId }) : ''
   const publication = publicationLabel(data, publishState)
   const reviewFindings = data.analytical_review?.findings || []
   const acceptedFindings = reviewFindings.filter(finding => finding.lifecycle_status === 'accepted_with_rationale')
@@ -93,7 +94,7 @@ export default function ReportDisplay({ data, toolName, status }: {
 
   const handlePrint = () => {
     if (!htmlPath) return
-    window.open(reportDocumentUrl(htmlPath, undefined, { print: true }), '_blank', 'noopener,noreferrer')
+    window.open(reportDocumentUrl(htmlPath, undefined, { print: true, sessionId }), '_blank', 'noopener,noreferrer')
   }
 
   const handleOpenNewTab = () => {

@@ -40,7 +40,7 @@ router = APIRouter()
 agent_router = APIRouter()
 
 APP_CELL_OUTPUT_TOOLS = {"execute_cell", "display_cell_output", "execute_code"}
-APP_REPORT_TOOLS = {"build_report", "report_add_section"}
+APP_REPORT_TOOLS = {"build_report", "report_design_report", "report_add_section", "report_publish"}
 
 
 def _stable_app_payload_key(payload: Any) -> str:
@@ -83,7 +83,12 @@ def _extract_visual_artifacts(
         return artifacts
 
     if tool_name not in APP_CELL_OUTPUT_TOOLS or not isinstance(result, dict):
-        if tool_name in APP_REPORT_TOOLS and isinstance(result, dict) and result.get("html_path"):
+        is_published_report = isinstance(result, dict) and (
+            tool_name != "report_publish"
+            or result.get("published") is True
+            or result.get("publication_status") == "published"
+        )
+        if tool_name in APP_REPORT_TOOLS and is_published_report and result.get("html_path"):
             key = _stable_app_payload_key({"kind": "report", "html_path": result.get("html_path")})
             artifacts.append({
                 "id": f"report-{key}",

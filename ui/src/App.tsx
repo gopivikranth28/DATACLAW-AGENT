@@ -84,25 +84,11 @@ function SidebarProjects() {
 function SidebarChats({ compact }: { compact: boolean }) {
   const navigate = useNavigate()
   const { pathname } = useLocation()
-  const [creating, setCreating] = useState(false)
 
-  const createChat = async () => {
-    if (creating) return
-    setCreating(true)
-    try {
-      const response = await fetch(`${API}/chat/sessions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: 'New chat', project_id: null }),
-      })
-      if (!response.ok) return
-      const session = await response.json()
-      navigate(`/chat?session=${encodeURIComponent(session.id)}`)
-    } catch {
-      // The chat directory remains usable if creating a session is temporarily unavailable.
-    } finally {
-      setCreating(false)
-    }
+  const createChat = () => {
+    // Confirm the dataset scope before creating anything. This makes Cancel a
+    // true cancel rather than a best-effort delete of a half-created session.
+    navigate('/chat?new_independent_chat=1')
   }
 
   return (
@@ -121,11 +107,10 @@ function SidebarChats({ compact }: { compact: boolean }) {
           aria-label="New independent chat"
           title="New chat"
           onClick={createChat}
-          disabled={creating}
           style={{
             position: 'absolute', right: 12, top: 8, width: 24, height: 24,
             display: 'grid', placeItems: 'center', border: 0, borderRadius: 5,
-            color: 'rgba(255,255,255,.8)', background: 'transparent', cursor: creating ? 'wait' : 'pointer',
+            color: 'rgba(255,255,255,.8)', background: 'transparent', cursor: 'pointer',
           }}
         >
           <PlusOutlined style={{ fontSize: 13 }} />

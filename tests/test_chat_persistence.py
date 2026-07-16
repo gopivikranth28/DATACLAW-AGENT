@@ -156,6 +156,33 @@ def test_extract_visual_artifacts_for_live_report():
     assert artifacts[0]["title"] == "Live Report"
 
 
+def test_extract_visual_artifacts_keeps_successful_report_publish_on_reload():
+    published = _extract_visual_artifacts(
+        tool_name="report_publish",
+        tool_call_id="r2",
+        tool_input={},
+        result={
+            "published": True,
+            "publication_status": "published",
+            "html_path": "reports/quality.html",
+            "title": "Quality report",
+        },
+    )
+    blocked = _extract_visual_artifacts(
+        tool_name="report_publish",
+        tool_call_id="r3",
+        tool_input={},
+        result={
+            "published": False,
+            "publication_status": "blocked",
+            "html_path": "reports/blocked.html",
+        },
+    )
+
+    assert [artifact["html_path"] for artifact in published] == ["reports/quality.html"]
+    assert blocked == []
+
+
 async def test_openclaw_tool_call_message_persists_as_dataclaw_tool_call():
     from dataclaw.storage import sessions
 

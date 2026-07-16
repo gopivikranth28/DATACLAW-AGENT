@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Empty, Select, Spin, Tag } from 'antd'
 import { DownloadOutlined, ExportOutlined } from '@ant-design/icons'
 import { API } from '../api'
-import { reportPreviewUrl } from './reportPreview'
+import { reportDocumentUrl, reportPreviewUrl } from './reportPreview'
 
 interface ArtifactVersion {
   version: number
@@ -35,6 +35,10 @@ interface ReportCounts {
   published: number
   scratch: number
 }
+
+type ReportEntry =
+  | { key: string; kind: 'artifact'; artifact: ArtifactRecord }
+  | { key: string; kind: 'scratch'; report: ScratchReport }
 
 export default function ArtifactPanel({
   sessionId,
@@ -97,17 +101,18 @@ export default function ArtifactPanel({
       })
       .then(data => {
         const next = sortArtifacts(Array.isArray(data.artifacts) ? data.artifacts : [])
-        const livingCount = next.filter((artifact: ArtifactRecord) => artifact.kind === 'living_report').length
-        onCountsChange?.({ published: next.length - livingCount, scratch: livingCount })
         const shouldApplyFocus = Boolean(focusArtifactId && lastAppliedFocusKeyRef.current !== focusKey)
-        const focusedId = shouldApplyFocus && next.some((a: ArtifactRecord) => a.artifact_id === focusArtifactId)
-          ? focusArtifactId
+        const focusedId = shouldApplyFocus && focusArtifactId && next.some((a: ArtifactRecord) => a.artifact_id === focusArtifactId)
+          ? artifactKey(focusArtifactId)
           : null
-        const currentId = selectedIdRef.current && next.some((a: ArtifactRecord) => a.artifact_id === selectedIdRef.current)
+        const currentId = selectedIdRef.current && (
+          next.some((a: ArtifactRecord) => artifactKey(a.artifact_id) === selectedIdRef.current) ||
+          selectedIdRef.current.startsWith('scratch:')
+        )
           ? selectedIdRef.current
           : null
-        const nextSelectedId = focusedId || currentId || next[0]?.artifact_id || null
-        const nextSelected = next.find((a: ArtifactRecord) => a.artifact_id === nextSelectedId) || null
+        const nextSelectedId = focusedId || currentId || (next[0] ? artifactKey(next[0].artifact_id) : null)
+        const nextSelected = next.find((a: ArtifactRecord) => artifactKey(a.artifact_id) === nextSelectedId) || null
         if (focusedId) lastAppliedFocusKeyRef.current = focusKey
         setArtifacts(next)
         setSelectedId(nextSelectedId)
@@ -133,14 +138,45 @@ export default function ArtifactPanel({
 
   useEffect(() => { load() }, [load, refreshKey])
 
-  const selected = useMemo(
-    () => artifacts.find(a => a.artifact_id === selectedId) || null,
-    [artifacts, selectedId],
+  const visibleScratchReports = useMemo(
+    () => uniqueScratchReports(scratchReports).filter(report => !artifacts.some(artifact => pathsMatch(artifact.source_path, report.htmlPath))),
+    [artifacts, scratchReports],
   )
+  const reportEntries = useMemo<ReportEntry[]>(() => [
+    ...artifacts.map(artifact => ({ key: artifactKey(artifact.artifact_id), kind: 'artifact' as const, artifact })),
+    ...visibleScratchReports.map(report => ({ key: scratchKey(report.id), kind: 'scratch' as const, report })),
+  ], [artifacts, visibleScratchReports])
+  const selectedEntry = useMemo(
+    () => reportEntries.find(entry => entry.key === selectedId) || null,
+    [reportEntries, selectedId],
+  )
+  const selected = selectedEntry?.kind === 'artifact' ? selectedEntry.artifact : null
+  const selectedScratchReport = selectedEntry?.kind === 'scratch' ? selectedEntry.report : null
+
+  useEffect(() => {
+    if (reportEntries.length === 0) {
+      setSelectedId(null)
+      setSelectedVersion(null)
+      return
+    }
+    if (!selectedEntry) {
+      const next = reportEntries[0]
+      selectedIdRef.current = next.key
+      setSelectedId(next.key)
+      setSelectedVersion(next.kind === 'artifact' && next.artifact.kind !== 'living_report' ? next.artifact.latest_version : null)
+    }
+  }, [reportEntries, selectedEntry])
+
+  useEffect(() => {
+    const livingCount = artifacts.filter(artifact => artifact.kind === 'living_report').length
+    onCountsChange?.({ published: artifacts.length - livingCount, scratch: livingCount + visibleScratchReports.length })
+  }, [artifacts, visibleScratchReports, onCountsChange])
+
   const version = selectedVersion || selected?.latest_version || null
   const isLivingReport = selected?.kind === 'living_report'
   const selectedSessionId = selected?.session_id || sessionId || 'default'
   const versionExists = Boolean(
+    selectedScratchReport ||
     isLivingReport ||
     !selected ||
     (version && (selected.versions || []).some(v => v.version === version)),
@@ -155,6 +191,13 @@ export default function ArtifactPanel({
       ) : ''
     : ''
   const exportUrl = selected && !isLivingReport && version ? artifactExportUrl(selected.artifact_id, version, selectedSessionId) : ''
+  const scratchDocumentUrl = selectedScratchReport
+    ? reportDocumentUrl(selectedScratchReport.htmlPath, selectedScratchReport.updatedAt, { sessionId })
+    : ''
+  const scratchOpenUrl = selectedScratchReport
+    ? reportPreviewUrl(selectedScratchReport.htmlPath, { sessionId })
+    : ''
+  const previewUrl = scratchDocumentUrl || artifactUrl
   const postTheme = useCallback(() => {
     const theme = window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
     frameRef.current?.contentWindow?.postMessage({ theme }, '*')
@@ -172,11 +215,11 @@ export default function ArtifactPanel({
     }
   }, [postTheme])
 
-  const onSelectArtifact = (artifactId: string) => {
-    const artifact = artifacts.find(a => a.artifact_id === artifactId)
-    selectedIdRef.current = artifactId
-    setSelectedId(artifactId)
-    setSelectedVersion(artifact?.kind === 'living_report' ? null : artifact?.latest_version || null)
+  const onSelectReport = (key: string) => {
+    const entry = reportEntries.find(item => item.key === key)
+    selectedIdRef.current = key
+    setSelectedId(key)
+    setSelectedVersion(entry?.kind === 'artifact' && entry.artifact.kind !== 'living_report' ? entry.artifact.latest_version : null)
   }
 
   if (!sessionId) return <Empty description="Select a session" image={Empty.PRESENTED_IMAGE_SIMPLE} />
@@ -187,7 +230,7 @@ export default function ArtifactPanel({
         <Alert type="error" showIcon message="Artifact library unavailable" description={error} />
       ) : loading && artifacts.length === 0 ? (
         <div style={{ textAlign: 'center', padding: 32 }}><Spin /></div>
-      ) : artifacts.length === 0 && scratchReports.length === 0 ? (
+      ) : reportEntries.length === 0 ? (
         <Empty description="No reports yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />
       ) : (
         <>
@@ -195,25 +238,29 @@ export default function ArtifactPanel({
             Published reports are versioned. Scratch reports are session drafts.
           </div>
 
-          {artifacts.length > 0 && <Select
+          {reportEntries.length > 0 && <Select
             className="dataclaw-report-picker"
             data-testid="report-picker"
             size="small"
-            value={selected?.artifact_id}
-            onChange={onSelectArtifact}
+            value={selectedEntry?.key}
+            onChange={onSelectReport}
             style={{ width: '100%', minWidth: 0 }}
-            options={artifacts.map(a => ({
-              value: a.artifact_id,
-              label: a.kind === 'living_report'
-                ? `${a.title || a.artifact_id} · scratch`
-                : `${a.title || a.artifact_id} · v${a.latest_version}`,
+            options={reportEntries.map(entry => ({
+              value: entry.key,
+              label: entry.kind === 'scratch'
+                ? `${entry.report.title || entry.report.htmlPath.split('/').pop()} · draft`
+                : entry.artifact.kind === 'living_report'
+                  ? `${entry.artifact.title || entry.artifact.artifact_id} · scratch`
+                  : `${entry.artifact.title || entry.artifact.artifact_id} · v${entry.artifact.latest_version}`,
             }))}
           />}
 
-          {selected && (
+          {selectedEntry && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
               <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
-                {isLivingReport ? (
+                {selectedScratchReport ? (
+                  <Tag color="blue" style={{ margin: 0, fontSize: 10 }}>draft</Tag>
+                ) : isLivingReport ? (
                   <Tag color="green" style={{ margin: 0, fontSize: 10 }}>live</Tag>
                 ) : (
                   <Select
@@ -222,22 +269,27 @@ export default function ArtifactPanel({
                     value={version || undefined}
                     onChange={setSelectedVersion}
                     style={{ width: 105 }}
-                    options={[...(selected.versions || [])].reverse().map(v => ({
+                    options={[...(selected?.versions || [])].reverse().map(v => ({
                       value: v.version,
                       label: v.label ? `v${v.version} · ${v.label}` : `v${v.version}`,
                     }))}
                   />
                 )}
-                <Button size="small" icon={<ExportOutlined />} href={artifactUrl} target="_blank" style={{ height: 28, paddingInline: 9, fontSize: 11 }}>Open</Button>
-                {!isLivingReport && <Button size="small" icon={<DownloadOutlined />} href={exportUrl} style={{ height: 28, paddingInline: 9, fontSize: 11 }}>Export</Button>}
+                <Button size="small" icon={<ExportOutlined />} href={scratchOpenUrl || artifactUrl} target="_blank" style={{ height: 28, paddingInline: 9, fontSize: 11 }}>Open</Button>
+                {selected && !isLivingReport && <Button size="small" icon={<DownloadOutlined />} href={exportUrl} style={{ height: 28, paddingInline: 9, fontSize: 11 }}>Export</Button>}
               </div>
 
-              {selected.description && (
+              {selected?.description && (
                 <div data-testid="report-description" title={selected.description} style={{ fontSize: 10.5, color: '#667085', lineHeight: 1.4 }}>{selected.description}</div>
               )}
-              {selected.source_path && (
+              {selected?.source_path && (
                 <div title={selected.source_path} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 9.5, color: '#98a2b3' }}>
                   <code style={{ fontSize: 'inherit' }}>{selected.source_path}</code>
+                </div>
+              )}
+              {selectedScratchReport && (
+                <div title={selectedScratchReport.htmlPath} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 9.5, color: '#98a2b3' }}>
+                  <code style={{ fontSize: 'inherit' }}>{selectedScratchReport.htmlPath}</code>
                 </div>
               )}
 
@@ -248,12 +300,12 @@ export default function ArtifactPanel({
                   message="Artifact version unavailable"
                   description={`Version ${version || 'unknown'} is not present in this artifact's history.`}
                 />
-              ) : artifactUrl ? (
+              ) : previewUrl ? (
                 <iframe
-                  data-testid={isLivingReport ? 'living-report-preview-frame' : 'artifact-preview-frame'}
+                  data-testid={selectedScratchReport ? 'scratch-report-preview-frame' : isLivingReport ? 'living-report-preview-frame' : 'artifact-preview-frame'}
                   ref={frameRef}
-                  title={isLivingReport ? `${selected.artifact_id} live` : `${selected.artifact_id} v${version}`}
-                  src={artifactUrl}
+                  title={selectedScratchReport ? selectedScratchReport.title || selectedScratchReport.htmlPath : isLivingReport ? `${selected?.artifact_id} live` : `${selected?.artifact_id} v${version}`}
+                  src={previewUrl}
                   sandbox="allow-scripts"
                   loading="lazy"
                   onLoad={postTheme}
@@ -266,24 +318,9 @@ export default function ArtifactPanel({
                   }}
                 />
               ) : (
-                <Alert type="warning" showIcon message="Artifact URL unavailable" />
+                <Alert type="warning" showIcon message="Report URL unavailable" />
               )}
             </div>
-          )}
-
-          {scratchReports.length > 0 && (
-            <section style={{ borderTop: '1px solid #eef1f5', paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 7 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: '#344054' }}>Workspace drafts</span>
-                <Tag color="blue" style={{ margin: 0, fontSize: 10 }}>{scratchReports.length}</Tag>
-              </div>
-              {scratchReports.map(report => (
-                <div key={report.id} style={{ display: 'flex', minWidth: 0, alignItems: 'center', gap: 6, padding: '7px 8px', border: '1px solid #e7ecf3', borderRadius: 7 }}>
-                  <span title={report.title || report.htmlPath} style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11.5, color: '#475467' }}>{report.title || report.htmlPath.split('/').pop()}</span>
-                  <Button size="small" type="link" href={reportPreviewUrl(report.htmlPath)} target="_blank" style={{ flex: '0 0 auto', paddingInline: 2 }}>Open</Button>
-                </div>
-              ))}
-            </section>
           )}
         </>
       )}
@@ -341,4 +378,39 @@ function sortArtifacts(items: ArtifactRecord[]): ArtifactRecord[] {
     if (a.kind !== 'living_report' && b.kind === 'living_report') return -1
     return String(b.updated_at || '').localeCompare(String(a.updated_at || ''))
   })
+}
+
+function artifactKey(artifactId: string): string {
+  return `artifact:${artifactId}`
+}
+
+function scratchKey(reportId: string): string {
+  return `scratch:${reportId}`
+}
+
+function normalizePath(path?: string): string {
+  return String(path || '').replace(/\\/g, '/').replace(/\/+$/, '')
+}
+
+function pathsMatch(left?: string, right?: string): boolean {
+  const a = normalizePath(left)
+  const b = normalizePath(right)
+  if (!a || !b) return false
+  if (a === b) return true
+  const aIsAbsolute = /^\//.test(a) || /^[A-Za-z]:\//.test(a)
+  const bIsAbsolute = /^\//.test(b) || /^[A-Za-z]:\//.test(b)
+  return (!aIsAbsolute && b.endsWith(`/${a}`)) || (!bIsAbsolute && a.endsWith(`/${b}`))
+}
+
+function uniqueScratchReports(reports: ScratchReport[]): ScratchReport[] {
+  const byPath = new Map<string, ScratchReport>()
+  for (const report of reports) {
+    if (!report?.htmlPath) continue
+    const key = normalizePath(report.htmlPath)
+    const existing = byPath.get(key)
+    if (!existing || String(report.updatedAt || '').localeCompare(String(existing.updatedAt || '')) > 0) {
+      byPath.set(key, report)
+    }
+  }
+  return [...byPath.values()].sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
 }

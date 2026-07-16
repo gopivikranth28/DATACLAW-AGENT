@@ -49,6 +49,165 @@ test('opens session experiments from the right rail', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Back to sessions' })).toHaveCount(0)
 })
 
+test('requires dataset confirmation before an independent chat can use data', async ({ page }) => {
+  const sessionId = 'session-confirm-datasets'
+  let createPayload: Record<string, unknown> | null = null
+  const datasets = [
+    { id: 'sales', name: 'Sales snapshot', type: 'csv', description: 'Monthly sales history' },
+    { id: 'support', name: 'Support tickets', type: 'csv', description: 'Customer support backlog' },
+  ]
+
+  await page.route('**/api/plugins', route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify([{ id: 'data', name: 'Data', label: 'Data', icon: '', pages: [], config_schema: null }]),
+  }))
+  await page.route('**/api/data/datasets', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify(datasets) }))
+  await page.route('**/api/chat/sessions?*', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify([]) }))
+  await page.route('**/api/chat/sessions', async route => {
+    if (route.request().method() === 'POST') {
+      createPayload = route.request().postDataJSON()
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ id: sessionId, title: 'New Chat', createdAt: '2026-07-16T00:00:00Z', datasetIds: [] }),
+      })
+      return
+    }
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify([]) })
+  })
+  await page.route(`**/api/chat/sessions/${sessionId}`, async route => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ id: sessionId, title: 'New Chat', createdAt: '2026-07-16T00:00:00Z', datasetIds: [], messages: [], visualArtifacts: [] }) })
+  })
+  await page.route('**/api/agent', route => route.fulfill({
+    contentType: 'text/event-stream',
+    body: `data: ${JSON.stringify({ type: 'MESSAGES_SNAPSHOT', messages: [] })}\n\n`,
+  }))
+  await page.route('**/api/guardrails/config/session/**', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ disabled: [] }) }))
+  await page.route('**/api/guardrails', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ guardrails: [] }) }))
+  await page.route('**/api/tools', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ tools: [] }) }))
+  await page.route('**/api/skills', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify([]) }))
+  await page.route('**/api/subagents/', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify([]) }))
+
+  await page.goto('/chat')
+  await page.getByRole('button', { name: 'New independent chat' }).click()
+
+  const dialog = page.locator('.ant-modal').filter({ has: page.getByText('Confirm datasets for this analysis', { exact: true }) })
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toHaveCount(1)
+  expect(createPayload).toBeNull()
+  await dialog.getByRole('checkbox', { name: 'Sales snapshot sales Monthly sales history' }).check()
+  await dialog.getByRole('button', { name: 'Continue with 1 dataset' }).click()
+
+  await expect(dialog).toBeHidden()
+  expect(createPayload).toMatchObject({ project_id: null, dataset_ids: ['sales'] })
+})
+
+test('can cancel dataset confirmation and discard the new independent chat', async ({ page }) => {
+  let createAttempted = false
+
+  await page.route('**/api/plugins', route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify([{ id: 'data', name: 'Data', label: 'Data', icon: '', pages: [], config_schema: null }]),
+  }))
+  await page.route('**/api/data/datasets', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify([]) }))
+  await page.route('**/api/chat/sessions?*', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify([]) }))
+  await page.route('**/api/chat/sessions', route => {
+    if (route.request().method() === 'POST') createAttempted = true
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify([]) })
+  })
+
+  await page.goto('/chat?new_independent_chat=1')
+
+  const dialog = page.locator('.ant-modal').filter({ has: page.getByText('Confirm datasets for this analysis', { exact: true }) })
+  await expect(dialog).toBeVisible()
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+
+  await expect(dialog).toBeHidden()
+  expect(createAttempted).toBe(false)
+  await expect(page.getByRole('heading', { name: 'Independent chats' })).toBeVisible()
+})
+
+test('deletes an independent chat from the session directory', async ({ page }) => {
+  const session = { id: 'session-delete-chat', title: 'Disposable chat', createdAt: '2026-07-16T00:00:00Z' }
+  let deleted = false
+
+  await page.route('**/api/plugins', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify([]) }))
+  await page.route('**/api/chat/sessions?*', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify([session]) }))
+  await page.route('**/api/chat/sessions', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify([session]) }))
+  await page.route(`**/api/chat/sessions/${session.id}`, async route => {
+    if (route.request().method() === 'DELETE') deleted = true
+    await route.fulfill({ status: 204 })
+  })
+
+  await page.goto('/chat')
+  await page.getByRole('button', { name: 'Delete Disposable chat', exact: true }).click()
+  await page.getByRole('button', { name: 'Delete', exact: true }).click()
+
+  await expect(page.getByText('Disposable chat')).toHaveCount(0)
+  expect(deleted).toBe(true)
+})
+
+test('opens a pending plan beside its accompanying chat message', async ({ page }) => {
+  const sessionId = 'session-pending-plan'
+  const planId = 'plan-review-1'
+  const sse = [
+    { type: 'RUN_STARTED', threadId: sessionId, runId: 'run-pending-plan' },
+    {
+      type: 'MESSAGES_SNAPSHOT',
+      messages: [{
+        id: 'assistant-plan-message',
+        role: 'assistant',
+        content: 'The plan is submitted and waiting on your approval. It includes the data-quality checks before execution.',
+      }],
+    },
+    { type: 'RUN_FINISHED', threadId: sessionId, runId: 'run-pending-plan' },
+  ].map(event => `data: ${JSON.stringify(event)}\n\n`).join('')
+
+  await page.route('**/api/plugins', route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify([{ id: 'plans', name: 'Plans', label: 'Plans', icon: '', pages: [], config_schema: null }]),
+  }))
+  await page.route('**/api/chat/sessions?*', route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify([{ id: sessionId, title: 'Plan review session', createdAt: '2026-07-16T00:00:00Z' }]),
+  }))
+  await page.route('**/api/chat/sessions', route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify([{ id: sessionId, title: 'Plan review session', createdAt: '2026-07-16T00:00:00Z' }]),
+  }))
+  await page.route(`**/api/chat/sessions/${sessionId}`, route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ id: sessionId, title: 'Plan review session', createdAt: '2026-07-16T00:00:00Z', messages: [], visualArtifacts: [] }),
+  }))
+  await page.route('**/api/plans?**', route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify([{
+      id: planId,
+      name: 'Data quality review',
+      description: 'Validate the source before analysis.',
+      status: 'pending',
+      revision: 1,
+      steps: [{ id: 'step-1', name: 'Profile the source data', status: 'pending' }],
+      created_at: '2026-07-16T00:00:00Z',
+      updated_at: '2026-07-16T00:00:00Z',
+    }]),
+  }))
+  await page.route('**/api/agent', route => route.fulfill({ contentType: 'text/event-stream', body: sse }))
+  await page.route('**/api/guardrails/config/session/**', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ disabled: [] }) }))
+  await page.route('**/api/guardrails', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ guardrails: [] }) }))
+  await page.route('**/api/tools', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ tools: [] }) }))
+  await page.route('**/api/skills', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify([]) }))
+  await page.route('**/api/subagents/', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify([]) }))
+  await page.route('**/api/artifacts?**', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ artifacts: [] }) }))
+
+  await page.goto(`/chat?session=${sessionId}`)
+
+  await expect(page.getByText('The plan is submitted and waiting on your approval.', { exact: false })).toBeVisible()
+  await expect(page.getByText('Plan Data quality review awaits your review.')).toBeVisible()
+  await expect(page.getByTestId('session-panel-title')).toHaveText('Plans')
+  await expect(page.getByRole('heading', { name: 'Data quality review' })).toBeVisible()
+  await expect(page.getByText('Profile the source data', { exact: false })).toBeVisible()
+})
+
 test('uses the focused chat surface for a project session', async ({ page }) => {
   const projectId = 'project-eda'
   const sessionId = 'project-session'
@@ -181,7 +340,13 @@ test('renders the chat artifact sidebar living report preview', async ({ page })
         title: 'Artifact Preview Session',
         createdAt: '2026-07-09T00:00:00Z',
         messages: [],
-        visualArtifacts: [],
+        visualArtifacts: [{
+          id: 'workspace-draft',
+          kind: 'report',
+          html_path: 'reports/workspace-draft.html',
+          title: 'Workspace draft',
+          updated_at: 'draft-v1',
+        }],
       }),
     })
   })
@@ -234,10 +399,9 @@ test('renders the chat artifact sidebar living report preview', async ({ page })
   await page.goto(`/chat?session=${threadId}`)
   await page.getByRole('button', { name: 'Reports' }).click()
 
-  const selectedReport = page.getByText('Session living report · scratch', { exact: true })
-  await expect(selectedReport).toBeVisible()
+  await expect(page.getByText('Workspace draft · draft', { exact: true })).toBeVisible()
   await expect(page.getByText('0 published')).toBeVisible()
-  await expect(page.getByText('1 scratch')).toBeVisible()
+  await expect(page.getByText('2 scratch')).toBeVisible()
   const panelTitle = page.getByTestId('session-panel-title')
   const reportCounts = page.getByTestId('report-panel-counts')
   const [titleBox, countsBox] = await Promise.all([panelTitle.boundingBox(), reportCounts.boundingBox()])
@@ -247,7 +411,10 @@ test('renders the chat artifact sidebar living report preview', async ({ page })
   expect(Math.abs((countsBox!.y + countsBox!.height / 2) - (titleBox!.y + titleBox!.height / 2))).toBeLessThan(3)
   const reportPicker = page.getByTestId('report-picker')
   expect((await reportPicker.boundingBox())!.height).toBeLessThanOrEqual(30)
-  expect(await selectedReport.evaluate(node => parseFloat(getComputedStyle(node).fontSize))).toBeLessThanOrEqual(11)
+  await reportPicker.click()
+  const selectedReport = page.getByText('Session living report · scratch', { exact: true })
+  await expect(selectedReport).toBeVisible()
+  await selectedReport.click()
   await expect(page.frameLocator('[data-testid="living-report-preview-frame"]').getByText('Living report loaded')).toBeVisible()
   await expect.poll(() => artifactRequests.length).toBe(1)
 
@@ -527,4 +694,5 @@ test('renders a published report tool result in chat', async ({ page }) => {
   expect(documentUrl.pathname).toBe('/api/workspace/preview/document')
   expect(documentUrl.searchParams.get('path')).toBe(reportPath)
   expect(documentUrl.searchParams.get('v')).toBe('2048')
+  expect(documentUrl.searchParams.get('session_id')).toBe(threadId)
 })
