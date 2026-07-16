@@ -402,18 +402,11 @@ Use `semantic_role` on an analysis (`methodology`, `data_quality`, `uncertainty`
 Every report starts with the renderer's deterministic desktop-editorial
 baseline (semantic composition frames, hierarchy, evidence surfaces, and
 Plotly theming). It is recorded in the storyboard/receipt even when runtime
-visual authoring falls back. The baseline never requires an LLM.
+visual authoring is off. This baseline is the reproducible default; it does
+not require an LLM.
 
-The runtime visual author runs by default (`mode="runtime"`): when the
-environment has a configured LLM, it composes the presentation at build time,
-and when it does not — or the response is malformed — the build falls back to
-the deterministic baseline and records `visual_author.status="fallback"` in
-the receipt. Pass `visual_author={"mode": "off"}` only when a run must pin the
-deterministic baseline. Supplying `display_facts` (below) is what gives the
-author real material; a run without facts still selects theme and layout but
-cannot add emphasis content.
-
-It is a visual-editor stage, not a prompt-to-HTML
+When a configured LLM should compose the presentation at build time, opt into
+the runtime visual author. It is a visual-editor stage, not a prompt-to-HTML
 stage: the model chooses a named theme, section surfaces/layouts, and supplied
 facts to show as pills, scan points, examples, or small annotations. The
 renderer then materializes those choices with its safe components.

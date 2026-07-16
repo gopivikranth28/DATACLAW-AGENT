@@ -1116,13 +1116,11 @@ def _workspace_tree(root: Path) -> list[dict[str, Any]]:
         for path in sorted(root.iterdir()):
             if path.name.startswith(".") or path.name == "__pycache__":
                 continue
-            stat = path.stat()
             item: dict[str, Any] = {
                 "name": path.name,
                 "path": str(path),
                 "is_dir": path.is_dir(),
-                "size": stat.st_size if path.is_file() else 0,
-                "modified": stat.st_mtime,
+                "size": path.stat().st_size if path.is_file() else 0,
             }
             if path.is_dir():
                 item["children"] = _workspace_tree(path)

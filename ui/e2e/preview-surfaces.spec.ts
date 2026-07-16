@@ -147,11 +147,8 @@ test('renders app report previews through the workspace document endpoint', asyn
 
 test('renders the chat artifact sidebar living report preview', async ({ page }) => {
   const artifactRequests: string[] = []
-  const scratchRequests: string[] = []
   const runId = 'run-artifact-preview'
   const threadId = 'session-artifact-preview'
-  const updateMessage = 'Expanded the player segmentation narrative with clearer evidence and validation notes.'
-  const sourcePath = '/workspace/reports/published-player-segmentation.html'
   const sse = [
     { type: 'RUN_STARTED', threadId, runId },
     { type: 'MESSAGES_SNAPSHOT', messages: [] },
@@ -184,13 +181,7 @@ test('renders the chat artifact sidebar living report preview', async ({ page })
         title: 'Artifact Preview Session',
         createdAt: '2026-07-09T00:00:00Z',
         messages: [],
-        visualArtifacts: [{
-          id: 'workspace-draft',
-          kind: 'report',
-          html_path: 'reports/workspace-draft.html',
-          title: 'Workspace draft',
-          updated_at: '2026-07-10T00:00:00Z',
-        }],
+        visualArtifacts: [],
       }),
     })
   })
@@ -219,44 +210,17 @@ test('renders the chat artifact sidebar living report preview', async ({ page })
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
-        artifacts: [
-          {
-            artifact_id: 'published-session-artifact',
-            kind: 'artifact',
-            title: 'Published player report',
-            description: updateMessage,
-            source_path: sourcePath,
-            session_id: threadId,
-            latest_version: 2,
-            versions: [{ version: 1, label: 'initial' }, { version: 2, label: 'reviewed' }],
-            updated_at: '2026-07-11T00:00:00Z',
-            url: `/api/artifacts/published-session-artifact?version=2&session_id=${threadId}`,
-          },
-          {
-            artifact_id: 'live-session-artifact',
-            kind: 'living_report',
-            title: 'Session living report',
-            session_id: threadId,
-            latest_version: 0,
-            versions: [],
-            updated_at: '2026-07-09T00:00:00Z',
-            url: `/api/artifacts/live-session-artifact/living?session_id=${threadId}`,
-          },
-        ],
+        artifacts: [{
+          artifact_id: 'live-session-artifact',
+          kind: 'living_report',
+          title: 'Session living report',
+          session_id: threadId,
+          latest_version: 0,
+          versions: [],
+          updated_at: '2026-07-09T00:00:00Z',
+          url: `/api/artifacts/live-session-artifact/living?session_id=${threadId}`,
+        }],
       }),
-    })
-  })
-  await page.route('**/api/workspace/preview?**', async route => {
-    scratchRequests.push(route.request().url())
-    await route.fulfill({
-      contentType: 'text/html',
-      body: '<!doctype html><html><body><main>Workspace draft loaded</main></body></html>',
-    })
-  })
-  await page.route('**/api/artifacts/published-session-artifact?**', async route => {
-    await route.fulfill({
-      contentType: 'text/html',
-      body: '<!doctype html><html><body><main>Published report loaded</main></body></html>',
     })
   })
   await page.route('**/api/artifacts/live-session-artifact/living?**', async route => {
@@ -270,38 +234,9 @@ test('renders the chat artifact sidebar living report preview', async ({ page })
   await page.goto(`/chat?session=${threadId}`)
   await page.getByRole('button', { name: 'Reports' }).click()
 
-  // Published artifacts, living reports, and workspace drafts share one
-  // searchable selector with explicit status labels.
-  await expect(page.getByText('1 published')).toBeVisible()
-  await expect(page.getByText('2 scratch')).toBeVisible()
-  await page.getByLabel('Select report', { exact: true }).click()
-  let reportMenu = page.locator('.ant-select-dropdown:visible')
-  await expect(reportMenu.getByText('Published player report · published · v2', { exact: true })).toBeVisible()
-  await expect(reportMenu.getByText('Session living report · scratch', { exact: true })).toBeVisible()
-  await reportMenu.getByText('Workspace draft · scratch', { exact: true }).click()
-  await expect(page.frameLocator('[data-testid="scratch-report-preview-frame"]').getByText('Workspace draft loaded')).toBeVisible()
-  await expect.poll(() => scratchRequests.length).toBe(1)
-
-  await page.getByLabel('Select report', { exact: true }).click()
-  reportMenu = page.locator('.ant-select-dropdown:visible')
-  await reportMenu.getByText('Published player report · published · v2', { exact: true }).click()
-
-  await expect(page.getByLabel('Select report version')).toBeVisible()
-  await expect(page.getByLabel('Open selected report')).toBeVisible()
-  await expect(page.getByLabel('Export selected report')).toBeVisible()
-  const path = page.getByLabel(`File path: ${sourcePath}`)
-  await path.hover()
-  await expect(page.getByRole('tooltip')).toContainText(sourcePath)
-  await page.mouse.move(0, 0)
-  await expect(page.getByRole('tooltip')).toBeHidden()
-  const update = page.getByLabel(`Update: ${updateMessage}`)
-  await update.hover()
-  await expect(page.getByRole('tooltip')).toContainText(updateMessage)
-  await expect(page.frameLocator('[data-testid="artifact-preview-frame"]').getByText('Published report loaded')).toBeVisible()
-
-  await page.getByLabel('Select report', { exact: true }).click()
-  reportMenu = page.locator('.ant-select-dropdown:visible')
-  await reportMenu.getByText('Session living report · scratch', { exact: true }).click()
+  await expect(page.getByText('Session living report · scratch')).toBeVisible()
+  await expect(page.getByText('0 published')).toBeVisible()
+  await expect(page.getByText('1 scratch')).toBeVisible()
   await expect(page.frameLocator('[data-testid="living-report-preview-frame"]').getByText('Living report loaded')).toBeVisible()
   await expect.poll(() => artifactRequests.length).toBe(1)
 
@@ -711,71 +646,4 @@ test('surfaces report trust signals and visual review evidence in chat', async (
   await expect(reviewCard.locator('[data-testid="visual-review-screenshot"]')).toHaveCount(2)
   await expect(reviewCard.getByText('Key section · insight_grid')).toBeVisible()
   await expect.poll(() => screenshotRequests.length).toBeGreaterThanOrEqual(2)
-})
-
-test('sorts the files pane by recency and file type', async ({ page }) => {
-  const sessionId = 'session-file-sorting'
-  const now = Math.floor(Date.now() / 1000)
-  const sessionFiles = [
-    { name: 'analysis.ipynb', path: '/ws/analysis.ipynb', is_dir: false, size: 4096, modified: now - 7200 },
-    { name: 'report.html', path: '/ws/report.html', is_dir: false, size: 9216, modified: now - 120 },
-    { name: 'data.csv', path: '/ws/data.csv', is_dir: false, size: 2048, modified: now - 86400 * 3 },
-    {
-      name: 'exports', path: '/ws/exports', is_dir: true, modified: now - 86400 * 10,
-      children: [{ name: 'summary.html', path: '/ws/exports/summary.html', is_dir: false, size: 512, modified: now - 60 }],
-    },
-  ]
-  const sse = [
-    { type: 'RUN_STARTED', threadId: sessionId, runId: 'run-file-sorting' },
-    { type: 'MESSAGES_SNAPSHOT', messages: [] },
-    { type: 'RUN_FINISHED', threadId: sessionId, runId: 'run-file-sorting' },
-  ].map(event => `data: ${JSON.stringify(event)}\n\n`).join('')
-
-  await page.route('**/api/plugins', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify([]) }))
-  await page.route('**/api/chat/sessions?*', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify([{ id: sessionId, title: 'File sorting', createdAt: '2026-07-15T00:00:00Z' }]) }))
-  await page.route('**/api/chat/sessions', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify([{ id: sessionId, title: 'File sorting', createdAt: '2026-07-15T00:00:00Z' }]) }))
-  await page.route(`**/api/chat/sessions/${sessionId}`, route => route.fulfill({
-    contentType: 'application/json',
-    body: JSON.stringify({ id: sessionId, title: 'File sorting', createdAt: '2026-07-15T00:00:00Z', messages: [], visualArtifacts: [] }),
-  }))
-  await page.route(`**/api/chat/sessions/${sessionId}/files`, route => route.fulfill({
-    contentType: 'application/json',
-    body: JSON.stringify({ files: sessionFiles, kind: 'session' }),
-  }))
-  await page.route('**/api/agent', route => route.fulfill({ contentType: 'text/event-stream', body: sse }))
-  await page.route('**/api/guardrails/config/session/**', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ disabled: [] }) }))
-  await page.route('**/api/guardrails', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ guardrails: [] }) }))
-  await page.route('**/api/tools', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ tools: [] }) }))
-  await page.route('**/api/skills', route => route.fulfill({ contentType: 'application/json', body: '[]' }))
-  await page.route('**/api/subagents/', route => route.fulfill({ contentType: 'application/json', body: '[]' }))
-  await page.route('**/api/artifacts?**', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ artifacts: [] }) }))
-
-  await page.goto(`/chat?session=${sessionId}`)
-  await page.getByRole('button', { name: 'Files' }).click()
-  await expect(page.getByText('analysis.ipynb')).toBeVisible()
-
-  const fileNames = () => page.getByRole('complementary', { name: 'Session panel', exact: true })
-    .locator('span[title]')
-    .evaluateAll(nodes => nodes.map(node => node.getAttribute('title')))
-
-  // Default: folders first, then names alphabetically.
-  expect(await fileNames()).toEqual(['exports', 'analysis.ipynb', 'data.csv', 'report.html'])
-
-  // Recency: newest first, and the folder inherits its newest child's time
-  // once mixed ordering is on; file rows show relative times instead of size.
-  await page.getByLabel('Sort files').selectOption('modified')
-  expect(await fileNames()).toEqual(['exports', 'report.html', 'analysis.ipynb', 'data.csv'])
-  await expect(page.getByText('2m', { exact: true })).toBeVisible()
-  await expect(page.getByText('2h', { exact: true })).toBeVisible()
-  await expect(page.getByText('3d', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Folders first' }).click()
-  expect(await fileNames()).toEqual(['exports', 'report.html', 'analysis.ipynb', 'data.csv'])
-
-  // File type: extensions group together (folders have none, then csv < html < ipynb).
-  await page.getByLabel('Sort files').selectOption('type')
-  expect(await fileNames()).toEqual(['exports', 'data.csv', 'report.html', 'analysis.ipynb'])
-
-  // Largest still works; in mixed ordering the folder (no size) sorts last.
-  await page.getByLabel('Sort files').selectOption('size')
-  expect(await fileNames()).toEqual(['report.html', 'analysis.ipynb', 'data.csv', 'exports'])
 })

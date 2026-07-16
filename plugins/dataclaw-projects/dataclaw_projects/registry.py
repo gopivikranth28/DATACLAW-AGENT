@@ -195,13 +195,11 @@ def list_project_files(project_id: str) -> dict[str, Any]:
             for p in sorted(root.iterdir()):
                 if p.name.startswith(".") or p.name == "__pycache__":
                     continue
-                stat = p.stat()
                 item: dict[str, Any] = {
                     "name": p.name,
                     "path": str(p),
                     "is_dir": p.is_dir(),
-                    "size": stat.st_size if p.is_file() else 0,
-                    "modified": stat.st_mtime,
+                    "size": p.stat().st_size if p.is_file() else 0,
                 }
                 if p.is_dir():
                     item["children"] = scan(p)

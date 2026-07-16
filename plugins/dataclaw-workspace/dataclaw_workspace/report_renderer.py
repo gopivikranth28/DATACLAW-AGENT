@@ -17,7 +17,6 @@ from dataclaw_artifacts.sections import (
     normalize_section,
     section_attrs as artifact_section_attrs,
     section_meta_script as artifact_section_meta_script,
-    unescape_display_text,
 )
 from dataclaw_artifacts.wrapper import plotly_runtime_js
 
@@ -1261,28 +1260,6 @@ def report_shell_script() -> str:
     if (type === 'hbar') type = 'bar';
     var xKey = chart.x || chart.x_key || 'x';
     var yKey = chart.y || chart.y_key || 'y';
-    if (type === 'bar' && xKey !== yKey) {
-      // Defensive mirror of the Python canonicalizer: this grammar binds x to
-      // the category key and y to the value key, but Plotly-convention specs
-      // (x = value, y = category with orientation "h") reach older published
-      // storyboards. A crossed binding draws bars with no numeric length, so
-      // swap when the record values say the keys are reversed.
-      var numericShare = function(key) {
-        var seen = 0, numeric = 0;
-        rows.forEach(function(row) {
-          var value = cell(row, key);
-          if (value === null || value === undefined || value === '') return;
-          seen += 1;
-          if (coerceNumber(value) !== null) numeric += 1;
-        });
-        return seen ? numeric / seen : null;
-      };
-      var xShare = numericShare(xKey);
-      var yShare = numericShare(yKey);
-      if (xShare !== null && yShare !== null && yShare < 0.5 && xShare >= 0.5) {
-        var swappedKey = xKey; xKey = yKey; yKey = swappedKey;
-      }
-    }
     var colorKey = chart.color || chart.group || chart.series;
     var traces = [];
     var layout = {};
@@ -1897,11 +1874,7 @@ def analyze_report_quality(
     if isinstance(visual_author, dict):
         author_mode = clean_text(visual_author.get("mode") or "")
         author_status = clean_text(visual_author.get("status") or "")
-        author_source = clean_text(visual_author.get("source") or "")
-        # A fallback of the unrequested default (e.g. no LLM provider in a
-        # headless run) is receipt information, not a report defect; only an
-        # explicitly requested author that fell back warrants a warning.
-        if author_mode in {"runtime", "required"} and author_status == "fallback" and author_source != "default":
+        if author_mode in {"runtime", "required"} and author_status == "fallback":
             warn(
                 "visual_author_fallback",
                 "The runtime visual author did not produce a validated plan; the deterministic storyboard was rendered instead.",
@@ -2943,7 +2916,7 @@ def normalize_raw_html_report(
         return _raw_html_storyboard(raw_html, title=title, report_goal=report_goal, audience=audience)
 
     title_match = re.search(r"<title[^>]*>(.*?)</title>", raw_html, re.IGNORECASE | re.DOTALL)
-    effective_title = unescape_display_text(title or (title_match.group(1) if title_match else "Structured report"))
+    effective_title = clean_text(title or (title_match.group(1) if title_match else "Structured report"))
     plan: list[dict[str, Any]] = []
     for index, section in enumerate(sections):
         section_type = clean_text(section.get("kind") or "text")
@@ -5405,18 +5378,9 @@ def _review_editorial_design(storyboard: dict[str, Any]) -> dict[str, Any]:
             sections=[],
         )
 
-    # Trust sections are recognized by what they are, not what the designer
-    # happened to name their layout_role: a methodology_block supplied through
-    # the analyses channel arrives as e.g. "analysis_7_methodology_block" and
-    # must still count as closing provenance.
-    trust_roles = {"methodology", "hypothesis_dispositions", "evidence_trace", "report_epilogue"}
-    trust_types = {"methodology_block", "hypothesis_ledger", "evidence_trace", "evidence_rail"}
-    trust_semantic_roles = {"methodology", "data_quality", "uncertainty", "provenance"}
     trust_indices = [
-        index for index, item in enumerate(indexed)
-        if clean_text(item.get("layout_role") or "") in trust_roles
-        or clean_text(item.get("section_type") or item.get("kind") or "").lower() in trust_types
-        or clean_text(item_data(item).get("semantic_role") or "").lower() in trust_semantic_roles
+        position(role) for role in ("methodology", "hypothesis_dispositions", "evidence_trace", "report_epilogue")
+        if position(role) is not None
     ]
     final_content_index = max(explorer_indices + ([finding_index] if finding_index is not None else []) + evidence_indices, default=-1)
     if not trust_indices:
@@ -5466,11 +5430,7 @@ def review_storyboard_authoring(storyboard: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(visual_config, dict):
         visual_config = requirements.get("visual_author") if isinstance(requirements.get("visual_author"), dict) else {}
     mode = clean_text(visual_config.get("mode") or "off").lower().replace("-", "_")
-    # Runtime authoring is on by default (source "default"); only an explicit
-    # author request or an explicit presentation requirement makes missing
-    # display facts a reportable authoring gap.
-    explicitly_configured = mode in {"runtime", "required", "provided"} and clean_text(visual_config.get("source") or "").lower() != "default"
-    requested = bool(presentation.get("require_display_facts")) or explicitly_configured
+    requested = bool(presentation.get("require_display_facts")) or mode in {"runtime", "required", "provided"}
     declared: set[tuple[str, str]] = set()
     explicit_fact_count = 0
     legacy_fact_count = 0
@@ -6327,69 +6287,6 @@ def _columns_from_records(records: list[Any]) -> list[str]:
     return columns
 
 
-def _numeric_key_fraction(records: list[Any], key: str) -> float | None:
-    """Fraction of non-null record values under ``key`` that parse as numbers."""
-    values = [row.get(key) for row in records if isinstance(row, dict) and row.get(key) is not None]
-    if not values:
-        return None
-    numeric = 0
-    for value in values:
-        if isinstance(value, bool):
-            continue
-        if isinstance(value, (int, float)):
-            numeric += 1
-        elif isinstance(value, str):
-            try:
-                float(value.replace(",", ""))
-            except ValueError:
-                continue
-            numeric += 1
-    return numeric / len(values)
-
-
-def canonicalize_chart_spec(chart: dict[str, Any], records: list[Any]) -> dict[str, Any]:
-    """Normalize an authored bar-chart spec against its records.
-
-    The renderer's chart grammar binds ``x`` to the category key and ``y`` to
-    the value key; ``orientation: "h"`` / ``type: "hbar"`` only flips the
-    drawn axes.  Plotly's native convention for horizontal bars is the
-    opposite (x = value, y = category), and authored storyboards arrive in
-    both.  A crossed binding silently renders bars with no numeric length, so
-    detect it from the record values and swap the keys.
-    """
-    if not isinstance(chart, dict) or not isinstance(records, list) or not records:
-        return chart
-    chart_type = str(chart.get("type") or "bar").strip().lower()
-    if chart_type not in {"bar", "hbar"}:
-        return chart
-    x_key = chart.get("x") or chart.get("x_key")
-    y_key = chart.get("y") or chart.get("y_key")
-    if not isinstance(x_key, str) or not isinstance(y_key, str) or x_key == y_key:
-        return chart
-    x_numeric = _numeric_key_fraction(records, x_key)
-    y_numeric = _numeric_key_fraction(records, y_key)
-    if x_numeric is None or y_numeric is None:
-        return chart
-    # The value binding (y in this grammar) must be numeric. Swap only on the
-    # unambiguous cross: x parses as numbers while y does not.
-    if y_numeric >= 0.5 or x_numeric < 0.5:
-        return chart
-    swapped = dict(chart)
-    swapped.pop("x_key", None)
-    swapped.pop("y_key", None)
-    swapped["x"], swapped["y"] = y_key, x_key
-    x_label = chart.get("x_label")
-    y_label = chart.get("y_label")
-    if x_label is not None or y_label is not None:
-        swapped.pop("x_label", None)
-        swapped.pop("y_label", None)
-        if y_label is not None:
-            swapped["x_label"] = y_label
-        if x_label is not None:
-            swapped["y_label"] = x_label
-    return swapped
-
-
 def _infer_filters(records: list[Any], chart: dict[str, Any] | None = None) -> list[dict[str, str]]:
     if not records:
         return []
@@ -6932,7 +6829,6 @@ def _render_section_body(section_type: str, data: dict[str, Any], typed: dict[st
         chart = data.get("chart", {})
         if not isinstance(chart, dict):
             raise ValueError("filterable_chart section requires dict 'chart'")
-        chart = canonicalize_chart_spec(chart, records)
         config = _json_for_script({
             "records": records,
             "chart": chart,
@@ -6996,7 +6892,6 @@ def _render_section_body(section_type: str, data: dict[str, Any], typed: dict[st
         chart = data.get("chart", {})
         if not isinstance(chart, dict):
             raise ValueError("chart_table_explorer section requires dict 'chart'")
-        chart = canonicalize_chart_spec(chart, records)
         config = _json_for_script({
             "records": records,
             "chart": chart,

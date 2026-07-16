@@ -24,7 +24,6 @@ from dataclaw_artifacts.store import (
     resolve_workspace_path,
     write_artifact_version,
 )
-from dataclaw_artifacts.sections import unescape_display_text
 from dataclaw_artifacts.validator import ArtifactValidationError, strip_dataclaw_runtime_scripts, validate_and_prepare_html
 from dataclaw_artifacts.wrapper import export_shell, new_nonce
 
@@ -43,23 +42,16 @@ def _validate_structured_report_receipt(
     report_receipt_path: str | None,
     session_id: str,
     project_id: str | None,
-) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Require a current workspace publish receipt for structured reports.
 
     Report-builder HTML is recognised from its typed section metadata.  It must
     have passed ``report_publish`` for the exact HTML bytes before artifact
     publication can create a version.  Generic hand-authored artifacts retain
-    the normal artifact validator workflow, but their stored metadata records
-    that no report gate ever ran, so a report-shaped page published through
-    this path is visibly ungated rather than indistinguishable from a
-    gate-approved report.
+    the normal artifact validator workflow.
     """
     if not _STRUCTURED_REPORT_RE.search(html):
-        return None, {
-            "report_gated": False,
-            "reason": "freeform_html",
-            "note": "Published without report_publish gates; no quality, design, or analytical review applies.",
-        }
+        return None
 
     if report_receipt_path is None and source_path:
         report_receipt_path = str(Path(source_path).with_suffix(".publish.json"))
@@ -67,7 +59,7 @@ def _validate_structured_report_receipt(
         return _report_receipt_error(
             "report_publish_receipt_missing",
             "Structured report publication requires report_receipt_path from report_publish.",
-        ), {}
+        )
     try:
         receipt_path = resolve_workspace_path(
             report_receipt_path,
@@ -78,37 +70,37 @@ def _validate_structured_report_receipt(
         return _report_receipt_error(
             "report_publish_receipt_invalid",
             "The report publish receipt path is outside the allowed workspace.",
-        ), {}
+        )
     if not receipt_path.is_file():
         return _report_receipt_error(
             "report_publish_receipt_missing",
             "Structured report publication requires a current report_publish receipt.",
-        ), {}
+        )
     try:
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return _report_receipt_error(
             "report_publish_receipt_invalid",
             "The report publish receipt is not valid JSON.",
-        ), {}
+        )
     if not isinstance(receipt, dict) or receipt.get("status") != "published":
         return _report_receipt_error(
             "report_publish_receipt_invalid",
             "The report publish receipt does not record a successful publication.",
-        ), {}
+        )
     expected_hash = str(receipt.get("html_sha256") or "").strip().lower()
     actual_hash = hashlib.sha256(html.encode("utf-8")).hexdigest()
     if not expected_hash or expected_hash != actual_hash:
         return _report_receipt_error(
             "report_publish_receipt_stale",
             "The report HTML has changed since report_publish; publish it again before creating an artifact.",
-        ), {}
+        )
     review = receipt.get("analytical_review")
     if not isinstance(review, dict):
         return _report_receipt_error(
             "report_publish_receipt_invalid",
             "The report publish receipt has no analytical-review record.",
-        ), {}
+        )
     required = [
         finding for finding in review.get("findings", [])
         if isinstance(finding, dict)
@@ -119,13 +111,8 @@ def _validate_structured_report_receipt(
         return _report_receipt_error(
             "report_publish_review_blocked",
             "The report publish receipt contains unresolved required analytical-review findings.",
-        ), {}
-    return None, {
-        "report_gated": True,
-        "reason": "report_publish_receipt",
-        "receipt_path": str(receipt_path),
-        "receipt_html_sha256": expected_hash,
-    }
+        )
+    return None
 
 
 def _emit_artifact_published(result: dict[str, Any], title: str, description: str) -> None:
@@ -166,8 +153,6 @@ async def publish_artifact(
 ) -> dict[str, Any]:
     if not title.strip():
         raise ValueError("title is required")
-    title = unescape_display_text(title)
-    description = unescape_display_text(description)
     if bool(source_path) == bool(html):
         raise ValueError("Provide exactly one of source_path or html")
 
@@ -179,7 +164,7 @@ async def publish_artifact(
         html = source.read_text(encoding="utf-8", errors="replace")
         base_dir = source.parent
 
-    receipt_error, gating = _validate_structured_report_receipt(
+    receipt_error = _validate_structured_report_receipt(
         html=html or "",
         source_path=source_path,
         report_receipt_path=report_receipt_path,
@@ -209,10 +194,7 @@ async def publish_artifact(
         base_version=base_version,
         session_id=session_id,
         project_id=project_id,
-        gating=gating,
     )
-    if result.get("success"):
-        result["gating"] = gating
     if result.get("success"):
         _emit_artifact_published(result, title, description)
     return result
@@ -261,7 +243,6 @@ async def list_artifacts(
             "latest_version": latest,
             "versions": meta.get("versions", []),
             "source_path": meta.get("source_path", ""),
-            "gating": meta.get("gating"),
             "updated_at": meta.get("updated_at", ""),
             "url": living_report_url(str(meta.get("id")), session_id or str(meta.get("session_id") or "default")) if is_living else artifact_url(str(meta.get("id")), latest, session_id or str(meta.get("session_id") or "default")) if latest else "",
         })

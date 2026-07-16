@@ -8,7 +8,7 @@ export function PlanStatusTag({ status }: { status?: string }) {
   const colors: Record<string, string> = {
     pending: 'orange', approved: 'blue', running: 'processing', completed: 'green', denied: 'red', changes_requested: 'purple',
   }
-  return <Tag color={colors[status || ''] || 'default'} style={{ fontSize: 11 }}>{status}</Tag>
+  return <Tag color={colors[status || ''] || 'default'} style={{ fontSize: 10 }}>{status}</Tag>
 }
 
 function fmtTime(ts?: string): string | null {
@@ -234,12 +234,12 @@ export default function PlanPanel({
           return (
             <button key={item.id} type="button" data-plan-id={item.id} onClick={() => { setSelectedPlanId(item.id); setShowList(false) }} style={{ width: '100%', border: '1px solid #dfe5ec', borderRadius: 8, padding: 12, color: '#344054', background: '#fff', cursor: 'pointer', textAlign: 'left' }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 7 }}>
-                <strong title={planSelectorLabel(item, chronologicalPlanNumbers.get(item.id) || index + 1)} style={{ flex: '1 1 auto', minWidth: 0, display: '-webkit-box', overflow: 'hidden', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, fontSize: 14, lineHeight: 1.35 }}>{planSelectorLabel(item, chronologicalPlanNumbers.get(item.id) || index + 1)}</strong>
+                <strong title={planSelectorLabel(item, chronologicalPlanNumbers.get(item.id) || index + 1)} style={{ flex: '1 1 auto', minWidth: 0, display: '-webkit-box', overflow: 'hidden', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, fontSize: 13, lineHeight: 1.35 }}>{planSelectorLabel(item, chronologicalPlanNumbers.get(item.id) || index + 1)}</strong>
                 <span style={{ flex: '0 0 auto' }}><PlanStatusTag status={item.status} /></span>
               </div>
-              {cleanText(item.description) && <p style={{ margin: '6px 0 8px', color: '#667085', fontSize: 12.5, lineHeight: 1.45, display: '-webkit-box', overflow: 'hidden', WebkitBoxOrient: 'vertical', WebkitLineClamp: 3 }}>{cleanText(item.description)}</p>}
+              {cleanText(item.description) && <p style={{ margin: '6px 0 8px', color: '#667085', fontSize: 12, lineHeight: 1.4, display: '-webkit-box', overflow: 'hidden', WebkitBoxOrient: 'vertical', WebkitLineClamp: 3 }}>{cleanText(item.description)}</p>}
               <div style={{ height: 4, overflow: 'hidden', borderRadius: 3, background: '#eef1f5' }}><div style={{ width: `${progress}%`, height: '100%', background: '#0b63ce' }} /></div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 6px', marginTop: 7, color: '#667085', fontSize: 11.5 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 6px', marginTop: 7, color: '#667085', fontSize: 10.5 }}>
                 <span>{itemDone}/{itemTotal} steps</span><span>·</span><span>rev {item.revision || 1}</span>{fmtTime(item.updated_at) && <><span>·</span><span>{fmtTime(item.updated_at)}</span></>}
               </div>
             </button>
@@ -255,30 +255,30 @@ export default function PlanPanel({
         minWidth: 0,
         maxWidth: '100%',
         color: '#344054',
-        fontSize: 13.5,
+        fontSize: 13,
         lineHeight: 1.55,
         padding: '2px 2px 32px',
         overflowWrap: 'anywhere',
       }}>
-        <Button size="small" type="text" onClick={() => setShowList(true)} style={{ margin: '0 0 8px', paddingInline: 0, color: '#0b63ce', fontSize: 12 }}>
+        <Button size="small" type="text" onClick={() => setShowList(true)} style={{ margin: '0 0 8px', paddingInline: 0, color: '#0b63ce', fontSize: 11 }}>
           ← All plans ({plans.length})
         </Button>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
           <span style={{
             display: 'inline-flex', alignItems: 'center',
             border: '1px solid #d0d5dd', borderRadius: 6, background: '#fff',
-            color: '#667085', padding: '2px 8px', fontSize: 12,
+            color: '#667085', padding: '2px 8px', fontSize: 11,
             fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
           }}>
             plan.md
           </span>
           <PlanStatusTag status={plan.status} />
-          {plan.revision != null && plan.revision > 1 && <Tag style={{ fontSize: 11, marginInlineEnd: 0 }}>rev {plan.revision}</Tag>}
+          {plan.revision != null && plan.revision > 1 && <Tag style={{ fontSize: 10, marginInlineEnd: 0 }}>rev {plan.revision}</Tag>}
           {onExpandedChange && (
             <Button size="small" type="text"
               icon={expanded ? <ShrinkOutlined /> : <ArrowsAltOutlined />}
               onClick={() => onExpandedChange(!expanded)}
-              style={{ marginLeft: 'auto', fontSize: 12 }}>
+              style={{ marginLeft: 'auto', fontSize: 11 }}>
               {expanded ? 'Dock' : 'Expand'}
             </Button>
           )}
@@ -290,13 +290,13 @@ export default function PlanPanel({
 
         {plan.mlflow_experiment_id && onViewExperiments && (
           <Button size="small" icon={<ExperimentOutlined />}
-            style={{ marginTop: 2, fontSize: 12 }} onClick={onViewExperiments}>
+            style={{ marginTop: 2, fontSize: 11 }} onClick={onViewExperiments}>
             View Experiments
           </Button>
         )}
 
         {(fmtTime(plan.created_at) || fmtTime(plan.updated_at)) && (
-          <div style={{ marginTop: 18, fontSize: 12, color: '#98a2b3' }}>
+          <div style={{ marginTop: 18, fontSize: 11, color: '#98a2b3' }}>
             {fmtTime(plan.created_at) && <>Created {fmtTime(plan.created_at)}</>}
             {fmtTime(plan.created_at) && fmtTime(plan.updated_at) && ' · '}
             {fmtTime(plan.updated_at) && <>Updated {fmtTime(plan.updated_at)}</>}
@@ -309,6 +309,6 @@ export default function PlanPanel({
 
 const markdownFrameStyle: CSSProperties = {
   color: '#344054',
-  fontSize: 13.5,
+  fontSize: 13,
   lineHeight: 1.58,
 }
