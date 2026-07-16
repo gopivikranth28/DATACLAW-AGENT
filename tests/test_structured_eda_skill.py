@@ -71,7 +71,7 @@ def test_openclaw_dataclaw_skill_routes_eda_to_structured_eda():
         / "openclaw-plugins"
         / "dataclaw"
         / "skills"
-        / "dataclaw"
+        / "dataclaw-data-science"
         / "SKILL.md"
     )
 
@@ -90,7 +90,7 @@ def test_openclaw_bundles_structured_eda_skill():
         / "openclaw-plugins"
         / "dataclaw"
         / "skills"
-        / "structured_eda"
+        / "structured-eda"
         / "SKILL.md"
     )
 

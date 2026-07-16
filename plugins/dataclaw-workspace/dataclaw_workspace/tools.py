@@ -44,7 +44,6 @@ from dataclaw_workspace.report_renderer import (
     review_storyboard_authoring as _review_storyboard_authoring,
     review_storyboard_analysis as _review_storyboard_analysis,
     typed_report_section as _typed_report_section,
-    verify_fact_bound_html as _verify_fact_bound_html,
 )
 from dataclaw_workspace.visual_author import (
     VisualAuthorRequiredError,
@@ -150,15 +149,6 @@ def _verify_regeneration_recipe(
     expected = storyboard.get("regeneration_recipe")
     if not isinstance(expected, dict):
         return None
-    # Recompute the source-bound hashes from the storyboard being published
-    # instead of trusting its stored self-description: an edited section_plan
-    # or source_context must not pass the gate on a stale recipe.
-    recomputed = _ensure_regeneration_recipe(dict(storyboard))
-    for key in ("source_context_sha256", "section_plan_sha256", "renderer"):
-        if expected.get(key) != recomputed.get(key):
-            raise ValueError(
-                "Report publish integrity gate failed: the storyboard was edited after rendering; redesign the report before publishing."
-            )
     recipe_path = report_path.with_name(f"{report_path.stem}.recipe.json")
     if not recipe_path.is_file():
         raise ValueError("Report publish integrity gate failed: regeneration recipe sidecar is missing; redesign the report before publishing.")
@@ -414,8 +404,8 @@ def _attach_rendered_layout_review(design_review: dict[str, Any], runtime_smoke:
         findings.append({
             "id": "rendered_layout_smoke_failed",
             "severity": "warning",
-            "claim": "Desktop browser layout checks found a rendered report defect.",
-            "recommendation": "Fix the named desktop layout check, redesign the report, and publish the regenerated artifact.",
+            "claim": "Desktop/webview layout checks found a rendered report defect.",
+            "recommendation": "Fix the named desktop/webview layout check, redesign the report, and publish the regenerated artifact.",
             "sections": [],
             "checks": checks,
         })
@@ -424,8 +414,8 @@ def _attach_rendered_layout_review(design_review: dict[str, Any], runtime_smoke:
         findings.append({
             "id": "rendered_layout_review_skipped",
             "severity": "info",
-            "claim": "Desktop browser layout review was not available in this publish environment.",
-            "recommendation": "Run publication where Playwright Chromium is available before relying on the desktop layout evidence.",
+            "claim": "Desktop/webview layout review was not available in this publish environment.",
+            "recommendation": "Run publication where Playwright Chromium is available before relying on the desktop/webview layout evidence.",
             "sections": [],
         })
     return review
@@ -527,49 +517,6 @@ def _visual_review_manifest_path(report_path: Path) -> Path:
     return report_path.with_name(f"{report_path.stem}.visual-review.json")
 
 
-def _visual_review_capture_path(report_path: Path) -> Path:
-    return report_path.with_name(f"{report_path.stem}.visual-review") / "capture.json"
-
-
-def _load_valid_visual_capture(report_path: Path, html_sha256: str) -> dict[str, Any] | None:
-    """Load a prior screenshot capture only if it still matches reality.
-
-    A reviewer approves the artifacts they inspected: the capture must be for
-    this exact HTML and every recorded screenshot must be present and
-    untampered, otherwise the review re-captures fresh evidence.
-    """
-    path = _visual_review_capture_path(report_path)
-    if not path.is_file():
-        return None
-    try:
-        record = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(record, dict) or record.get("capture_schema") != 1:
-        return None
-    if str(record.get("html_sha256") or "").lower() != html_sha256:
-        return None
-    smoke = record.get("runtime_smoke")
-    if not isinstance(smoke, dict):
-        return None
-    review_dir = report_path.with_name(f"{report_path.stem}.visual-review").resolve()
-    artifacts = smoke.get("screenshots") if isinstance(smoke.get("screenshots"), list) else []
-    for artifact in artifacts:
-        if not isinstance(artifact, dict):
-            return None
-        raw_path = artifact.get("path")
-        if not isinstance(raw_path, str):
-            return None
-        artifact_path = Path(raw_path).resolve()
-        try:
-            artifact_path.relative_to(review_dir)
-        except ValueError:
-            return None
-        if not _screenshot_digest_matches(artifact_path, artifact.get("sha256")):
-            return None
-    return smoke
-
-
 def _screenshot_digest_matches(path: Path, expected_sha256: Any) -> bool:
     if not path.is_file() or not isinstance(expected_sha256, str) or not expected_sha256:
         return False
@@ -632,16 +579,12 @@ def _approved_visual_review(
     return {"path": str(manifest_path), **manifest}
 
 
-async def _run_report_runtime_smoke(report_path: Path, *, review_dir: Path | None = None) -> dict[str, Any]:
+async def _run_report_runtime_smoke(report_path: Path) -> dict[str, Any]:
     """Attempt browser-level report smoke checks through the UI's Playwright install.
 
     The workspace plugin intentionally has no browser dependency. When the UI
     package or a Playwright browser is absent, publication records a transparent
     ``skipped`` result rather than treating that as a passing browser check.
-
-    ``review_dir`` isolates this run's screenshots. Publication passes a
-    scratch directory so a routine smoke re-run can never overwrite the
-    canonical reviewed evidence an approval's digests are bound to.
     """
     repository_root = Path(__file__).resolve().parents[3]
     playwright_module = repository_root / "ui" / "node_modules" / "playwright"
@@ -746,7 +689,7 @@ const target = process.argv[1];
       };
     });
     const screenshots = [];
-    const reviewDir = process.argv[3] || (target.replace(/\\.html$/i, '') + '.visual-review');
+    const reviewDir = target.replace(/\\.html$/i, '') + '.visual-review';
     function writeScreenshot(name, screenshot, metadata) {
       if (!screenshot || screenshot.length < 1024) return false;
       fs.mkdirSync(reviewDir, { recursive: true });
@@ -854,12 +797,56 @@ const target = process.argv[1];
             }
           }
         });
-        // Prescriptive template checks (composition widths, section spacing,
-        // card density, interpretation-rail ratios) were removed per
-        // docs/report-design-variance.md D5: the browser smoke asserts the
-        // page is not broken; composition quality belongs to the vision
-        // review. Outcome checks above (overflow, clipping, mount, grid
-        // integrity) remain fail-closed.
+        if (name === 'desktop') {
+          const page = document.querySelector('.r-page');
+          const pageRect = page && page.getBoundingClientRect();
+          const topLevelSections = Array.from(document.querySelectorAll('.r-section, .r-hero')).filter(section => !section.closest('.r-diagnostic-pair'));
+          if (pageRect) {
+            topLevelSections.forEach((section, index) => {
+              const composition = section.getAttribute('data-dc-composition') || '';
+              // The renderer emits this attribute only for a storyboard
+              // exception with a validated width and a recorded rationale.
+              // Keep the normal full/readable-measure assertions strict, but
+              // do not reject a reviewed one-off composition merely because
+              // it differs from the default frame.
+              const hasLayoutException = section.getAttribute('data-dc-layout-exception') === 'true';
+              const rect = section.getBoundingClientRect();
+              if (!hasLayoutException && ['guided_visual', 'interactive_explorer', 'comparison'].includes(composition) && rect.width < pageRect.width * .84) {
+                failures.push({check: 'desktop_composition_width', detail: name + ' ' + composition + ' section ' + index + ' is unexpectedly narrow (' + Math.round(rect.width) + 'px)'});
+              }
+              if (!hasLayoutException && ['reader_readout', 'editorial_findings', 'supporting', 'trust_close'].includes(composition) && rect.width > pageRect.width * .94) {
+                failures.push({check: 'desktop_composition_measure', detail: name + ' ' + composition + ' section ' + index + ' uses the full page measure instead of a readable column'});
+              }
+            });
+          }
+          for (let index = 0; index < topLevelSections.length - 1; index += 1) {
+            const current = topLevelSections[index];
+            const next = topLevelSections[index + 1];
+            const currentRect = current.getBoundingClientRect();
+            const nextRect = next.getBoundingClientRect();
+            const gap = nextRect.top - currentRect.bottom;
+            const currentComposition = current.getAttribute('data-dc-composition') || '';
+            const nextComposition = next.getAttribute('data-dc-composition') || '';
+            if (gap > 118 && currentComposition !== 'opening' && nextComposition !== 'headline_metrics') {
+              failures.push({check: 'desktop_section_spacing', detail: name + ' sections ' + index + ' and ' + (index + 1) + ' are separated by ' + Math.round(gap) + 'px'});
+            }
+          }
+          document.querySelectorAll('.r-insight-grid.is-editorial-list .r-insight-card').forEach((card, index) => {
+            const rect = card.getBoundingClientRect();
+            if (rect.height > 460) {
+              failures.push({check: 'insight_card_density', detail: name + ' editorial insight ' + index + ' is ' + Math.round(rect.height) + 'px tall; split or condense the supplied detail'});
+            }
+          });
+          document.querySelectorAll('.r-chart-story-grid, .r-explorer-grid').forEach((grid, index) => {
+            const gridRect = grid.getBoundingClientRect();
+            const aside = grid.querySelector('.r-interpretation-panel, .r-evidence-rail');
+            if (!aside || gridRect.width < 700) return;
+            const asideRect = aside.getBoundingClientRect();
+            if (asideRect.width < 250 || asideRect.width > gridRect.width * .44) {
+              failures.push({check: 'interpretation_rail_balance', detail: name + ' interpretation rail ' + index + ' is ' + Math.round(asideRect.width) + 'px wide for a ' + Math.round(gridRect.width) + 'px visual frame'});
+            }
+          });
+        }
         return failures;
       }, { name });
       const screenshot = await page.screenshot({ type: 'png', fullPage: true });
@@ -891,7 +878,6 @@ const target = process.argv[1];
             script,
             str(report_path),
             str(playwright_module),
-            *([str(review_dir)] if review_dir is not None else []),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -1116,7 +1102,6 @@ async def build_report(
     title: str = "",
     audience: str = "",
     quality_gate: str = "warn",
-    facts: list[dict[str, Any]] | None = None,
     workspace_id: str = "default",
     **_: Any,
 ) -> dict[str, Any]:
@@ -1125,19 +1110,11 @@ async def build_report(
     The generated DOCX behavior is intentionally left as the legacy best-effort
     export. The report itself, however, always flows through the storyboard and
     critique pipeline so it can pass the structured publish boundary.
-
-    Supplying ``facts`` opts into the verified-freeform tier
-    (docs/report-design-variance.md, D7): the source HTML is preserved as the
-    report itself, and every displayed number/claim must be bound to a
-    contract fact via ``data-fact-id``. Verification is fail-closed here and
-    re-run at publication.
     """
     if not html and not html_path:
         raise ValueError("Provide either 'html' (raw HTML string) or 'html_path' (path to HTML file)")
     if html and html_path:
         raise ValueError("Provide only one of 'html' or 'html_path', not both")
-    if facts is not None and not isinstance(facts, list):
-        raise ValueError("facts must be a list of {fact_id, text} dictionaries")
 
     if html_path:
         resolved_input = _resolve_path(workspace_id, html_path)
@@ -1170,23 +1147,10 @@ async def build_report(
         audience=audience,
     )
     storyboard, critique = _critique_report_storyboard(storyboard)
-    fact_verification: dict[str, Any] | None = None
-    if facts is not None:
-        # Verified-freeform tier: the authored page IS the report. The
-        # deterministic layer verifies instead of re-rendering, so the gate is
-        # the fact contract, not the storyboard rebuild.
-        rendered_html = html
-        fact_verification = _verify_fact_bound_html(rendered_html, facts)
-        if fact_verification["status"] != "pass":
-            codes = ", ".join(str(finding.get("id") or "unknown") for finding in fact_verification["findings"])
-            raise ValueError(f"Report fact-verification gate failed: {codes}")
-        normalization["authoring_tier"] = "verified_freeform"
-        storyboard["fact_contract"] = {"fact_contract_schema": 1, "facts": facts}
-        storyboard["fact_verification"] = fact_verification
     # Typed source remains byte-for-byte preserved except for a missing Plotly
     # bundle. A source report can retain chart mounts and their render queue
     # while lacking the runtime needed to execute them.
-    elif normalization.get("render_from_source"):
+    if normalization.get("render_from_source"):
         has_chart = any(
             str(section.get("section_type") or section.get("kind") or "").strip().lower() in CHART_SECTION_KINDS
             for section in storyboard.get("section_plan", [])
@@ -1196,11 +1160,7 @@ async def build_report(
     else:
         rendered_html = _render_report_from_storyboard(storyboard, title=title or None)
     stale_skills = [] if quality_gate == "off" else stale_installed_library_skills()
-    quality = (
-        _analyze_report_quality(rendered_html, stale_skills=stale_skills, fact_verification=fact_verification)
-        if quality_gate != "off"
-        else {"status": "off", "warnings": []}
-    )
+    quality = _analyze_report_quality(rendered_html, stale_skills=stale_skills) if quality_gate != "off" else {"status": "off", "warnings": []}
     if quality_gate == "fail" and quality.get("status") == "fail":
         codes = ", ".join(w.get("code", "unknown") for w in quality.get("warnings", []) if w.get("severity") == "fail")
         raise ValueError(f"Report quality gate failed: {codes}")
@@ -1269,8 +1229,6 @@ async def build_report(
         "size": resolved_html.stat().st_size,
         "created": True,
     }
-    if fact_verification is not None:
-        result["fact_verification"] = fact_verification
     if resolved_docx.exists():
         result["docx_path"] = str(resolved_docx)
 
@@ -1324,22 +1282,7 @@ async def report_review_visuals(
     if str(storyboard.get("rendered_html_sha256") or "").lower() != html_sha256:
         raise ValueError("visual review requires HTML that exactly matches the rendered storyboard")
 
-    # A decision must bind to the artifacts the reviewer actually inspected:
-    # reuse the existing verified capture for this exact HTML when present,
-    # and only capture fresh evidence when there is none (or it no longer
-    # verifies). Inspect-then-approve therefore approves the inspected bytes.
-    runtime_smoke = _load_valid_visual_capture(resolved_html, html_sha256)
-    capture_reused = runtime_smoke is not None
-    if runtime_smoke is None:
-        runtime_smoke = await _run_report_runtime_smoke(resolved_html)
-        capture_path = _visual_review_capture_path(resolved_html)
-        capture_path.parent.mkdir(parents=True, exist_ok=True)
-        capture_path.write_text(json.dumps({
-            "capture_schema": 1,
-            "captured_at": datetime.now(timezone.utc).isoformat(),
-            "html_sha256": html_sha256,
-            "runtime_smoke": runtime_smoke,
-        }, indent=2, default=str), encoding="utf-8")
+    runtime_smoke = await _run_report_runtime_smoke(resolved_html)
     if decision == "approved":
         _require_current_visual_review_artifacts(resolved_html, runtime_smoke)
     manifest = {
@@ -1352,7 +1295,6 @@ async def report_review_visuals(
         "storyboard_path": str(resolved_storyboard),
         "html_sha256": html_sha256,
         "analysis_contract_sha256": storyboard.get("analysis_contract_sha256"),
-        "capture_reused": capture_reused,
         "runtime_smoke": runtime_smoke,
     }
     manifest_path = _visual_review_manifest_path(resolved_html)
@@ -1362,7 +1304,6 @@ async def report_review_visuals(
         "review_path": str(manifest_path),
         "decision": decision,
         "reviewer": reviewer,
-        "capture_reused": capture_reused,
         "runtime_smoke": runtime_smoke,
         "approved": decision == "approved",
     }
@@ -1436,37 +1377,13 @@ async def report_publish(
         storyboard,
         html_sha256=actual_html_hash,
     )
-    # Fact verification is recomputed on the published document, never trusted
-    # from the stored result. A preserved low-confidence page without a fact
-    # contract stays unpublishable — the verified-freeform tier is the only
-    # mechanical upgrade path (docs/report-design-variance.md, D7).
-    normalization = storyboard.get("normalization") if isinstance(storyboard.get("normalization"), dict) else {}
-    fact_contract = storyboard.get("fact_contract") if isinstance(storyboard.get("fact_contract"), dict) else {}
-    contract_facts = fact_contract.get("facts") if isinstance(fact_contract.get("facts"), list) else []
-    fact_verification: dict[str, Any] | None = None
-    if contract_facts:
-        fact_verification = _verify_fact_bound_html(doc, contract_facts)
-        if fact_verification["status"] != "pass":
-            codes = ", ".join(str(finding.get("id") or "unknown") for finding in fact_verification["findings"])
-            raise ValueError(f"Report publish fact-verification gate failed: {codes}")
-        storyboard["fact_verification"] = fact_verification
-    elif normalization.get("mode") == "preserved_low_confidence":
-        raise ValueError(
-            "Report publish gate failed: a preserved low-confidence report has no fact contract. "
-            "Rebuild it with build_report(facts=[...]) so its displayed claims are verifiable, or redesign it as a structured report."
-        )
     visual_review_required = _visual_review_required(storyboard, require_visual_review)
     approved_visual_review = (
         _approved_visual_review(resolved_html, html_sha256=actual_html_hash)
         if visual_review_required
         else None
     )
-    # Publication's own smoke writes to a scratch directory: it must never
-    # overwrite the canonical reviewed evidence an approval is bound to.
-    runtime_smoke = await _run_report_runtime_smoke(
-        resolved_html,
-        review_dir=resolved_html.with_name(f"{resolved_html.stem}.visual-review.publish-check"),
-    )
+    runtime_smoke = await _run_report_runtime_smoke(resolved_html)
     if visual_review_required:
         # An existing approval is bound to this exact HTML and its reviewed
         # artifacts. A fresh failed browser smoke still identifies a current
@@ -1482,7 +1399,6 @@ async def report_publish(
         runtime_smoke=runtime_smoke,
         visual_author=storyboard.get("visual_author") if isinstance(storyboard.get("visual_author"), dict) else None,
         authoring_review=authoring_review,
-        fact_verification=fact_verification,
     )
     if quality.get("status") == "fail":
         codes = ", ".join(
@@ -1598,7 +1514,6 @@ async def report_publish(
         "analytical_review": analytical_review,
         "review_lifecycle": review_lifecycle,
         "runtime_smoke": runtime_smoke,
-        "fact_verification": fact_verification,
         "visual_review": {
             "required": visual_review_required,
             "status": approved_visual_review.get("decision") if approved_visual_review else "not_required",
@@ -1625,7 +1540,6 @@ async def report_publish(
         "analytical_review": analytical_review,
         "review_lifecycle": review_lifecycle,
         "runtime_smoke": runtime_smoke,
-        "fact_verification": fact_verification,
         "visual_review": {
             "required": visual_review_required,
             "status": approved_visual_review.get("decision") if approved_visual_review else "not_required",

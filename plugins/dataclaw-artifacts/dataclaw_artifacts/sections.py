@@ -198,13 +198,6 @@ def normalize_section(section_type: str, data: dict[str, Any]) -> dict[str, Any]
             raise SectionValidationError("invalid_entity_cards", "entity_card_grid requires list 'items' or 'entities'")
         payload.update(_interactive_payload_summary(items, kind))
         payload["item_count"] = len(items)
-    elif kind == "header":
-        absorbed = data.get("absorbed_readout") if isinstance(data.get("absorbed_readout"), dict) else {}
-        # An editorial hero may absorb the executive readout; the quality gate
-        # needs to see that the narrative answer lives here.
-        payload["has_narrative_abstract"] = bool(
-            clean_text(data.get("abstract") or "") or clean_text(absorbed.get("summary") or "")
-        )
     elif kind == "findings":
         items = data.get("items", data.get("findings", []))
         if not isinstance(items, list):
@@ -216,8 +209,7 @@ def normalize_section(section_type: str, data: dict[str, Any]) -> dict[str, Any]
                 "hypothesis_id": clean_text(item.get("hypothesis_id") or ""),
                 "title": clean_text(item.get("title") or ""),
                 "severity": clean_text(item.get("severity") or ""),
-                "evidence": _evidence_summary(item),
-                "evidence_anchor": clean_text(item.get("evidence_anchor") or ""),
+                "evidence": clean_text(item.get("evidence") or item.get("evidence_ref") or ""),
                 "ref": clean_text(item.get("ref") or item.get("cell_id") or item.get("artifact_id") or item.get("path") or ""),
             }
             for item in items
@@ -388,19 +380,6 @@ def _stable_section_id(kind: str, data: dict[str, Any]) -> str:
     return f"sec-{kind}-{digest}"
 
 
-def _evidence_summary(item: dict[str, Any]) -> Any:
-    """Summarize item evidence without destroying its structure.
-
-    A list of refs must survive as a list: flattening it through clean_text
-    produced its Python repr, which downstream evidence checks misparse as a
-    single unresolvable pseudo-reference.
-    """
-    evidence = item.get("evidence") if item.get("evidence") is not None else item.get("evidence_ref")
-    if isinstance(evidence, list):
-        return [entry if isinstance(entry, dict) else clean_text(entry) for entry in evidence]
-    return clean_text(evidence or "")
-
-
 def _ledger_item_summary(item: dict[str, Any]) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "finding_id": clean_text(item.get("finding_id") or ""),
@@ -408,7 +387,7 @@ def _ledger_item_summary(item: dict[str, Any]) -> dict[str, Any]:
         "title": clean_text(item.get("title") or item.get("statement") or item.get("name") or ""),
         "status": clean_text(item.get("status") or item.get("state") or ""),
         "severity": clean_text(item.get("severity") or ""),
-        "evidence": _evidence_summary(item),
+        "evidence": clean_text(item.get("evidence") or item.get("evidence_ref") or ""),
         "evidence_anchor": clean_text(item.get("evidence_anchor") or ""),
         "ref": clean_text(item.get("ref") or item.get("cell_id") or item.get("artifact_id") or item.get("path") or ""),
     }

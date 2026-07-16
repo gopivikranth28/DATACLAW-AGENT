@@ -149,7 +149,7 @@ def test_openclaw_bundles_report_design_skill():
         / "openclaw-plugins"
         / "dataclaw"
         / "skills"
-        / "report_design"
+        / "report-design"
         / "SKILL.md"
     )
 
@@ -168,7 +168,7 @@ def test_openclaw_data_science_routes_final_reports_to_artifacts():
         / "openclaw-plugins"
         / "dataclaw"
         / "skills"
-        / "dataclaw"
+        / "dataclaw-data-science"
         / "SKILL.md"
     )
 

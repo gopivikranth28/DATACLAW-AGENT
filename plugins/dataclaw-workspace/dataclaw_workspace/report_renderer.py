@@ -26,11 +26,7 @@ from dataclaw_workspace.report_rubric import (
     rubric_thresholds,
     rubric_version,
 )
-from dataclaw_workspace.visual_author import (
-    INTERPRETATION_PLACEMENTS,
-    THEME_TOKENS,
-    visual_theme_tokens,
-)
+from dataclaw_workspace.visual_author import visual_theme_tokens
 
 REPORT_SECTION_START = "<!-- DATACLAW_REPORT_SECTIONS_START -->"
 REPORT_SECTION_END = "<!-- DATACLAW_REPORT_SECTIONS_END -->"
@@ -38,7 +34,6 @@ REPORT_SHELL_CSS_ATTR = 'data-dc-report-shell-css'
 REPORT_SHELL_SCRIPT_ATTR = 'data-dc-report-shell-script'
 REPORT_CONTRACT_ATTR = "data-dc-report-contract"
 REGENERATION_RECIPE_ATTR = "data-dc-regeneration-recipe"
-COLOR_BINDINGS_ATTR = "data-dc-color-bindings"
 BODY_OPEN_RE = re.compile(r"(<body\b[^>]*>)", re.IGNORECASE)
 BODY_CLOSE_RE = re.compile(r"</body\s*>", re.IGNORECASE)
 PLOTLY_RUNTIME_RE = re.compile(
@@ -69,7 +64,6 @@ __all__ = [
     "review_storyboard_authoring",
     "review_storyboard_analysis",
     "typed_report_section",
-    "verify_fact_bound_html",
 ]
 
 CHART_SECTION_KINDS = {"chart", "chart_interpretation", "filterable_chart", "chart_table_explorer"}
@@ -85,20 +79,6 @@ DESKTOP_COMPOSITIONS = {
     "trust_close",
     "story_arc",
     "supporting",
-}
-# One width table shared by the storyboard compiler, the design review, and
-# the section renderer — a drift in any copy silently desynchronized them.
-COMPOSITION_EXPECTED_WIDTHS = {
-    "opening": "full",
-    "headline_metrics": "full",
-    "reader_readout": "reading",
-    "editorial_findings": "content",
-    "guided_visual": "full",
-    "interactive_explorer": "full",
-    "comparison": "full",
-    "trust_close": "content",
-    "story_arc": "full",
-    "supporting": "content",
 }
 STORY_SECTION_KINDS = {
     "findings",
@@ -130,7 +110,6 @@ def report_shell(
     visual_theme: dict[str, Any] | None = None,
     report_contract: dict[str, Any] | None = None,
     regeneration_recipe: dict[str, Any] | None = None,
-    color_bindings: dict[str, Any] | None = None,
 ) -> str:
     safe_title = html_lib.escape(title)
     theme_name = clean_text((visual_theme or {}).get("name") if isinstance(visual_theme, dict) else "").lower()
@@ -141,7 +120,6 @@ def report_shell(
     registry_script = _evidence_registry_script(evidence_registry)
     contract_script = _report_contract_script(report_contract)
     recipe_script = _regeneration_recipe_script(regeneration_recipe)
-    bindings_script = _color_bindings_script(color_bindings)
     return f"""<!doctype html>
 <html lang="en"{theme_attr}>
 <head>
@@ -159,7 +137,6 @@ def report_shell(
   <main class="r-page">
     {REPORT_SECTION_START}
 {first_section}
-    {bindings_script}
     {registry_script}
     {contract_script}
     {recipe_script}
@@ -494,11 +471,6 @@ main { counter-reset: story-step; }
 .r-interpretation-panel, .r-evidence-rail { border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: var(--dc-surface-raised); }
 .r-interpretation-panel h3, .r-evidence-rail h3 { margin: 0 0 8px; color: var(--ink); font-size: 15px; }
 .r-interpretation-panel p { margin: 0 0 8px; }
-.r-interpretation-caption { color: var(--ink); font-size: 13.8px; margin: 10px 2px 0; max-width: 72ch; }
-.r-takeaway-list { list-style: none; margin: 0; padding: 0; }
-.r-takeaway { display: flex; gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 13.5px; }
-.r-takeaway:first-child { border-top: none; padding-top: 2px; }
-.r-takeaway-index { flex: none; width: 24px; height: 24px; border-radius: 50%; background: color-mix(in srgb, var(--dc-accent) 16%, transparent); color: var(--dc-accent); font-weight: 700; font-size: 12px; display: flex; align-items: center; justify-content: center; }
 .r-evidence-rail { display: grid; gap: 10px; }
 .r-evidence-rail.compact .r-ledger-item { padding: 10px 11px; border-left-width: 2px; }
 .r-timeline { position: relative; display: grid; gap: 12px; padding-left: 20px; }
@@ -515,16 +487,6 @@ main { counter-reset: story-step; }
 .r-metric-delta.up { color: var(--good); }
 .r-metric-delta.down { color: var(--dc-danger); }
 .r-callout { border-left: 4px solid var(--accent); background: var(--accent-soft); padding: 15px 16px; border-radius: 12px; }
-.r-callout-note { border-radius: 12px; padding: 14px 16px; }
-.r-callout-note h2 { font-size: 15px; margin: 0 0 6px; }
-.r-callout-note p { font-size: 13.5px; margin: 0 0 6px; }
-.r-callout-note p:last-child { margin-bottom: 0; }
-.r-callout-note.is-tone-good { border-left-color: var(--dc-good); background: color-mix(in srgb, var(--dc-good) 7%, var(--dc-surface)); }
-.r-callout-note.is-tone-warn { border-left-color: var(--dc-warn); background: color-mix(in srgb, var(--dc-warn) 7%, var(--dc-surface)); }
-.r-callout-note.is-tone-danger { border-left-color: var(--dc-danger); background: color-mix(in srgb, var(--dc-danger) 7%, var(--dc-surface)); }
-.r-callout-note.is-tone-neutral { border-left-color: var(--line); background: var(--dc-surface-muted); }
-.r-diagnostic-pair.is-split-60-40 { grid-template-columns: 3fr 2fr; }
-.r-diagnostic-pair.is-split-40-60 { grid-template-columns: 2fr 3fr; }
 .r-findings { display: grid; gap: 10px; padding: 0; margin: 0; list-style: none; }
 .r-finding { padding: 13px 15px; border: 1px solid var(--line); border-radius: 12px; background: var(--dc-surface-raised); }
 .r-finding-title { font-weight: 720; margin-bottom: 4px; color: var(--ink); }
@@ -837,7 +799,7 @@ a.r-evidence-chip:hover { border-color: color-mix(in srgb, var(--dc-accent) 45%,
   .r-interpretation-panel, .r-evidence-rail { position: static; }
 }
 """
-    theme_name = clean_text((visual_theme or {}).get("name") if isinstance(visual_theme, dict) else "").lower()
+    theme_name = clean_text((visual_theme or {}).get("name") if isinstance(visual_theme, dict) else "")
     tokens = visual_theme_tokens(theme_name)
     if not tokens:
         return base_css
@@ -1129,49 +1091,6 @@ def report_shell_script() -> str:
     layout.hoverlabel = mergeDeep({font: {family: CHART_FONT}}, layout.hoverlabel || {});
     return layout;
   }
-  var semanticColorMap = null;
-  function semanticColors() {
-    if (semanticColorMap !== null) return semanticColorMap;
-    semanticColorMap = {};
-    var node = document.querySelector('script[data-dc-color-bindings]');
-    if (node) {
-      try {
-        var parsed = JSON.parse(node.textContent || 'null');
-        ((parsed && parsed.assignments) || []).forEach(function(entry) {
-          if (entry && entry.key && entry.slot) semanticColorMap[String(entry.key)] = entry.slot;
-        });
-      } catch (err) {}
-    }
-    return semanticColorMap;
-  }
-  // Entities bound by the storyboard render in the same categorical color in
-  // every chart that names them (and on their entity cards, bound
-  // server-side). Colors resolve from --dc-cat-N at render time so bindings
-  // follow theme changes. An explicit trace color always wins.
-  function bindSemanticColors(traces) {
-    var map = semanticColors();
-    if (!traces || !traces.length) return traces;
-    var bound = traces.some(function(trace) {
-      return trace && typeof trace.name === 'string' && map[trace.name.trim().toLowerCase()];
-    });
-    if (!bound) return traces;
-    return traces.map(function(trace) {
-      if (!trace || typeof trace.name !== 'string') return trace;
-      var slot = map[trace.name.trim().toLowerCase()];
-      if (!slot) return trace;
-      var color = cssVar('--dc-cat-' + slot);
-      if (!color) return trace;
-      var out = JSON.parse(JSON.stringify(trace));
-      out.marker = out.marker || {};
-      if (out.marker.color == null) out.marker.color = color;
-      if (out.line) {
-        if (out.line.color == null) out.line.color = color;
-      } else if (!out.type || out.type === 'scatter' || out.type === 'scattergl') {
-        out.line = {color: color};
-      }
-      return out;
-    });
-  }
   var chartRegistry = [];
   function registerChartRender(target, render) {
     for (var i = 0; i < chartRegistry.length; i++) {
@@ -1200,7 +1119,7 @@ def report_shell_script() -> str:
       return;
     }
     var layout = applyChartTheme(JSON.parse(JSON.stringify((fig && fig.layout) || {})));
-    Plotly.react(target, bindSemanticColors((fig && fig.data) || []), layout, {responsive: true, displaylogo: false});
+    Plotly.react(target, (fig && fig.data) || [], layout, {responsive: true, displaylogo: false});
     registerChartRender(target, function() { renderFigure(target, fig); });
   }
   function coerceNumber(value) {
@@ -1359,7 +1278,7 @@ def report_shell_script() -> str:
     if (extras.shapes.length) layout.shapes = (layout.shapes || []).concat(extras.shapes);
     if (extras.annotations.length) layout.annotations = (layout.annotations || []).concat(extras.annotations);
     layout = mergeDeep(layout, chart.layout || {});
-    Plotly.react(target, bindSemanticColors(traces), applyChartTheme(layout), {responsive: true, displaylogo: false});
+    Plotly.react(target, traces, applyChartTheme(layout), {responsive: true, displaylogo: false});
     registerChartRender(target, function() { renderChart(target, chart, rows); });
   }
   function initTable(root, config, rowsProvider) {
@@ -1523,16 +1442,13 @@ def report_shell_script() -> str:
     if (item && typeof item === 'object') return text(item.id || item.key || item.name || item.title || index);
     return text(index);
   }
-  // Mirrors the Python _item_title/_item_detail key order — keep both sides
-  // in sync so server-rendered cards and client-rendered selection details
-  // never disagree about the same item.
   function itemTitle(item, fallback) {
-    if (item && typeof item === 'object') return text(item.title || item.headline || item.statement || item.name || item.label || fallback);
+    if (item && typeof item === 'object') return text(item.title || item.headline || item.name || item.label || fallback);
     return text(item || fallback);
   }
   function itemDetail(item) {
     if (!item || typeof item !== 'object') return '';
-    return text(item.summary || item.detail || item.description || item.rationale || item.text || item.body || '');
+    return text(item.summary || item.detail || item.description || item.rationale || item.text || '');
   }
   function renderMetricRows(metrics) {
     var rows = [];
@@ -1722,16 +1638,12 @@ def plotly_script_tag() -> str:
 </script>"""
 
 
-_HEAD_CLOSE_RE = re.compile(r"</head\s*>", re.IGNORECASE)
-
-
 def ensure_plotly_runtime(doc: str) -> str:
     if 'data-dc-runtime="plotly"' in doc:
         return doc
     runtime = plotly_script_tag()
-    match = _HEAD_CLOSE_RE.search(doc)
-    if match:
-        return f"{doc[:match.start()]}  {runtime}\n{doc[match.start():]}"
+    if "</head>" in doc:
+        return doc.replace("</head>", f"  {runtime}\n</head>", 1)
     return runtime + "\n" + doc
 
 
@@ -1767,9 +1679,8 @@ def ensure_report_shell_context(doc: str) -> str:
             flags=re.IGNORECASE | re.DOTALL,
         )
     else:
-        head_match = _HEAD_CLOSE_RE.search(migrated)
-        if head_match:
-            migrated = f"{migrated[:head_match.start()]}{style}{migrated[head_match.start():]}"
+        if "</head>" in migrated:
+            migrated = migrated.replace("</head>", style + "</head>", 1)
         else:
             migrated = style + migrated
 
@@ -1814,7 +1725,6 @@ def analyze_report_quality(
     runtime_smoke: dict[str, Any] | None = None,
     visual_author: dict[str, Any] | None = None,
     authoring_review: dict[str, Any] | None = None,
-    fact_verification: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Inspect the typed section metadata embedded in a workspace report.
 
@@ -1844,14 +1754,10 @@ def analyze_report_quality(
             entry["replaces"] = criterion["replaces"]
         warnings.append(entry)
 
-    fact_verified = bool(fact_verification and fact_verification.get("status") == "pass")
-    if not sections and not fact_verified:
-        # A passing fact contract is the verified-freeform tier's substitute
-        # for typed section metadata: the gate can assess the document through
-        # its data-fact-id bindings instead (report-design-variance.md, D7).
+    if not sections:
         warn(
             "unstructured_report",
-            "Report contains no typed section metadata; publish structured storyboard output, migrate the report, or supply a fact contract before publishing.",
+            "Report contains no typed section metadata; publish structured storyboard output or migrate the report before publishing.",
             details={"required_marker": "data-dc-section-meta"},
         )
 
@@ -2002,15 +1908,11 @@ def analyze_report_quality(
             "Report has multiple sections but no completed findings/insight grid or concise answer/readout carrying the conclusion.",
             details={"section_count": len(kinds)},
         )
-    if (
-        len(kinds) >= thresholds["explorer_required_min_sections"]
-        and chart_like_count >= thresholds["explorer_required_min_charts"]
-        and interactive_count == 0
-    ):
+    if chart_like_count >= thresholds["explorer_required_min_charts"] and interactive_count == 0:
         warn(
             "missing_interactive_explorer",
             "Analytical report has several charts but no interactive table, selector, filterable chart, or chart-table explorer.",
-            details={"section_count": len(kinds), "chart_like_count": chart_like_count},
+            details={"chart_like_count": chart_like_count},
         )
 
     for section in sections:
@@ -2086,15 +1988,7 @@ def analyze_report_quality(
             details={"references": unresolved_refs[:20], "count": len(unresolved_refs)},
         )
 
-    hero_carries_answer = any(
-        clean_text(section.get("kind") or "") == "header"
-        and isinstance(section.get("payload"), dict)
-        and section["payload"].get("has_narrative_abstract")
-        for section in sections
-    )
-    # Editorial architectures deliberately absorb the readout into the hero;
-    # a hero carrying the narrative abstract satisfies this check.
-    if len(sections) >= 2 and "narrative_band" not in kinds and not hero_carries_answer:
+    if len(sections) >= 2 and "narrative_band" not in kinds:
         warn(
             "missing_narrative_answer",
             "Report has multiple sections but no narrative band answering the primary question up front.",
@@ -2204,12 +2098,6 @@ def _regeneration_recipe_script(recipe: dict[str, Any] | None) -> str:
     if not recipe:
         return ""
     return f'<script type="application/json" {REGENERATION_RECIPE_ATTR}>{_json_for_script(recipe)}</script>'
-
-
-def _color_bindings_script(bindings: dict[str, Any] | None) -> str:
-    if not isinstance(bindings, dict) or not bindings.get("assignments"):
-        return ""
-    return f'<script type="application/json" {COLOR_BINDINGS_ATTR}>{_json_for_script(bindings)}</script>'
 
 
 def _extract_report_metadata(doc: str, attribute: str) -> dict[str, Any]:
@@ -2336,21 +2224,16 @@ def _report_contract_for_storyboard(storyboard: dict[str, Any]) -> dict[str, Any
     requirements = source_context.get("requirements") if isinstance(source_context.get("requirements"), dict) else {}
     analysis_contract = storyboard.get("analysis_contract") if isinstance(storyboard.get("analysis_contract"), dict) else {}
     return {
-        "report_contract_schema": 3,
+        "report_contract_schema": 2,
         "rigor": _rigor_contract(requirements, analysis_contract),
         "claim_contract": {
             "required": bool((storyboard.get("claim_contract") or {}).get("required", False)),
             "claim_count": len((storyboard.get("claim_contract") or {}).get("claims", [])),
         },
-        # Hash the same input set as the regeneration recipe so the two
-        # embedded source_context_sha256 values always agree; a consumer
-        # reconciling contract against recipe must never see a spurious
-        # mismatch (schema 2 omitted analysis_contract here).
         "source_context_sha256": _stable_json_sha256({
             "insights": source_context.get("insights", []),
             "analyses": source_context.get("analyses", []),
             "requirements": requirements,
-            "analysis_contract": analysis_contract,
         }),
     }
 
@@ -2523,26 +2406,13 @@ def _unresolved_evidence_refs(
             for source in sources:
                 references.extend({"section_id": section_id, **reference} for reference in _source_evidence_refs(source))
     for reference in references:
-        # A registry embedded in a migrated or hand-edited document may carry
-        # malformed entries; the gate must judge them (unresolved), not crash.
-        normalized = reference if isinstance(reference, dict) else {"ref": clean_text(reference)}
-        ref = clean_text(normalized.get("ref") or "")
-        ref_kind = clean_text(normalized.get("kind") or "") or "unknown"
-        section_id = clean_text(normalized.get("section_id") or "")
-        if not ref:
-            unresolved.append({"kind": ref_kind, "ref": clean_text(str(reference))[:80] or "invalid"})
-            continue
-        target = registry.get(ref)
-        target = target if isinstance(target, dict) else None
+        target = registry.get(reference["ref"])
         target_kind = clean_text(target.get("kind") or target.get("type") or "") if target else ""
         is_external = bool(target and clean_text(target.get("external_url") or target.get("url") or ""))
         is_present = bool(target and target.get("present", True))
-        kind_matches = not target_kind or target_kind == ref_kind or ref_kind == "unknown"
+        kind_matches = not target_kind or target_kind == reference["kind"] or reference["kind"] == "unknown"
         if not target or not is_present or (not is_external and not kind_matches):
-            entry = {"kind": ref_kind, "ref": ref}
-            if section_id:
-                entry["section_id"] = section_id
-            unresolved.append(entry)
+            unresolved.append(dict(reference))
     return unresolved
 
 
@@ -2602,153 +2472,6 @@ def build_evidence_registry(storyboard: dict[str, Any]) -> dict[str, Any]:
         "evidence_registry_schema": 1,
         "targets": list(targets.values()),
         "references": references,
-    }
-
-
-FACT_VERIFICATION_SCHEMA = 1
-_UNBOUND_NUMERAL_RE = re.compile(r"\d[\d,]*(?:\.\d+)?%?")
-_VOID_TAGS = {"br", "hr", "img", "input", "meta", "link", "source", "wbr", "area", "base", "col", "embed", "track"}
-
-
-class _FactBindingParser(HTMLParser):
-    """Collect data-fact-id bindings and the unbound visible text around them."""
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.bindings: list[dict[str, Any]] = []
-        self._open_bindings: list[dict[str, Any]] = []
-        self._binding_depths: list[int] = []
-        self._depth = 0
-        self._skip_depth = 0
-        self.unbound_text: list[str] = []
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in _VOID_TAGS:
-            return
-        self._depth += 1
-        if tag in {"script", "style", "template"}:
-            self._skip_depth = self._skip_depth or self._depth
-            return
-        fact_id = next((value for name, value in attrs if name == "data-fact-id"), None)
-        if fact_id is not None:
-            binding = {"fact_id": clean_text(fact_id), "text": []}
-            self.bindings.append(binding)
-            self._open_bindings.append(binding)
-            self._binding_depths.append(self._depth)
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in _VOID_TAGS:
-            return
-        if self._skip_depth and self._depth == self._skip_depth:
-            self._skip_depth = 0
-        while self._binding_depths and self._binding_depths[-1] == self._depth:
-            self._binding_depths.pop()
-            self._open_bindings.pop()
-        self._depth = max(0, self._depth - 1)
-
-    def handle_data(self, data: str) -> None:
-        if self._skip_depth:
-            return
-        if self._open_bindings:
-            for binding in self._open_bindings:
-                binding["text"].append(data)
-        elif data.strip():
-            self.unbound_text.append(data)
-
-
-def _fact_text_matches(shown: str, fact_text: str) -> bool:
-    shown_norm = " ".join(shown.split())
-    fact_norm = " ".join(fact_text.split())
-    if not fact_norm:
-        return False
-    if shown_norm == fact_norm:
-        return True
-    return bool(re.search(rf"(?<![\w%]){re.escape(fact_norm)}(?![\w%])", shown_norm))
-
-
-def verify_fact_bound_html(
-    html: str,
-    facts: list[dict[str, Any]],
-    *,
-    max_unbound_numerals: int = 0,
-) -> dict[str, Any]:
-    """Verify a freeform-authored page against its fact contract.
-
-    docs/report-design-variance.md, D7: the deterministic layer stops
-    rendering and starts verifying. Every ``data-fact-id`` element's visible
-    text must carry its contract fact's exact text, and numerals outside any
-    bound element fail above the threshold — a freeform author may design
-    freely but cannot display an unverified number.
-    """
-    contract: dict[str, str] = {}
-    for fact in facts if isinstance(facts, list) else []:
-        if not isinstance(fact, dict):
-            continue
-        fact_id = clean_text(fact.get("fact_id") or fact.get("id") or "")
-        text = clean_text(fact.get("text") or fact.get("value") or "")
-        if fact_id and text:
-            contract[fact_id] = text
-    if not contract:
-        raise ValueError("fact verification requires a non-empty fact contract with fact_id and text entries")
-
-    parser = _FactBindingParser()
-    parser.feed(html)
-    parser.close()
-
-    findings: list[dict[str, Any]] = []
-    bound_fact_ids: set[str] = set()
-    for binding in parser.bindings:
-        fact_id = binding["fact_id"]
-        shown = "".join(binding["text"])
-        if fact_id not in contract:
-            findings.append({
-                "id": "unknown_fact_id",
-                "fact_id": fact_id,
-                "claim": "The page binds a fact id that is not in the supplied contract.",
-            })
-            continue
-        bound_fact_ids.add(fact_id)
-        if not _fact_text_matches(shown, contract[fact_id]):
-            findings.append({
-                "id": "fact_text_mismatch",
-                "fact_id": fact_id,
-                "expected": contract[fact_id],
-                "shown": " ".join(shown.split())[:160],
-                "claim": "A bound element's visible text does not carry the contract fact's exact text.",
-            })
-
-    if not parser.bindings:
-        findings.append({
-            "id": "no_bound_facts",
-            "claim": "The page declares no data-fact-id bindings, so none of its displayed content is verifiable.",
-        })
-
-    unbound_numerals: list[dict[str, str]] = []
-    for chunk in parser.unbound_text:
-        normalized = " ".join(chunk.split())
-        for match in _UNBOUND_NUMERAL_RE.finditer(normalized):
-            start = max(0, match.start() - 30)
-            unbound_numerals.append({
-                "numeral": match.group(0),
-                "context": normalized[start:match.end() + 30],
-            })
-    if len(unbound_numerals) > max_unbound_numerals:
-        findings.append({
-            "id": "unbound_numerals",
-            "count": len(unbound_numerals),
-            "max_allowed": max_unbound_numerals,
-            "examples": unbound_numerals[:10],
-            "claim": "Displayed numerals outside any data-fact-id binding cannot be verified against the contract.",
-        })
-
-    return {
-        "fact_verification_schema": FACT_VERIFICATION_SCHEMA,
-        "status": "fail" if findings else "pass",
-        "fact_count": len(contract),
-        "bound_fact_count": len(bound_fact_ids),
-        "binding_count": len(parser.bindings),
-        "unbound_numeral_count": len(unbound_numerals),
-        "findings": findings,
     }
 
 
@@ -3646,22 +3369,13 @@ def _runtime_smoke_failures(doc: str, sections: list[dict[str, Any]]) -> list[di
         if anchor not in target_ids:
             failures.append({"check": "anchor_target", "detail": f"missing target #{anchor}"})
 
-    # These are document-wide presence checks: report each once, naming the
-    # affected sections, instead of one duplicate failure per section.
-    chart_sections = [
-        clean_text(section.get("section_id") or section.get("kind") or "")
-        for section in sections
-        if clean_text(section.get("kind") or "") in CHART_SECTION_KINDS
-    ]
-    if chart_sections and "r-chart-target" not in doc:
-        failures.append({"check": "chart_target", "detail": f"no chart mount for: {', '.join(chart_sections)}"})
-    interactive_sections = [
-        clean_text(section.get("section_id") or section.get("kind") or "")
-        for section in sections
-        if clean_text(section.get("kind") or "") in INTERACTIVE_SECTION_KINDS
-    ]
-    if interactive_sections and "data-dc-control-bar" not in doc:
-        failures.append({"check": "interactive_controls", "detail": f"no control mount for: {', '.join(interactive_sections)}"})
+    for section in sections:
+        kind = clean_text(section.get("kind") or "")
+        section_id = clean_text(section.get("section_id") or "")
+        if kind in CHART_SECTION_KINDS and "r-chart-target" not in doc:
+            failures.append({"check": "chart_target", "detail": f"{section_id or kind} has no chart mount"})
+        if kind in INTERACTIVE_SECTION_KINDS and "data-dc-control-bar" not in doc:
+            failures.append({"check": "interactive_controls", "detail": f"{section_id or kind} has no control mount"})
     return failures
 
 
@@ -3830,7 +3544,18 @@ def _apply_desktop_compositions(section_plan: list[dict[str, Any]]) -> bool:
     inspectable in the rendered HTML.
     """
     changed = False
-    widths = COMPOSITION_EXPECTED_WIDTHS
+    widths = {
+        "opening": "full",
+        "headline_metrics": "full",
+        "reader_readout": "reading",
+        "editorial_findings": "content",
+        "guided_visual": "full",
+        "interactive_explorer": "full",
+        "comparison": "full",
+        "trust_close": "content",
+        "story_arc": "full",
+        "supporting": "content",
+    }
     for item in section_plan:
         if not isinstance(item, dict):
             continue
@@ -3894,7 +3619,7 @@ def _apply_story_arcs(
     # critique; remove an earlier pass to keep the operation idempotent.
     section_plan[:] = [
         item for item in section_plan
-        if not (isinstance(item, dict) and clean_text(item.get("layout_role") or "").startswith("story_arc_"))
+        if not clean_text(item.get("layout_role") or "").startswith("story_arc_")
     ]
     by_role = {
         clean_text(item.get("layout_role") or ""): item
@@ -4013,17 +3738,12 @@ def _apply_story_arcs(
             },
         })
         ordered.extend(by_role[role] for role in arc["sections"])
-    # Reordering must never lose material: sections without a (unique)
-    # layout_role cannot be addressed by an arc, so they keep their source
-    # order between the arcs and the trust close instead of being dropped.
-    trust_items = [by_role[role] for role in trust]
-    included = {id(item) for item in ordered} | {id(item) for item in trust_items}
-    for item in section_plan:
-        if id(item) in included:
-            continue
-        ordered.append(item)
-        included.add(id(item))
-    ordered.extend(trust_items)
+    ordered_roles = [*pinned, *assigned]
+    ordered.extend(
+        by_role[role] for role in by_role
+        if role not in ordered_roles and role not in trust
+    )
+    ordered.extend(by_role[role] for role in trust)
     section_plan[:] = ordered
     return arcs
 
@@ -5122,7 +4842,18 @@ def _review_editorial_design(storyboard: dict[str, Any]) -> dict[str, Any]:
         value = item.get("data")
         return value if isinstance(value, dict) else {}
 
-    expected_widths = COMPOSITION_EXPECTED_WIDTHS
+    expected_widths = {
+        "opening": "full",
+        "headline_metrics": "full",
+        "reader_readout": "reading",
+        "editorial_findings": "content",
+        "guided_visual": "full",
+        "interactive_explorer": "full",
+        "comparison": "full",
+        "trust_close": "content",
+        "story_arc": "full",
+        "supporting": "content",
+    }
     missing_compositions: list[str] = []
     width_conflicts: list[str] = []
     declared_exceptions: list[str] = []
@@ -5482,10 +5213,7 @@ def review_storyboard_authoring(storyboard: dict[str, Any]) -> dict[str, Any]:
             "pills", "display_pills", "visual_pills", "bullets", "scan_points", "visual_scan_points",
             "examples", "representative_examples", "visual_examples", "annotations", "visual_annotations",
         ))
-        # Slots the visual author materialized from validated catalog facts
-        # carry provenance; they are typed content, not untyped author copy.
-        author_materialized = isinstance(data.get("visual_author_applied_facts"), list) and data["visual_author_applied_facts"]
-        if section_has_legacy and not author_materialized:
+        if section_has_legacy:
             legacy_fact_count += 1
             if requested and not any(item_owner == owner for item_owner, _ in declared):
                 findings.append({
@@ -5763,138 +5491,12 @@ def _apply_visual_emphasis_plan(section_plan: list[dict[str, Any]]) -> bool:
     return changed
 
 
-_ENTITY_SECTION_KINDS = {"entity_card_grid", "selector_panel"}
-_COLOR_BINDING_SLOTS = 8
-
-
-def _color_binding_key(label: Any) -> str:
-    key = clean_text(label).strip().lower()
-    if len(key) < 2 or key.replace(".", "").replace(",", "").replace("-", "").isdigit():
-        return ""
-    return key
-
-
-def _section_entity_labels(section_type: str, data: dict[str, Any]) -> list[str]:
-    """Labels that identify recurring analytical entities in one section."""
-    labels: list[str] = []
-    if section_type in CHART_SECTION_KINDS:
-        figure = data.get("figure")
-        traces = figure.get("data") if isinstance(figure, dict) else None
-        for trace in traces if isinstance(traces, list) else []:
-            if isinstance(trace, dict):
-                labels.append(clean_text(trace.get("name") or ""))
-    if section_type in _ENTITY_SECTION_KINDS:
-        items = data.get("items", data.get("entities", data.get("options", [])))
-        for item in items if isinstance(items, list) else []:
-            if isinstance(item, dict):
-                labels.append(_item_title(item, ""))
-    return [label for label in labels if label]
-
-
-def _build_color_bindings(section_plan: list[Any]) -> dict[str, Any]:
-    """Bind entities that recur across sections to stable categorical colors.
-
-    Color is only allowed to carry meaning: an entity earns a palette slot when
-    it appears in at least two sections, so every card accent and chart trace
-    that names it renders in the same hue (docs/report-design-variance.md, D1).
-    Slots reference the theme-reactive --dc-cat-N tokens rather than literal
-    colors so bound entities stay legible in both color schemes.
-    """
-    first_seen: dict[str, str] = {}
-    sections_by_key: dict[str, set[int]] = {}
-    order: list[str] = []
-    for index, planned in enumerate(section_plan):
-        if not isinstance(planned, dict):
-            continue
-        section_type = clean_text(planned.get("section_type") or planned.get("kind") or "").lower()
-        data = planned.get("data") if isinstance(planned.get("data"), dict) else {}
-        for label in _section_entity_labels(section_type, data):
-            key = _color_binding_key(label)
-            if not key:
-                continue
-            if key not in first_seen:
-                first_seen[key] = label
-                order.append(key)
-                sections_by_key[key] = set()
-            sections_by_key[key].add(index)
-    recurring = [key for key in order if len(sections_by_key[key]) >= 2]
-    assignments = [
-        {
-            "key": key,
-            "label": first_seen[key],
-            "slot": slot + 1,
-            "sections": sorted(sections_by_key[key]),
-        }
-        for slot, key in enumerate(recurring[:_COLOR_BINDING_SLOTS])
-    ]
-    return {
-        "color_bindings_schema": 1,
-        "palette": "dc-categorical",
-        "assignments": assignments,
-        "unbound": recurring[_COLOR_BINDING_SLOTS:],
-    }
-
-
-def _seeded_visual_theme(storyboard: dict[str, Any]) -> dict[str, Any]:
-    """Deterministic per-report art direction (docs/report-design-variance.md, D4).
-
-    When neither the author nor the visual author picked a theme, derive one
-    from the report's identity: two reports on the same install stop wearing
-    the identical skin, and regeneration reproduces the choice. Only curated,
-    contrast-validated palettes are eligible.
-    """
-    digest = _stable_json_sha256({
-        "title": clean_text(storyboard.get("title")),
-        "goal": clean_text(storyboard.get("report_goal")),
-    })
-    names = sorted(THEME_TOKENS)
-    name = names[int(digest[:8], 16) % len(names)]
-    return {"name": name, "tokens": visual_theme_tokens(name), "source": "seeded", "seed": digest[:8]}
-
-
-def _apply_color_bindings_to_plan(section_plan: list[Any], bindings: dict[str, Any]) -> None:
-    """Decorate entity cards with their bound accent before rendering.
-
-    Only cards without an author-supplied color are decorated; an explicit
-    accent_color always wins.
-    """
-    by_key = {
-        str(entry.get("key") or ""): entry.get("slot")
-        for entry in bindings.get("assignments", [])
-        if isinstance(entry, dict) and entry.get("slot")
-    }
-    if not by_key:
-        return
-    for planned in section_plan:
-        if not isinstance(planned, dict):
-            continue
-        section_type = clean_text(planned.get("section_type") or planned.get("kind") or "").lower()
-        if section_type not in _ENTITY_SECTION_KINDS:
-            continue
-        data = planned.get("data") if isinstance(planned.get("data"), dict) else {}
-        items = data.get("items", data.get("entities", data.get("options", [])))
-        for item in items if isinstance(items, list) else []:
-            if not isinstance(item, dict) or item.get("accent_color") or item.get("color"):
-                continue
-            slot = by_key.get(_color_binding_key(_item_title(item, "")))
-            if slot:
-                item["accent_color"] = f"var(--dc-cat-{slot})"
-
-
 def render_report_from_storyboard(storyboard: dict[str, Any], *, title: str | None = None) -> str:
     """Render all storyboard sections in one pass."""
     section_plan = storyboard.get("section_plan", [])
     if not isinstance(section_plan, list) or not section_plan:
         raise ValueError("storyboard requires non-empty list 'section_plan'")
     _apply_desktop_compositions(section_plan)
-    color_bindings = storyboard.get("color_bindings")
-    if not isinstance(color_bindings, dict):
-        color_bindings = _build_color_bindings(section_plan)
-    storyboard["color_bindings"] = color_bindings
-    _apply_color_bindings_to_plan(section_plan, color_bindings)
-    visual_theme = storyboard.get("visual_theme")
-    if not isinstance(visual_theme, dict) or not visual_theme_tokens(visual_theme.get("name")):
-        storyboard["visual_theme"] = _seeded_visual_theme(storyboard)
     storyboard["layout_plan"] = _storyboard_layout(section_plan)
 
     html_sections: list[str] = []
@@ -5935,9 +5537,7 @@ def render_report_from_storyboard(storyboard: dict[str, Any], *, title: str | No
             if active_group:
                 html_sections.append("    </div>")
             if group:
-                ratio = clean_text(planned.get("layout_group_ratio") or "").replace(":", "-")
-                ratio_class = f" is-split-{ratio}" if ratio in {"60-40", "40-60"} else ""
-                html_sections.append(f'    <div class="r-diagnostic-pair{ratio_class}" data-dc-layout-group="{_esc(group)}">')
+                html_sections.append(f'    <div class="r-diagnostic-pair" data-dc-layout-group="{_esc(group)}">')
             active_group = group
         html_sections.append(render_report_section(section_type, data, typed))
     if active_group:
@@ -5955,7 +5555,6 @@ def render_report_from_storyboard(storyboard: dict[str, Any], *, title: str | No
         visual_theme=storyboard.get("visual_theme") if isinstance(storyboard.get("visual_theme"), dict) else None,
         report_contract=contract,
         regeneration_recipe=recipe,
-        color_bindings=color_bindings,
     )
 
 
@@ -5965,22 +5564,13 @@ def _storyboard_metrics(
     requirements: dict[str, Any],
 ) -> list[dict[str, Any]]:
     metrics: list[dict[str, Any]] = []
-    sources: list[tuple[Any, dict[str, Any]]] = [(requirements.get("metrics"), {})]
-    sources.extend((item.get("metrics"), item) for item in insights if isinstance(item, dict))
-    sources.extend((item.get("metrics"), item) for item in analyses if isinstance(item, dict))
-    for source, owner in sources:
+    sources: list[Any] = [requirements.get("metrics")]
+    sources.extend(item.get("metrics") for item in insights)
+    sources.extend(item.get("metrics") for item in analyses)
+    for source in sources:
         if isinstance(source, dict):
-            # Shorthand {label: value} metrics inherit their owner's claim
-            # mapping so a claims-bearing report's own KPI row does not arrive
-            # pre-flagged by the analytical review.
-            owner_claims = owner.get("claim_ids") if isinstance(owner.get("claim_ids"), list) else []
-            if not owner_claims and clean_text(owner.get("claim_id") or ""):
-                owner_claims = [clean_text(owner.get("claim_id"))]
             for key, value in source.items():
-                metric: dict[str, Any] = {"label": clean_text(key).replace("_", " ").title(), "value": value}
-                if owner_claims:
-                    metric["claim_ids"] = owner_claims
-                metrics.append(metric)
+                metrics.append({"label": clean_text(key).replace("_", " ").title(), "value": value})
         elif isinstance(source, list):
             for metric in source:
                 if isinstance(metric, dict):
@@ -6505,7 +6095,11 @@ def render_report_section(section_type: str, data: dict[str, Any], typed: dict[s
     if st == "header" and clean_text(data.get("visual_treatment") or "") == "editorial_dark":
         classes.append("is-editorial-dark")
     composition = _desktop_composition_for({"section_type": st, "data": data})
-    expected_width = COMPOSITION_EXPECTED_WIDTHS[composition]
+    expected_width = {
+        "opening": "full", "headline_metrics": "full", "reader_readout": "reading",
+        "editorial_findings": "content", "guided_visual": "full", "interactive_explorer": "full",
+        "comparison": "full", "trust_close": "content", "story_arc": "full", "supporting": "content",
+    }[composition]
     layout_exception = _layout_exception_reason(data, expected_width=expected_width, actual_width=width)
     if layout_exception:
         classes.append("has-layout-exception")
@@ -6534,133 +6128,6 @@ def render_report_section(section_type: str, data: dict[str, Any], typed: dict[s
     if kicker and st != "header" and not (st == "metric_row" and variant == "floating_kpis"):
         html = re.sub(r"(<h2>)", f'<p class="r-section-kicker">{_esc(kicker)}</p>\\1', html, count=1)
     return html
-
-
-def _dom_id_slug(value: Any) -> str:
-    """Reduce a caller-supplied identifier to DOM-id-safe characters.
-
-    The result is interpolated into an HTML id attribute and a JS string
-    literal, so anything outside [A-Za-z0-9_-] is replaced rather than
-    escaped.
-    """
-    slug = re.sub(r"[^A-Za-z0-9_-]+", "-", clean_text(value)).strip("-")
-    return slug or uuid.uuid4().hex[:10]
-
-
-_CAPTION_PLACEMENT_MAX_CHARS = 160
-_ANNOTATION_LINE_COLOR = "#8a94a3"
-
-
-def _interpretation_takeaways(data: dict[str, Any]) -> list[dict[str, str]]:
-    """Discrete takeaways supplied for a chart, if the source gave any."""
-    source = data.get("takeaways")
-    if source is None and isinstance(data.get("interpretation"), list):
-        source = data.get("interpretation")
-    takeaways: list[dict[str, str]] = []
-    for item in source if isinstance(source, list) else []:
-        if isinstance(item, dict):
-            heading = clean_text(item.get("title") or item.get("headline") or "")
-            text = clean_text(item.get("detail") or item.get("text") or item.get("summary") or "")
-            if not text:
-                text, heading = heading, ""
-        else:
-            heading, text = "", clean_text(item)
-        if text:
-            takeaways.append({"heading": heading, "text": text})
-    return takeaways
-
-
-def _annotation_facts(data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Typed display facts that can be drawn inside the figure.
-
-    Annotation text comes only from source-supplied display facts, never from
-    free model prose, so in-figure interpretation inherits the same
-    non-fabrication contract as every other rendered fact.
-    """
-    facts = data.get("display_facts")
-    annotations: list[dict[str, Any]] = []
-    for fact in facts if isinstance(facts, list) else []:
-        if not isinstance(fact, dict):
-            continue
-        uses = fact.get("uses") if isinstance(fact.get("uses"), list) else [fact.get("use")]
-        if "annotation" not in {str(use or "").strip().lower() for use in uses}:
-            continue
-        text = clean_text(fact.get("text") or "")
-        if not text:
-            continue
-        axis = str(fact.get("axis") or "").strip().lower()
-        has_point = fact.get("x") is not None and fact.get("y") is not None
-        has_line = axis in {"x", "y"} and fact.get("value") is not None
-        if has_point or has_line:
-            annotations.append({
-                "text": text,
-                "x": fact.get("x"),
-                "y": fact.get("y"),
-                "axis": axis if has_line else "",
-                "value": fact.get("value"),
-            })
-    return annotations
-
-
-def _inject_figure_annotations(figure: dict[str, Any], facts: list[dict[str, Any]]) -> bool:
-    """Additively draw fact annotations into the figure layout.
-
-    Mutations are append-only (shapes/annotations arrays); trace data is never
-    touched, and an existing non-list value means the figure opted out.
-    """
-    layout = figure.setdefault("layout", {})
-    if not isinstance(layout, dict):
-        return False
-    annotations = layout.setdefault("annotations", [])
-    shapes = layout.setdefault("shapes", [])
-    if not isinstance(annotations, list) or not isinstance(shapes, list):
-        return False
-    for fact in facts:
-        label = {"text": fact["text"], "showarrow": False, "font": {"size": 11.5}}
-        if fact["axis"] == "x":
-            shapes.append({
-                "type": "line", "x0": fact["value"], "x1": fact["value"],
-                "y0": 0, "y1": 1, "yref": "paper",
-                "line": {"color": _ANNOTATION_LINE_COLOR, "width": 1.4, "dash": "dot"},
-            })
-            annotations.append({**label, "x": fact["value"], "y": 1, "yref": "paper", "yanchor": "bottom"})
-        elif fact["axis"] == "y":
-            shapes.append({
-                "type": "line", "y0": fact["value"], "y1": fact["value"],
-                "x0": 0, "x1": 1, "xref": "paper",
-                "line": {"color": _ANNOTATION_LINE_COLOR, "width": 1.4, "dash": "dot"},
-            })
-            annotations.append({**label, "y": fact["value"], "x": 1, "xref": "paper", "xanchor": "right", "yanchor": "bottom"})
-        else:
-            annotations.append({
-                **label,
-                "x": fact["x"], "y": fact["y"],
-                "showarrow": True, "arrowhead": 2, "arrowcolor": _ANNOTATION_LINE_COLOR,
-            })
-    return True
-
-
-def _interpretation_placement(data: dict[str, Any], *, has_supporting: bool) -> str:
-    """Choose where a chart's interpretation lives from the content's shape.
-
-    docs/report-design-variance.md, D2: one short sentence reads as a caption,
-    discrete takeaways read as a numbered panel, a fact with coordinates is
-    drawn inside the figure, and only long-form reading earns the side rail.
-    An explicit interpretation_placement wins over the inferred shape.
-    """
-    explicit = clean_text(data.get("interpretation_placement") or "").lower().replace("-", "_")
-    if explicit in INTERPRETATION_PLACEMENTS:
-        return explicit
-    if _annotation_facts(data):
-        return "figure_annotation"
-    if 2 <= len(_interpretation_takeaways(data)) <= 5:
-        return "takeaway_panel"
-    interpretation = clean_text(
-        data.get("interpretation") if isinstance(data.get("interpretation"), str) else ""
-    ) or clean_text(data.get("insight") or data.get("summary") or "")
-    if interpretation and len(interpretation) <= _CAPTION_PLACEMENT_MAX_CHARS and not has_supporting:
-        return "caption"
-    return "side_rail"
 
 
 def _render_section_body(section_type: str, data: dict[str, Any], typed: dict[str, Any]) -> str:
@@ -6709,7 +6176,7 @@ def _render_section_body(section_type: str, data: dict[str, Any], typed: dict[st
     </section>"""
 
     if st in {"chart", "chart_interpretation"}:
-        chart_id = f"chart-{_dom_id_slug(typed.get('section_id') or '')}"
+        chart_id = f"chart-{clean_text(typed.get('section_id') or uuid.uuid4().hex[:10])}"
         figure = copy.deepcopy(data.get("figure"))
         if not figure and data.get("figure_json"):
             figure = json.loads(str(data["figure_json"]))
@@ -6720,14 +6187,10 @@ def _render_section_body(section_type: str, data: dict[str, Any], typed: dict[st
             layout = figure.setdefault("layout", {})
             if isinstance(layout, dict) and not layout.get("colorway"):
                 layout["colorway"] = palette
-        figure_title = figure.get("layout", {}).get("title") if isinstance(figure.get("layout"), dict) else None
-        if isinstance(figure_title, dict):
-            figure_title = figure_title.get("text")
-        title = _esc(data.get("title") or clean_text(figure_title if isinstance(figure_title, str) else "") or "Chart")
+        figure_json = _json_for_script({"figure": figure})
+        title = _esc(data.get("title", figure.get("layout", {}).get("title", {}).get("text", "Chart") if isinstance(figure.get("layout"), dict) else "Chart"))
         caption = _esc(data.get("caption", ""))
-        interpretation = clean_text(
-            data.get("interpretation") if isinstance(data.get("interpretation"), str) else ""
-        ) or clean_text(data.get("insight") or "")
+        interpretation = clean_text(data.get("interpretation") or data.get("insight") or "")
         if st == "chart_interpretation":
             interpretation = interpretation or clean_text(data.get("summary") or "")
         conclusion = clean_text(data.get("conclusion") or "")
@@ -6738,80 +6201,27 @@ def _render_section_body(section_type: str, data: dict[str, Any], typed: dict[st
             evidence,
             presentation=data.get("evidence_presentation", "none"),
         ) if isinstance(evidence, list) and evidence else ""
-        has_supporting = bool(caveat or next_action or rail)
-        placement = _interpretation_placement(data, has_supporting=has_supporting)
-        if placement == "figure_annotation":
-            facts = _annotation_facts(data)
-            if facts and _inject_figure_annotations(figure, facts):
-                # The figure now carries the emphasis; remaining prose reads
-                # as a caption unless supporting context still needs a rail.
-                placement = (
-                    "side_rail"
-                    if has_supporting or len(interpretation) > _CAPTION_PLACEMENT_MAX_CHARS
-                    else "caption"
-                )
-            else:
-                placement = "side_rail"
-        takeaways = _interpretation_takeaways(data) if placement == "takeaway_panel" else []
-        if placement == "takeaway_panel" and not takeaways:
-            placement = "side_rail"
-        figure_json = _json_for_script({"figure": figure})
         render_script = f'<script>(window.__DataClawReportQueue=window.__DataClawReportQueue||[]).push({{fn:"renderFigureById",id:"{chart_id}",config:{figure_json}}});</script>'
-        interpretation_caption = (
-            f'<p class="r-caption r-interpretation-caption">{_esc(interpretation)}</p>'
-            if placement == "caption" and interpretation
-            else ""
-        )
         chart_main = f"""<div class="r-chart-main">
           <div id="{chart_id}" class="r-chart-target"></div>
           {f'<p class="r-caption">{caption}</p>' if caption else ''}
           {f'<p class="r-conclusion">{_esc(conclusion)}</p>' if conclusion else ''}
-          {interpretation_caption}
         </div>"""
-        caveat_line = f'<p class="r-finding-meta"><strong>Caveat:</strong> {_esc(caveat)}</p>' if caveat else ""
-        next_line = f'<p class="r-finding-meta"><strong>Next:</strong> {_esc(next_action)}</p>' if next_action else ""
-        supporting_lines = f"{caveat_line}{next_line}{rail}"
-        if placement == "takeaway_panel":
-            entries = []
-            for index, takeaway in enumerate(takeaways):
-                heading = f"<strong>{_esc(takeaway['heading'])}</strong> " if takeaway["heading"] else ""
-                entries.append(
-                    f'<li class="r-takeaway"><span class="r-takeaway-index">{index + 1}</span>'
-                    f"<div>{heading}{_esc(takeaway['text'])}</div></li>"
-                )
-            panel_title = _esc(clean_text(data.get("takeaways_title") or "") or "What this reveals")
-            body = f"""<div class="r-chart-story-grid">
-        {chart_main}
-        <aside class="r-interpretation-panel r-takeaway-panel">
-          <h3>{panel_title}</h3>
-          <ol class="r-takeaway-list">{''.join(entries)}</ol>
-          {supporting_lines}
-        </aside>
-      </div>"""
-        elif placement == "side_rail" and (interpretation or has_supporting):
+        has_panel = bool(interpretation or caveat or next_action or rail)
+        if has_panel:
             body = f"""<div class="r-chart-story-grid">
         {chart_main}
         <aside class="r-interpretation-panel">
           <h3>Interpretation</h3>
           {f'<p>{_esc(interpretation)}</p>' if interpretation else ''}
-          {supporting_lines}
-        </aside>
-      </div>"""
-        elif placement == "caption" and has_supporting:
-            # An explicit caption override keeps caveats and evidence visible.
-            body = f"""<div class="r-chart-story-grid">
-        {chart_main}
-        <aside class="r-interpretation-panel">
-          <h3>Notes</h3>
-          {supporting_lines}
+          {f'<p class="r-finding-meta"><strong>Caveat:</strong> {_esc(caveat)}</p>' if caveat else ''}
+          {f'<p class="r-finding-meta"><strong>Next:</strong> {_esc(next_action)}</p>' if next_action else ''}
+          {rail}
         </aside>
       </div>"""
         else:
             body = chart_main
-        context_data = {
-            k: v for k, v in data.items()
-            if k not in {"caption", "summary", "interpretation", "insight", "conclusion", "evidence", "evidence_refs", "takeaways", "takeaways_title", "interpretation_placement", "display_facts"}
-        }
+        context_data = {k: v for k, v in data.items() if k not in {"caption", "summary", "interpretation", "insight", "conclusion", "evidence", "evidence_refs"}}
         return f"""    <section class="r-section" {attrs}>
       <h2>{title}</h2>
       {_section_context(context_data)}
@@ -6982,11 +6392,6 @@ def _render_section_body(section_type: str, data: dict[str, Any], typed: dict[st
         title = _esc(data.get("title", "Note"))
         body = _paragraphs(data.get("body", data.get("text", "")))
         class_name = "r-callout" if st == "callout" else ""
-        variant = clean_text(data.get("layout_variant") or data.get("variant") or "").lower().replace("-", "_")
-        if st == "callout" and variant == "note":
-            tone = clean_text(data.get("tone") or "").lower()
-            tone_class = f" is-tone-{tone}" if tone in {"good", "warn", "danger", "neutral"} else ""
-            class_name = f"r-callout r-callout-note{tone_class}"
         return f"""    <section class="r-section" {attrs}>
       <div class="{class_name}">
         <h2>{title}</h2>
@@ -7281,9 +6686,7 @@ def _normalize_interactive_table_rows(rows: list[Any], columns: Any) -> list[dic
 
 
 def _json_for_script(value: Any) -> str:
-    # "<\/" blocks </script> breakout; "<!--" keeps an HTML comment open
-    # from shifting the parser into script-data-escaped state.
-    return json.dumps(value, default=str).replace("</", "<\\/").replace("<!--", "\\u003c!--")
+    return json.dumps(value, default=str).replace("</", "<\\/")
 
 
 def _render_pill_row(values: Any) -> str:
@@ -7553,13 +6956,11 @@ def _render_entity_card(item: Any, index: int, *, selector: bool = False) -> str
 
 
 def _item_title(item: dict[str, Any], fallback: str = "Insight") -> str:
-    # Mirrors the shell script's itemTitle key order.
     return clean_text(
         item.get("title")
         or item.get("headline")
         or item.get("statement")
         or item.get("name")
-        or item.get("label")
         or fallback
     )
 

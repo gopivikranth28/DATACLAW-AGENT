@@ -73,7 +73,7 @@ IMPLEMENTED_GATE_CHECKS = {
 
 def test_rubric_loads_and_matches_implemented_checks():
     rubric = load_report_rubric()
-    assert rubric_version() == 8
+    assert rubric_version() == 7
     assert set(live_criterion_ids()) == IMPLEMENTED_GATE_CHECKS
     for value in rubric_thresholds().values():
         assert isinstance(value, int)
@@ -129,7 +129,7 @@ async def test_gate_result_cites_rubric_version(cfg):
         quality_gate="warn",
         data={"title": "Note", "text": "Just one section."},
     )
-    assert result["quality"]["rubric_version"] == 8
+    assert result["quality"]["rubric_version"] == 7
 
 
 def test_gate_rejects_report_without_typed_section_metadata():
@@ -1337,5 +1337,5 @@ def test_storyboard_quality_plan_derives_from_rubric():
         requirements={},
     )
     plan = storyboard["quality_plan"]
-    assert plan["rubric_version"] == 8
+    assert plan["rubric_version"] == 7
     assert plan["checks"] == live_criterion_ids()
