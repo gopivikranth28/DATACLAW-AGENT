@@ -7,7 +7,6 @@ import { FileWriteDisplay, FileReadDisplay } from './FileDisplay'
 import ReportDisplay from './ReportDisplay'
 import MetricDisplay from './MetricDisplay'
 import PublishArtifactCard from './PublishArtifactCard'
-import VisualReviewCard from './VisualReviewCard'
 import { reportPreviewUrl } from '../reportPreview'
 import { toolBaseName } from '../reportPublishState'
 
@@ -19,7 +18,6 @@ const AUTO_EXPAND_TOOLS = new Set([
   'build_report',
   'report_design_report',
   'report_publish',
-  'report_review_visuals',
   'publish_artifact',
   'insert_cell', 'edit_cell', 'edit_cell_source',
 ])
@@ -99,8 +97,6 @@ export default function ToolResultRenderer({ toolName, result, args, status, onF
     case 'report_design_report':
     case 'report_publish':
       return <ReportDisplay data={parsed} toolName={normalizedToolName} status={status} />
-    case 'report_review_visuals':
-      return <VisualReviewCard data={parsed} status={status} />
     case 'report_add_section':
       return <ReportUpdateNotice data={parsed} onFileClick={onFileClick} />
     case 'publish_artifact':
