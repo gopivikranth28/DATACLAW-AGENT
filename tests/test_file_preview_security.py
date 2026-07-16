@@ -66,6 +66,34 @@ async def test_workspace_html_preview_uses_sandbox_shell(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_workspace_html_preview_resolves_relative_path_in_its_session(tmp_path, monkeypatch):
+    home = tmp_path / ".dataclaw"
+    monkeypatch.setattr(paths, "DATACLAW_HOME", home)
+    session_id = "report-session"
+    report = home / "workspaces" / session_id / "reports" / "quality.html"
+    report.parent.mkdir(parents=True)
+    report.write_text("<h1>session report</h1>", encoding="utf-8")
+
+    response = await preview_html_document(path="reports/quality.html", session_id=session_id)
+
+    assert b"session report" in response.body
+
+
+@pytest.mark.asyncio
+async def test_workspace_html_preview_relative_path_cannot_escape_session(tmp_path, monkeypatch):
+    home = tmp_path / ".dataclaw"
+    monkeypatch.setattr(paths, "DATACLAW_HOME", home)
+    report = home / "workspaces" / "other-session" / "private.html"
+    report.parent.mkdir(parents=True)
+    report.write_text("<h1>private</h1>", encoding="utf-8")
+
+    with pytest.raises(HTTPException) as exc:
+        await preview_html_document(path="../other-session/private.html", session_id="report-session")
+
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_workspace_html_preview_url_encodes_case_insensitive_script_close_in_path(tmp_path, monkeypatch):
     home = tmp_path / ".dataclaw"
     monkeypatch.setattr(paths, "DATACLAW_HOME", home)

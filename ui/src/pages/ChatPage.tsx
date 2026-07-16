@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react'
-import { Button, Card, Input, Empty, Alert, Modal, Switch, Tag, Tooltip } from 'antd'
+import { Button, Card, Checkbox, Input, Empty, Alert, Modal, Popconfirm, Switch, Tag, Tooltip } from 'antd'
 import {
   PlusOutlined, SendOutlined, SettingOutlined,
   FolderOutlined, FolderOpenOutlined, ExperimentOutlined, StopOutlined, ReloadOutlined,
   EditOutlined, SafetyOutlined,
   ExportOutlined, PauseOutlined, PlayCircleOutlined, CloseOutlined, ArrowUpOutlined, RightOutlined,
-  ArrowLeftOutlined, MessageOutlined, FileTextOutlined, DatabaseOutlined,
+  ArrowLeftOutlined, DeleteOutlined, MessageOutlined, FileTextOutlined, DatabaseOutlined,
 } from '@ant-design/icons'
 import { useSearchParams } from 'react-router-dom'
 import { API } from '../api'
@@ -31,6 +31,7 @@ interface Session { id: string; title: string; createdAt: string; projectId?: st
 interface QueuedMessage { id: string; text: string; ts: number }
 interface PersistedToolTiming { startedAt?: number; finishedAt?: number }
 interface ReportCounts { published: number; scratch: number }
+interface DatasetConfirmation { sessionId?: string; pendingMessage?: string; title?: string }
 type FileSort = 'name' | 'size' | 'modified' | 'type'
 
 function isSuccessfulArtifactPublish(call: ToolCallState): boolean {
@@ -112,6 +113,10 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
       const next = new URLSearchParams(searchParams)
       if (id) next.set('session', id)
       else next.delete('session')
+      // These markers only enter the one-time new-chat confirmation flow.
+      // Never carry them into later session navigation (especially Cancel).
+      next.delete('new_independent_chat')
+      next.delete('confirm_datasets')
       setSearchParams(next, { replace: true })
     }
   }
@@ -148,6 +153,7 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
   const pendingPlanDecisionRef = useRef<{ sessionId: string; text: string } | null>(null)
   const queuedMessagesRef = useRef<QueuedMessage[]>([])
   const queuePausedRef = useRef(false)
+  const datasetConfirmationOpenRef = useRef(false)
   const commitQueueRef = useRef<(messages: QueuedMessage[], paused: boolean) => void>(() => {})
   const dispatchQueuedMessageRef = useRef<() => boolean>(() => false)
 
@@ -160,11 +166,17 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
   // expand-and-scroll effect even for the same plan id.
   const [focusedPlan, setFocusedPlan] = useState<{ id: string } | null>(null)
   const [planReaderExpanded, setPlanReaderExpanded] = useState(false)
+  const lastAutoOpenedPendingPlanRef = useRef<string | null>(null)
 
   // Dataset filters
   const [hasDataPlugin, setHasDataPlugin] = useState(false)
   const [allDatasets, setAllDatasets] = useState<any[]>([])
   const [selectedDatasetIds, setSelectedDatasetIds] = useState<string[] | null>(initialDatasetIds !== undefined ? initialDatasetIds ?? null : null)
+  const [datasetConfirmation, setDatasetConfirmation] = useState<DatasetConfirmation | null>(null)
+  const [datasetConfirmationSelection, setDatasetConfirmationSelection] = useState<string[]>([])
+  const [datasetConfirmationLoading, setDatasetConfirmationLoading] = useState(false)
+  const [datasetConfirmationSaving, setDatasetConfirmationSaving] = useState(false)
+  const [datasetConfirmationError, setDatasetConfirmationError] = useState<string | null>(null)
 
   // Tool filters
   const [allTools, setAllTools] = useState<any[]>([])
@@ -196,6 +208,39 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
       }).catch(() => {})
     }
   }, [activeSessionId])
+
+  const requestDatasetConfirmation = useCallback((confirmation: DatasetConfirmation = {}) => {
+    // Avoid a duplicate modal while React applies the one-time navigation
+    // marker. The ref is intentional: state updates are asynchronous.
+    if (datasetConfirmationOpenRef.current) return
+    datasetConfirmationOpenRef.current = true
+    setSelectedDatasetIds([])
+    setDatasetConfirmationSelection([])
+    setDatasetConfirmationError(null)
+    setDatasetConfirmation(confirmation)
+    setDatasetConfirmationLoading(true)
+    fetch(`${API}/data/datasets`)
+      .then(response => response.ok ? response.json() : [])
+      .then(datasets => {
+        const next = Array.isArray(datasets) ? datasets : []
+        setAllDatasets(next)
+      })
+      .catch(() => setAllDatasets([]))
+      .finally(() => setDatasetConfirmationLoading(false))
+  }, [])
+
+  // The persistent sidebar asks for scope before it creates a session. Remove
+  // the one-time marker immediately so an existing chat never prompts again.
+  useEffect(() => {
+    const isNewIndependentChat = searchParams.get('new_independent_chat') === '1'
+    const isLegacyConfirmation = searchParams.get('confirm_datasets') === '1' && Boolean(urlSession)
+    if (!isStandalone || (!isNewIndependentChat && !isLegacyConfirmation)) return
+    requestDatasetConfirmation(isLegacyConfirmation ? { sessionId: urlSession! } : {})
+    const next = new URLSearchParams(searchParams)
+    next.delete('new_independent_chat')
+    next.delete('confirm_datasets')
+    setSearchParams(next, { replace: true })
+  }, [isStandalone, requestDatasetConfirmation, searchParams, setSearchParams, urlSession])
 
   const updateToolFilter = useCallback((ids: string[] | null) => {
     setSelectedToolIds(ids)
@@ -357,6 +402,92 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
   const { messages, toolCalls, timeline, isRunning, reconnecting, error, sendMessage, cancelRun, checkAndReconnect, reset, setToolCalls } = useAGUI({ onRunFinished })
   sendMessageRef.current = sendMessage
 
+  const deleteSession = useCallback(async (sessionId: string) => {
+    const response = await fetch(`${API}/chat/sessions/${sessionId}`, { method: 'DELETE' })
+    if (!response.ok) throw new Error('Could not delete this chat')
+    setSessions(previous => previous.filter(session => session.id !== sessionId))
+  }, [])
+
+  const confirmDatasetSelection = useCallback(async (ids: string[] = datasetConfirmationSelection) => {
+    if (!datasetConfirmation) return
+    setDatasetConfirmationSaving(true)
+    setDatasetConfirmationError(null)
+    try {
+      let sessionId = datasetConfirmation.sessionId
+      if (sessionId) {
+        // Supports a stale handoff URL created by an earlier build. New chats
+        // take the creation path below instead.
+        const response = await fetch(`${API}/chat/sessions/${sessionId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ datasetIds: ids }),
+        })
+        if (!response.ok) throw new Error('Could not save the dataset selection')
+      } else {
+        const response = await fetch(`${API}/chat/sessions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: datasetConfirmation.title || 'New Chat',
+            project_id: null,
+            dataset_ids: ids,
+          }),
+        })
+        if (!response.ok) throw new Error('Could not create the new chat')
+        const session = await response.json()
+        sessionId = session.id
+        setSessions(previous => [session, ...previous])
+        setLoadedSessionTitle(session.title || datasetConfirmation.title || 'New Chat')
+        setSessionProjectId(null)
+        queuedMessagesRef.current = []
+        queuePausedRef.current = false
+        setQueuedMessages([])
+        setQueuePaused(false)
+        if (datasetConfirmation.pendingMessage) skipNextLoadRef.current = true
+        if (!sessionId) throw new Error('Could not create the new chat')
+        setActiveSessionId(sessionId)
+        reset()
+      }
+      if (!sessionId) throw new Error('Could not create the new chat')
+      setSelectedDatasetIds(ids)
+      const pendingMessage = datasetConfirmation.pendingMessage
+      datasetConfirmationOpenRef.current = false
+      setDatasetConfirmation(null)
+      if (pendingMessage) sendMessage(sessionId, [], pendingMessage)
+    } catch (err) {
+      setDatasetConfirmationError(err instanceof Error ? err.message : 'Could not save the dataset selection')
+    } finally {
+      setDatasetConfirmationSaving(false)
+    }
+  }, [datasetConfirmation, datasetConfirmationSelection, sendMessage])
+
+  const cancelDatasetConfirmation = useCallback(async () => {
+    if (!datasetConfirmation) return
+    // New standalone chats have not been created yet, so cancelling is
+    // immediate. For a stale URL from an earlier build, delete only as a
+    // best-effort cleanup and never trap the user in the dialog.
+    try {
+      if (datasetConfirmation.sessionId) await deleteSession(datasetConfirmation.sessionId)
+    } catch {
+      // The UI still returns to the directory. The legacy session may remain
+      // listed, but it was never given a confirmed dataset scope.
+    }
+    queuedMessagesRef.current = []
+    queuePausedRef.current = false
+    setQueuedMessages([])
+    setQueuePaused(false)
+    datasetConfirmationOpenRef.current = false
+    setDatasetConfirmation(null)
+    setDatasetConfirmationSelection([])
+    setDatasetConfirmationError(null)
+    setSelectedDatasetIds(null)
+    setLoadedSessionTitle('')
+    setSessionProjectId(null)
+    reset()
+    setActiveSessionId(null)
+    setSessionBrowserOpen(true)
+  }, [datasetConfirmation, deleteSession, reset])
+
   // AG-UI snapshots intentionally discard unknown tool-call fields. Merge the
   // timing stored in the session back into the client state after a reload so
   // the notebook log keeps its real timeline, not a fabricated +0:00 column.
@@ -462,6 +593,20 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
 
   const pendingPlans = useMemo(() => plans.filter(p => p.status === 'pending'), [plans])
   const latestPendingPlan = pendingPlans[pendingPlans.length - 1] ?? null
+
+  // A newly submitted plan should be reviewable beside the conversation
+  // without asking the user to discover the collapsed rail first. Remember
+  // the opened id so a user can close the panel without the poll reopening it.
+  useEffect(() => {
+    if (!latestPendingPlan) {
+      lastAutoOpenedPendingPlanRef.current = null
+      return
+    }
+    if (lastAutoOpenedPendingPlanRef.current === latestPendingPlan.id) return
+    lastAutoOpenedPendingPlanRef.current = latestPendingPlan.id
+    focusPlan(latestPendingPlan.id)
+  }, [latestPendingPlan, focusPlan])
+
   const attentionPlan = useMemo(
     () => plans.find(plan => plan.status === 'pending') || plans.find(plan => plan.status === 'running' || plan.status === 'approved') || plans[plans.length - 1] || null,
     [plans],
@@ -501,15 +646,13 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
     return mergeAppItems(persisted, live)
   }, [toolCalls, visualArtifacts])
   const scratchReports = useMemo(() => {
-    // Prefer the session-persisted visual artifacts. They represent drafts the
-    // user can return to after refresh; live tool output is only a fallback
-    // while that session snapshot is catching up.
-    const persisted = itemsFromVisualArtifacts(visualArtifacts)
-    const candidates = persisted.length ? persisted : appItems
-    return candidates.flatMap(item => item.kind === 'report'
+    // Merge persisted and live reports. A session can already hold an older
+    // draft when a later report is published; preferring one source hid the
+    // newer HTML from the reports panel.
+    return appItems.flatMap(item => item.kind === 'report'
       ? [{ id: item.id, htmlPath: item.htmlPath, title: item.title, updatedAt: item.updatedAt }]
       : [])
-  }, [appItems, visualArtifacts])
+  }, [appItems])
   useEffect(() => {
     setAppLayout(null)
     setVisualArtifacts([])
@@ -714,13 +857,10 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
   }, [activeSessionId, effectiveProjectId])
   useEffect(() => { loadProjectFiles() }, [loadProjectFiles])
 
-  // Plan approval recaps are represented by the focused plan surface instead.
-  const filteredTimeline = useMemo(() => {
-    return timeline.filter(e => {
-      if (e.type !== 'message') return true
-      return !isPlanApprovalRecap((e.item as AGUIMessage).content)
-    })
-  }, [timeline])
+  // The plan review bar is additive: keep the agent's accompanying message
+  // visible so the rationale, caveats, and any user-facing next steps are not
+  // lost while the plan is open beside the chat.
+  const filteredTimeline = timeline
 
   // Windowed slice: only render the tail, expand on "load more"
   const windowedTimeline = useMemo(() => {
@@ -751,10 +891,17 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
   }, [])
 
   const createSession = async () => {
+    if (!projectId) {
+      requestDatasetConfirmation()
+      return
+    }
     try {
       const res = await fetch(`${API}/chat/sessions`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: 'New Chat', project_id: projectId || null }),
+        body: JSON.stringify({
+          title: 'New Chat',
+          project_id: projectId || null,
+        }),
       })
       if (res.ok) {
         const s = await res.json()
@@ -797,12 +944,20 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
     const isFirstMessage = messages.length === 0
 
     if (!sessionId) {
-      // Create session on backend first (like ProjectPage does)
+      if (!projectId) {
+        requestDatasetConfirmation({ pendingMessage: text, title: sessionTitleFromMessage(text) })
+        return
+      }
+      // Project sessions can be created directly because their scope belongs
+      // to the project rather than this independent-chat confirmation flow.
       try {
-        const res = await fetch(`${API}/chat/sessions`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: sessionTitleFromMessage(text), project_id: projectId || null }),
-        })
+      const res = await fetch(`${API}/chat/sessions`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: sessionTitleFromMessage(text),
+          project_id: projectId || null,
+        }),
+      })
         if (!res.ok) return
         const s = await res.json()
         sessionId = s.id
@@ -1063,7 +1218,7 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
         {/* Messages */}
         <div ref={scrollContainerRef} onScroll={handleScroll} style={{ flex: 1, minWidth: 0, overflow: 'auto', padding: showSessionBrowser ? `42px ${chatHorizontalGutter}` : `26px ${chatHorizontalGutter} 12px` }}>
           {showSessionBrowser ? (
-            <SessionBrowser sessions={sessions} onOpen={setActiveSessionId} onCreate={createSession} />
+            <SessionBrowser sessions={sessions} onOpen={setActiveSessionId} onCreate={createSession} onDelete={sessionId => deleteSession(sessionId).catch(() => {})} />
           ) : filteredTimeline.length === 0 && !isRunning ? (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
               <Empty description="Start a conversation" image={Empty.PRESENTED_IMAGE_SIMPLE} />
@@ -1218,7 +1373,7 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
               {sidebarTab === 'artifacts' && (
                 <span data-testid="report-panel-counts" style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
                   <span style={{ padding: '2px 6px', borderRadius: 9, background: 'var(--bg-soft)', color: 'var(--muted)', fontSize: 10, lineHeight: 1.35 }}>{reportCounts.published} published</span>
-                  {(reportCounts.scratch + scratchReports.length) > 0 && <span style={{ padding: '2px 6px', borderRadius: 9, background: 'var(--accent-soft)', color: 'var(--accent)', fontSize: 10, lineHeight: 1.35 }}>{reportCounts.scratch + scratchReports.length} scratch</span>}
+                  {reportCounts.scratch > 0 && <span style={{ padding: '2px 6px', borderRadius: 9, background: 'var(--accent-soft)', color: 'var(--accent)', fontSize: 10, lineHeight: 1.35 }}>{reportCounts.scratch} scratch</span>}
                 </span>
               )}
             </div>
@@ -1334,7 +1489,7 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
             active={panelOpen ? sidebarTab : ''}
             planCount={plans.length || planToolResultCount}
             planStatus={planStatusTone}
-            reportCount={reportCounts.published}
+            reportCount={reportCounts.published + reportCounts.scratch}
             reportRunning={toolCalls.some(call => ['build_report', 'report_design_report', 'report_publish', 'publish_artifact'].includes(toolBaseName(call.name)) && call.status === 'calling')}
             scopeOffCount={scopeOffCount}
             datasetOffCount={datasetOffCount}
@@ -1403,8 +1558,60 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
         </div>
       </Modal>
 
+      <Modal
+        open={Boolean(datasetConfirmation)}
+        title="Confirm datasets for this analysis"
+        closable={false}
+        mask={{ closable: false }}
+        keyboard={false}
+        width={560}
+        footer={[
+          <Button key="cancel" disabled={datasetConfirmationSaving} onClick={cancelDatasetConfirmation}>
+            Cancel
+          </Button>,
+          <Button key="confirm" type="primary" loading={datasetConfirmationSaving} onClick={() => confirmDatasetSelection()}>
+            {datasetConfirmationSelection.length ? `Continue with ${datasetConfirmationSelection.length} dataset${datasetConfirmationSelection.length === 1 ? '' : 's'}` : 'Continue without datasets'}
+          </Button>,
+        ]}
+      >
+        <p style={{ margin: '0 0 14px', color: '#475467', lineHeight: 1.5 }}>
+          Select the datasets this independent chat may use. Leave everything unchecked to continue without datasets.
+          {datasetConfirmation?.pendingMessage ? ' Your first message will send after confirmation.' : ''}
+          {' Cancel returns to Independent chats without creating a chat.'}
+        </p>
+        {datasetConfirmationError && <Alert type="error" showIcon message={datasetConfirmationError} style={{ marginBottom: 12 }} />}
+        {datasetConfirmationLoading ? (
+          <div style={{ padding: '20px 0', color: '#667085', textAlign: 'center' }}>Loading available datasets…</div>
+        ) : allDatasets.length === 0 ? (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No datasets are available" />
+        ) : (
+          <div style={{ display: 'grid', gap: 7, maxHeight: '46vh', overflowY: 'auto', paddingRight: 2 }}>
+            {allDatasets.map(dataset => {
+              const id = String(dataset.id || '')
+              const name = dataset.name || dataset.title || humanizeScopeId(id)
+              const selected = datasetConfirmationSelection.includes(id)
+              return (
+                <label key={id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '9px 10px', border: `1px solid ${selected ? '#91caff' : '#e4e7ec'}`, borderRadius: 8, background: selected ? '#f0f7ff' : '#fff', cursor: 'pointer' }}>
+                  <Checkbox checked={selected} onChange={event => {
+                    setDatasetConfirmationSelection(current => event.target.checked
+                      ? [...current, id]
+                      : current.filter(item => item !== id))
+                  }} />
+                  <span style={{ minWidth: 0, flex: '1 1 auto' }}>
+                    <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#344054', fontWeight: 600 }}>{name}</span>
+                    <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#98a2b3', fontFamily: 'var(--mono)', fontSize: 11, marginTop: 2 }}>{id}</span>
+                    {dataset.description && <span style={{ display: 'block', color: '#667085', fontSize: 12, lineHeight: 1.35, marginTop: 3 }}>{dataset.description}</span>}
+                  </span>
+                  {dataset.type && <Tag style={{ flex: '0 0 auto', marginInlineEnd: 0, fontSize: 11 }}>{dataset.type}</Tag>}
+                </label>
+              )
+            })}
+          </div>
+        )}
+      </Modal>
+
       {/* File preview modal */}
-      <FileViewerModal file={filePreviewTarget} onClose={() => setFilePreviewTarget(null)} />
+      <FileViewerModal file={filePreviewTarget} sessionId={activeSessionId} onClose={() => setFilePreviewTarget(null)} />
 
       {/* Tools filter modal */}
       <Modal title="Chat Tools" open={toolModalOpen} onCancel={() => setToolModalOpen(false)} footer={[
@@ -1539,10 +1746,11 @@ function PanelRail({ active, planCount, planStatus, reportCount, reportRunning, 
   return <nav aria-label="Session panel" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '12px 6px' }}>{item('plans', 'Plans', <FileTextOutlined />, planCount, planStatus)}{showFiles && item('files', 'Files', <FolderOutlined />)}{item('artifacts', 'Reports', <ExportOutlined />, reportCount, reportRunning ? 'running' : reportCount ? 'complete' : null)}{showDatasets && item('datasets', 'Datasets', <DatabaseOutlined />, datasetOffCount)}{showExperiments && item('experiments', 'Experiments', <ExperimentOutlined />)}{item('scope', 'Scope', <SettingOutlined />, scopeOffCount)}</nav>
 }
 
-function SessionBrowser({ sessions, onOpen, onCreate }: {
+function SessionBrowser({ sessions, onOpen, onCreate, onDelete }: {
   sessions: Session[]
   onOpen: (id: string) => void
   onCreate: () => void
+  onDelete: (id: string) => void | Promise<void>
 }) {
   return (
     <section aria-label="Independent chat sessions" style={{ width: '100%', maxWidth: 760, margin: '0 auto', padding: '12px 0 28px' }}>
@@ -1560,11 +1768,21 @@ function SessionBrowser({ sessions, onOpen, onCreate }: {
       ) : (
         <div style={{ display: 'grid', gap: 8 }}>
           {sessions.map(session => (
-            <button key={session.id} type="button" onClick={() => onOpen(session.id)} style={{ display: 'flex', minWidth: 0, alignItems: 'center', gap: 12, width: '100%', padding: '13px 14px', border: '1px solid var(--line)', borderRadius: 9, color: 'var(--ink)', background: 'var(--bg)', cursor: 'pointer', textAlign: 'left' }}>
+            <div key={session.id} role="button" tabIndex={0} onClick={() => onOpen(session.id)} onKeyDown={event => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                onOpen(session.id)
+              }
+            }} style={{ display: 'flex', minWidth: 0, alignItems: 'center', gap: 12, width: '100%', padding: '13px 14px', border: '1px solid var(--line)', borderRadius: 9, color: 'var(--ink)', background: 'var(--bg)', cursor: 'pointer', textAlign: 'left' }}>
               <MessageOutlined style={{ flex: '0 0 auto', color: 'var(--accent)' }} />
               <span title={session.title || 'Untitled chat'} style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, fontWeight: 600 }}>{conciseTitle(session.title || 'Untitled chat', 56)}</span>
               <span style={{ flex: '0 0 auto', color: 'var(--faint)', fontSize: 11 }}>{formatSessionDate(session.createdAt)}</span>
-            </button>
+              <div onClick={event => event.stopPropagation()}>
+                <Popconfirm title="Delete this chat?" description="This cannot be undone." okText="Delete" okButtonProps={{ danger: true }} onConfirm={() => onDelete(session.id)}>
+                  <Button type="text" size="small" danger icon={<DeleteOutlined />} aria-label={`Delete ${session.title || 'chat'}`} />
+                </Popconfirm>
+              </div>
+            </div>
           ))}
         </div>
       )}
@@ -1776,15 +1994,6 @@ function humanizeScopeId(value: string) {
     if (word === word.toUpperCase()) return word
     return `${word.charAt(0).toUpperCase()}${word.slice(1)}`
   }).join(' ') || value
-}
-
-function isPlanApprovalRecap(content: string): boolean {
-  const text = content.trim().toLowerCase()
-  if (!text) return false
-  const mentionsApproval = /waiting on your approval|awaiting your approval|awaiting approval|approve it and/.test(text)
-  const mentionsPlanSteps = /plan'?s submitted|plan submitted|steps:/.test(text)
-  const mentionsRetarget = /retarget before executing|narrower in mind|before executing/.test(text)
-  return mentionsApproval && (mentionsPlanSteps || mentionsRetarget)
 }
 
 function MessageBubble({ message, onFileClick }: { message: AGUIMessage; onFileClick?: (path: string) => void }) {

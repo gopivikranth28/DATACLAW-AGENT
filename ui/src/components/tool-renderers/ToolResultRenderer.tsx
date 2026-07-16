@@ -96,7 +96,7 @@ export default function ToolResultRenderer({ toolName, result, args, status, onF
     case 'build_report':
     case 'report_design_report':
     case 'report_publish':
-      return <ReportDisplay data={parsed} toolName={normalizedToolName} status={status} />
+      return <ReportDisplay data={parsed} toolName={normalizedToolName} status={status} sessionId={sessionId} />
     case 'report_add_section':
       return <ReportUpdateNotice data={parsed} onFileClick={onFileClick} />
     case 'publish_artifact':

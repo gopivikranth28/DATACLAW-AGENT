@@ -23,9 +23,16 @@ function isPdfFile(name: string): boolean {
   return name.split('.').pop()?.toLowerCase() === 'pdf'
 }
 
-export function FileViewerModal({ file, onClose }: {
+function workspaceFileUrl(path: string, sessionId?: string | null): string {
+  const params = new URLSearchParams({ path })
+  if (sessionId) params.set('session_id', sessionId)
+  return `${API}/workspace/files?${params.toString()}`
+}
+
+export function FileViewerModal({ file, onClose, sessionId }: {
   file: { name: string; path: string } | null
   onClose: () => void
+  sessionId?: string | null
 }) {
   const [content, setContent] = useState<string | null>(null)
   const [imageUrl, setImageUrl] = useState<string | null>(null)
@@ -39,7 +46,7 @@ export function FileViewerModal({ file, onClose }: {
     setImageUrl(null)
     setPdfUrl(null)
 
-    const url = `${API}/workspace/files?path=${encodeURIComponent(file.path)}`
+    const url = workspaceFileUrl(file.path, sessionId)
 
     if (isPdfFile(file.name)) {
       fetch(url)
@@ -66,11 +73,11 @@ export function FileViewerModal({ file, onClose }: {
       setImageUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null })
       setPdfUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null })
     }
-  }, [file?.path])
+  }, [file?.path, sessionId])
 
   const handleDownload = async () => {
     if (!file) return
-    const url = `${API}/workspace/files?path=${encodeURIComponent(file.path)}`
+    const url = workspaceFileUrl(file.path, sessionId)
     const res = await fetch(url)
     const blob = await res.blob()
     const blobUrl = URL.createObjectURL(blob)
@@ -105,7 +112,7 @@ export function FileViewerModal({ file, onClose }: {
       {!isReady ? <div style={{ textAlign: 'center', padding: 32 }}><Spin /></div>
         : pdfUrl ? <PdfRenderer url={pdfUrl} />
         : imageUrl ? <div style={{ textAlign: 'center', padding: 16 }}><img src={imageUrl} alt={file!.name} style={{ maxWidth: '100%', borderRadius: 8 }} /></div>
-        : <FileRenderer name={file!.name} content={content!} path={file!.path} />}
+        : <FileRenderer name={file!.name} content={content!} path={file!.path} sessionId={sessionId} />}
     </Modal>
   )
 }
@@ -114,7 +121,7 @@ function isMarimo(content: string) {
   return content.includes('marimo.App') || content.includes('import marimo')
 }
 
-export function FileRenderer({ name, content, path }: { name: string; content: string; path?: string }) {
+export function FileRenderer({ name, content, path, sessionId }: { name: string; content: string; path?: string; sessionId?: string | null }) {
   const ext = name.split('.').pop()?.toLowerCase()
   switch (ext) {
     case 'md':    return <MarkdownRenderer content={content} />
@@ -123,7 +130,7 @@ export function FileRenderer({ name, content, path }: { name: string; content: s
     case 'ipynb': return <IpynbFileRenderer content={content} />
     case 'py':    return isMarimo(content) ? <MarimoRenderer content={content} name={name} /> : <PythonRenderer content={content} />
     case 'html':
-    case 'htm':   return <HtmlRenderer content={content} path={path} dirPath={path ? path.substring(0, path.lastIndexOf('/')) : undefined} />
+    case 'htm':   return <HtmlRenderer content={content} path={path} dirPath={path ? path.substring(0, path.lastIndexOf('/')) : undefined} sessionId={sessionId} />
     case 'json':  return <pre style={CODE_STYLE}>{tryPrettyJson(content)}</pre>
     default:      return <pre style={CODE_STYLE}>{content}</pre>
   }
@@ -207,11 +214,11 @@ export function rewriteRelativeUrls(html: string, dirPath: string): string {
   )
 }
 
-function HtmlRenderer({ content, path, dirPath }: { content: string; path?: string; dirPath?: string }) {
+function HtmlRenderer({ content, path, dirPath, sessionId }: { content: string; path?: string; dirPath?: string; sessionId?: string | null }) {
   const [mode, setMode] = useState<'preview' | 'source'>('preview')
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
-  const documentUrl = path ? reportDocumentUrl(path) : ''
-  const previewUrl = path ? reportPreviewUrl(path) : ''
+  const documentUrl = path ? reportDocumentUrl(path, undefined, { sessionId }) : ''
+  const previewUrl = path ? reportPreviewUrl(path, { sessionId }) : ''
 
   useEffect(() => {
     if (path) {

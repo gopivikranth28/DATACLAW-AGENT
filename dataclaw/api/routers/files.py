@@ -117,8 +117,32 @@ def _allowed_roots() -> list[Path]:
     return roots
 
 
-def _resolve_allowed_file(path: str) -> Path:
-    file_path = Path(path).expanduser().resolve()
+def _safe_workspace_id(value: str) -> str:
+    """Match the workspace tool's on-disk session-directory convention."""
+    safe = "".join(char if char.isalnum() or char in {"-", "_"} else "-" for char in value.strip())
+    return safe or "default"
+
+
+def _resolve_allowed_file(path: str, *, session_id: str | None = None) -> Path:
+    """Resolve an allowed absolute path or a session-relative workspace path.
+
+    Report tools return relative workspace paths in a few compatibility flows.
+    Resolving those against the API process's current directory both breaks the
+    preview and produces a misleading 403. When a session is supplied, keep
+    relative paths inside that session's workspace; never let ``..`` cross into
+    another session.
+    """
+    raw = Path(path).expanduser()
+    if raw.is_absolute():
+        file_path = raw.resolve()
+    else:
+        workspace_root = workspaces_dir().resolve()
+        base = workspace_root / _safe_workspace_id(session_id) if session_id else workspace_root
+        file_path = (base / raw).resolve()
+        try:
+            file_path.relative_to(base)
+        except ValueError:
+            raise HTTPException(403, "File path is outside allowed directories")
 
     if not any(file_path.is_relative_to(root) for root in _allowed_roots()):
         raise HTTPException(403, "File path is outside allowed directories")
@@ -130,9 +154,12 @@ def _resolve_allowed_file(path: str) -> Path:
 
 
 @router.get("/files")
-async def serve_file(path: str = Query(..., description="Absolute or workspace-relative file path")) -> FileResponse:
+async def serve_file(
+    path: str = Query(..., description="Absolute or workspace-relative file path"),
+    session_id: str | None = Query(default=None, min_length=1),
+) -> FileResponse:
     """Serve a file from the workspace. Validates the path is within workspace bounds."""
-    file_path = _resolve_allowed_file(path)
+    file_path = _resolve_allowed_file(path, session_id=session_id)
 
     headers = {"X-Content-Type-Options": "nosniff"}
     if file_path.suffix.lower() in {".html", ".htm", ".svg"}:
@@ -145,6 +172,7 @@ async def serve_file(path: str = Query(..., description="Absolute or workspace-r
 async def preview_html_file(
     path: str = Query(..., description="Absolute or workspace-relative HTML path"),
     print_report: bool = Query(False, alias="print"),
+    session_id: str | None = Query(default=None, min_length=1),
 ) -> HTMLResponse:
     """Open workspace HTML in a sandboxed browser preview.
 
@@ -153,7 +181,7 @@ async def preview_html_file(
     rendering path: the report runs in a sandboxed iframe without same-origin
     access to the app.
     """
-    file_path = _resolve_allowed_file(path)
+    file_path = _resolve_allowed_file(path, session_id=session_id)
     if file_path.suffix.lower() not in {".html", ".htm"}:
         raise HTTPException(400, "Preview is only supported for HTML files")
 
@@ -194,9 +222,10 @@ async def preview_html_file(
 async def preview_html_document(
     path: str = Query(..., description="Absolute or workspace-relative HTML path"),
     print_report: bool = Query(False, alias="print"),
+    session_id: str | None = Query(default=None, min_length=1),
 ) -> HTMLResponse:
     """Serve the report document for a sandboxed preview iframe."""
-    file_path = _resolve_allowed_file(path)
+    file_path = _resolve_allowed_file(path, session_id=session_id)
     if file_path.suffix.lower() not in {".html", ".htm"}:
         raise HTTPException(400, "Preview is only supported for HTML files")
 
