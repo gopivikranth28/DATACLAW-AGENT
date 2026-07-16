@@ -840,9 +840,11 @@ const target = process.argv[1];
           document.querySelectorAll('.r-chart-story-grid, .r-explorer-grid').forEach((grid, index) => {
             const gridRect = grid.getBoundingClientRect();
             const aside = grid.querySelector('.r-interpretation-panel, .r-evidence-rail');
+            const section = grid.closest('.r-section');
+            const hasLayoutException = section && section.getAttribute('data-dc-layout-exception') === 'true';
             if (!aside || gridRect.width < 700) return;
             const asideRect = aside.getBoundingClientRect();
-            if (asideRect.width < 250 || asideRect.width > gridRect.width * .44) {
+            if (!hasLayoutException && (asideRect.width < 250 || asideRect.width > gridRect.width * .44)) {
               failures.push({check: 'interpretation_rail_balance', detail: name + ' interpretation rail ' + index + ' is ' + Math.round(asideRect.width) + 'px wide for a ' + Math.round(gridRect.width) + 'px visual frame'});
             }
           });

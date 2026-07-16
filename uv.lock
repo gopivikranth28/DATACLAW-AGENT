@@ -832,6 +832,46 @@ requires-dist = [
 provides-extras = ["rag", "dev"]
 
 [[package]]
+name = "dataclaw-analysis-review"
+version = "0.1.0"
+source = { editable = "plugins/dataclaw-analysis-review" }
+dependencies = [
+    { name = "dataclaw" },
+    { name = "dataclaw-artifacts" },
+    { name = "dataclaw-eda" },
+    { name = "dataclaw-plans" },
+    { name = "dataclaw-projects" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dataclaw" },
+    { name = "dataclaw-artifacts" },
+    { name = "dataclaw-eda" },
+    { name = "dataclaw-plans" },
+    { name = "dataclaw-projects" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
+]
+provides-extras = ["dev"]
+
+[[package]]
+name = "dataclaw-artifacts"
+version = "0.1.0"
+source = { editable = "plugins/dataclaw-artifacts" }
+dependencies = [
+    { name = "dataclaw" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dataclaw" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
+]
+provides-extras = ["dev"]
+
+[[package]]
 name = "dataclaw-browser"
 version = "0.1.0"
 source = { editable = "plugins/dataclaw-browser" }
@@ -897,6 +937,22 @@ dependencies = [
 requires-dist = [
     { name = "dataclaw" },
     { name = "duckdb", specifier = ">=1.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
+]
+provides-extras = ["dev"]
+
+[[package]]
+name = "dataclaw-eda"
+version = "0.1.0"
+source = { editable = "plugins/dataclaw-eda" }
+dependencies = [
+    { name = "dataclaw" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dataclaw" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
 ]
@@ -977,60 +1033,6 @@ requires-dist = [
 provides-extras = ["dev"]
 
 [[package]]
-name = "dataclaw-analysis-review"
-version = "0.1.0"
-source = { editable = "plugins/dataclaw-analysis-review" }
-dependencies = [
-    { name = "dataclaw" },
-    { name = "dataclaw-artifacts" },
-    { name = "dataclaw-eda" },
-    { name = "dataclaw-plans" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dataclaw" },
-    { name = "dataclaw-artifacts" },
-    { name = "dataclaw-eda" },
-    { name = "dataclaw-plans" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
-]
-provides-extras = ["dev"]
-
-[[package]]
-name = "dataclaw-artifacts"
-version = "0.1.0"
-source = { editable = "plugins/dataclaw-artifacts" }
-dependencies = [
-    { name = "dataclaw" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dataclaw" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
-]
-provides-extras = ["dev"]
-
-[[package]]
-name = "dataclaw-eda"
-version = "0.1.0"
-source = { editable = "plugins/dataclaw-eda" }
-dependencies = [
-    { name = "dataclaw" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dataclaw" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
-]
-provides-extras = ["dev"]
-
-[[package]]
 name = "dataclaw-plans"
 version = "0.1.0"
 source = { editable = "plugins/dataclaw-plans" }
@@ -1072,6 +1074,7 @@ dependencies = [
     { name = "dataclaw" },
     { name = "dataclaw-artifacts" },
     { name = "html-for-docx" },
+    { name = "pyyaml" },
 ]
 
 [package.metadata]
@@ -1081,6 +1084,7 @@ requires-dist = [
     { name = "html-for-docx", specifier = ">=1.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
+    { name = "pyyaml", specifier = ">=6.0" },
 ]
 provides-extras = ["dev"]
 

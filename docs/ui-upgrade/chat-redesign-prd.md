@@ -1,12 +1,12 @@
-# DataClaw Chat Console Redesign - PRD
+# DataClaw Chat Console and Report Review - PRD
 
 | | |
 |---|---|
 | **Status** | Draft, build-ready |
 | **Owner** | Nandini Mathan |
-| **Last updated** | 2026-07-07 |
-| **Ships as** | `ui/src/` chat surface rework (no new plugin; no backend schema breaks) |
-| **Composes with** | `plugins/dataclaw-plans`, `plugins/dataclaw-workspace`, sessions API, AG-UI event stream, future `dataclaw-artifacts` (Reports tab is its landing zone) |
+| **Last updated** | 2026-07-16 |
+| **Ships as** | `ui/src/` chat and report-review surface plus the additive reporting contracts required by that surface |
+| **Composes with** | `plugins/dataclaw-plans`, `plugins/dataclaw-workspace`, `plugins/dataclaw-artifacts`, sessions API, AG-UI event stream, and the [report pipeline](../report-authoring-system-v2.md) |
 | **Companions** | [chat-redesign.md](chat-redesign.md) (critique + decision log) · [chat-redesign-spec.md](chat-redesign-spec.md) (build spec) · [mockups/chat-redesign.html](mockups/chat-redesign.html) (clickable mock, rev 4) |
 
 ---
@@ -21,6 +21,13 @@ an always-visible edge rail on the right; and you can keep typing while the agen
 messages queue in the thread, pause when you press Stop, and dispatch in order.
 Every chart, table, and metric carries its provenance: which cell produced it, when,
 and the source one click away.
+
+Reports use the same console as a first-class review surface. The Reports rail shows
+the progression from approved analysis package to storyboard, visually reviewed HTML,
+and published receipt. Desktop and mobile captures render as images beside structured
+review findings; paths and raw JSON are never the only evidence. Publication is
+available only for an approved `ReportBuild` and returns the final shareable link in
+one step.
 
 **Session boundary:** a chat is one session in one of two contexts: **independent**
 (`project_id = null`) or **project-scoped** (`project_id` set). Both own their
@@ -37,6 +44,14 @@ name the current context and never mix both session lists in one global sidebar.
   with `Out [n]` gutters, keep the composer enabled during the simulated run, dispatch
   two queued messages in order on run end, and show both plans in the Plans list with
   the pill pointing at the running one. No nested scroll regions inside the thread.
+- **Report acceptance check:** replay a report fixture containing an approved
+  `AnalysisPackage`, a storyboard with one explicit omission, a `ReportBuild`, desktop
+  and mobile captures, browser findings, and a visual-review decision. The Reports
+  surface must render the captures as images, expose the package/story/build hashes,
+  show the omission and review findings, and publish through `publish_report` to a
+  shareable link. Changing the HTML hash must invalidate the captures and disable
+  publication. A provider-auth failure must remain retryable without creating a
+  lower-quality fallback report.
 - **Degradation rule:** Every step must still name the concrete action and, when
   available, its target. Known tools use the verb map; an unknown integration is
   humanized from its name and target (for example, `Completed search memory — pricing
@@ -48,13 +63,14 @@ name the current context and never mix both session lists in one global sidebar.
 
 | Surface | How this PRD uses it |
 |---|---|
-| Plugin | none new — pure `ui/` rework |
-| Tools | none new; step-line verb map covers existing tool names |
+| Plugin | no UI plugin; the surface consumes the canonical workspace/reporting and artifacts contracts |
+| Tools | reporting operations are `finalize_analysis_package`, `create_report_storyboard`, `author_visual_report`, `review_visual_report`, and `publish_report`; legacy report tools remain compatibility-only until cutover |
 | Hooks | none |
-| AG-UI | turn grouping keys off existing run/message ids; unknown-name events get a fallback renderer |
-| Sessions API | existing PATCH persistence reused for scope; new field `queuedMessages` |
+| AG-UI | turn grouping keys off existing run/message ids; unknown-name events get a fallback renderer; report lifecycle results update the Reports surface |
+| Sessions API | existing PATCH persistence reused for scope and queue; report records are fetched by session id |
 | Plans plugin | existing list/decision endpoints unchanged; UI-side selection logic replaced |
-| Skills | no changes; `visualization.md` evidence contract is the inline-render allowlist |
+| Artifacts | immutable report builds, captures, review evidence, and `PublishReceipt`; generic artifact publication cannot publish a final report |
+| Skills | reporting skills must follow the canonical analysis → storyboard → visual report → publish path |
 | OpenClaw | no manifest changes; UI renders the same event stream |
 | Validation | fixture-session replay above + visual regression on the four panel tabs |
 
@@ -93,10 +109,16 @@ is a minority of the pixels. Full critique with code references:
 - **G8** - Keep session context legible: Independent chats are browsed from Chats;
   project-scoped chats are browsed inside their project. The header names which context
   is active, and Scope distinguishes project defaults from session-only overrides.
+- **G9** - Make report quality inspectable: show analysis/story coverage, desktop and
+  mobile captures, validation findings, visual review, exact build identity, and the
+  publication receipt in the primary product surface.
 
 ## 3. Non-goals
 
-- No artifacts layer work (parallel development line; Reports tab is its future home).
+- No analytical, storyboard, or visual-authoring logic in the UI. The UI presents
+  canonical contracts, evidence, review state, and allowed actions.
+- No generic artifact action that can bypass report review or manufacture a
+  `PUBLISHED` state.
 - No plan content-model changes — boilerplate sections stay (deferred by decision #8).
 - No dedicated notebook page; the notebook stays a chat-area experience.
 - No theming/dark-mode expansion beyond the token layer itself.
@@ -121,6 +143,9 @@ is a minority of the pixels. Full critique with code references:
 | U9 | "Limit what it can touch" | Datasets tab controls session data; Scope controls tools/skills/subagents/guardrails, with restriction badges on the rail |
 | U10 | "Start a chat without choosing a project" | Chats creates an independent session immediately, with no project defaults |
 | U11 | "Return to a chat inside a project" | The project lists only its own sessions; the chat header, Files, and Scope name the project context |
+| U12 | "Why is this report missing the strongest finding?" | Reports shows the approved findings, storyboard coverage, and explicit omissions before the visual report |
+| U13 | "Did anyone actually inspect this report?" | Desktop/mobile captures and hash-bound browser and visual-review findings render directly in the Reports surface |
+| U14 | "Publish the reviewed report" | One action publishes the exact approved HTML bytes and returns a receipt-backed shareable link |
 
 ## 5. Functional Requirements
 
@@ -182,6 +207,34 @@ is a minority of the pixels. Full critique with code references:
   their project-scoped sessions. The chat header carries an Independent or Project
   context chip; message column max-width ~1000px; one top-bar row.
 
+### 5.6 Reports
+
+- **FR-18** The Reports tab lists report work by canonical state:
+  `ANALYZING`, `ANALYSIS_READY`, `STORY_READY`, `REPORT_READY`, or `PUBLISHED`.
+  UI labels may be friendlier, but must not invent a `designed` tier or derive state
+  from tool names, filenames, or chat text.
+- **FR-19** Report detail shows the bound `AnalysisPackage`, `Storyboard`,
+  `ReportBuild`, and optional `PublishReceipt` identifiers and hashes. It displays
+  primary finding coverage, explicit omissions, evidence gaps, and storyboard beats
+  without requiring the user to open raw JSON.
+- **FR-20** `report_capture_visuals` and `report_review_visuals` results have a
+  dedicated renderer. Desktop/mobile and key-section captures load as first-class
+  images with viewport and SHA-256 metadata, full-size inspection, loading/error
+  states, and keyboard-accessible navigation. A path or hash string alone does not
+  count as rendered review evidence.
+- **FR-21** Browser validation and visual-review findings render beside the captures,
+  with pass/reject status and ownership. Analytical gaps link back to analysis,
+  editorial defects to storyboard, and presentation defects to visual authoring.
+- **FR-22** Publish is enabled only for an approved, non-stale `ReportBuild`.
+  `publish_report` stores the exact reviewed HTML and returns `PublishReceipt` plus a
+  shareable link. The UI never chains `publish_artifact` after report publication.
+- **FR-23** New analysis invalidates storyboard/build/review state; a storyboard
+  change invalidates the build; and an HTML-byte change invalidates captures and
+  review. The surface must show the stale dependency and the required repair stage.
+- **FR-24** Provider, authentication, browser, or review outages are operational
+  blockers. The UI offers retry and preserves the last valid stage; it never offers a
+  deterministic or lower-tier fallback as an equivalent final report.
+
 ## 6. Success metrics
 
 - Fixture-session rendered thread height reduced ≥ 70% vs current UI (collapsed state).
@@ -189,9 +242,17 @@ is a minority of the pixels. Full critique with code references:
 - Composer available 100% of wall-clock time during runs.
 - Plan review reachable in exactly one click from any state.
 - No `unknown` strings anywhere in the transcript for the fixture session.
+- 100% of required report captures render as inspectable images before approval or
+  publication can be presented as complete.
+- Zero published report links without a `PublishReceipt` whose HTML hash matches the
+  reviewed build.
+- Every primary analysis finding is either mapped to a storyboard beat or displayed
+  as an explicit omission.
 
 ## 7. Rollout
 
-Phased behind a `chat_v2` UI flag; phase order and exit criteria in
-[chat-redesign-spec.md §10](chat-redesign-spec.md). Old renderer removed at P5 after
-fixture parity holds for both a fresh session and a pre-migration persisted session.
+Phased behind a `chat_v2` UI flag and a temporary `report_pipeline_v2` compatibility
+flag; phase order and exit criteria are in
+[chat-redesign-spec.md §10](chat-redesign-spec.md). The old transcript renderer is
+removed after P5. Legacy report tiers, generic report publication, and path-only
+review rendering are removed after the report fixture passes end to end.

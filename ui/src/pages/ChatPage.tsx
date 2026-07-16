@@ -978,6 +978,19 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
         .dataclaw-session-panel .ant-btn-sm {
           font-size: 12px;
         }
+        .dataclaw-session-panel .dataclaw-report-picker .ant-select-selection-item,
+        .dataclaw-session-panel .dataclaw-report-picker .ant-select-selection-placeholder,
+        .dataclaw-session-panel .dataclaw-report-picker .ant-select-content {
+          font-size: 11px;
+        }
+        .dataclaw-session-panel .dataclaw-report-picker .ant-select-selector {
+          padding-inline: 8px !important;
+          font-size: 11px;
+        }
+        .dataclaw-session-panel .dataclaw-report-version .ant-select-selection-item,
+        .dataclaw-session-panel .dataclaw-report-version .ant-select-content {
+          font-size: 10.5px;
+        }
       `}</style>
       {/* Main chat area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
@@ -1200,7 +1213,16 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
           borderLeft: '1px solid var(--line)',
         }}>
           <div style={{ flex: '0 0 auto', minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, minHeight: 42, padding: '6px 10px 6px 14px', borderBottom: '1px solid var(--line)' }}>
-            <span style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--ink)', fontSize: 14, fontWeight: 650 }}>{panelTitle}</span>
+            <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex', alignItems: 'center', gap: 7, overflow: 'hidden' }}>
+              <span data-testid="session-panel-title" style={{ flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--ink)', fontSize: 14, fontWeight: 650 }}>{panelTitle}</span>
+              {sidebarTab === 'artifacts' && (
+                <span data-testid="report-panel-counts" style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+                  <span style={{ padding: '2px 6px', borderRadius: 9, background: 'var(--bg-soft)', color: 'var(--muted)', fontSize: 10, lineHeight: 1.35 }}>{reportCounts.published} published</span>
+                  {(reportCounts.scratch + scratchReports.length) > 0 && <span style={{ padding: '2px 6px', borderRadius: 9, background: 'var(--accent-soft)', color: 'var(--accent)', fontSize: 10, lineHeight: 1.35 }}>{reportCounts.scratch + scratchReports.length} scratch</span>}
+                </span>
+              )}
+            </div>
+            {sidebarTab === 'artifacts' && <Button type="text" size="small" icon={<ReloadOutlined />} onClick={() => setArtifactRefreshKey(key => key + 1)} aria-label="Refresh reports" style={{ flex: '0 0 auto', color: 'var(--muted)', paddingInline: 5 }} />}
             <Button type="text" size="small" onClick={() => { setPlanReaderExpanded(false); setSidebarCollapsed(true) }} aria-label="Close side panel" style={{ flex: '0 0 auto', color: 'var(--muted)' }}>×</Button>
           </div>
 

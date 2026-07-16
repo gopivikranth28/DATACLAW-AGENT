@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Button, Empty, Select, Spin, Tag, Tooltip } from 'antd'
-import { DownloadOutlined, ExportOutlined, FileDoneOutlined, ReloadOutlined } from '@ant-design/icons'
+import { Alert, Button, Empty, Select, Spin, Tag } from 'antd'
+import { DownloadOutlined, ExportOutlined } from '@ant-design/icons'
 import { API } from '../api'
 import { reportPreviewUrl } from './reportPreview'
 
@@ -137,8 +137,6 @@ export default function ArtifactPanel({
     () => artifacts.find(a => a.artifact_id === selectedId) || null,
     [artifacts, selectedId],
   )
-  const publishedArtifacts = useMemo(() => artifacts.filter(artifact => artifact.kind !== 'living_report'), [artifacts])
-  const livingReports = useMemo(() => artifacts.filter(artifact => artifact.kind === 'living_report'), [artifacts])
   const version = selectedVersion || selected?.latest_version || null
   const isLivingReport = selected?.kind === 'living_report'
   const selectedSessionId = selected?.session_id || sessionId || 'default'
@@ -184,17 +182,7 @@ export default function ArtifactPanel({
   if (!sessionId) return <Empty description="Select a session" image={Empty.PRESENTED_IMAGE_SIMPLE} />
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <FileDoneOutlined style={{ color: '#1677ff' }} />
-        <span style={{ fontSize: 13, fontWeight: 700, color: '#1f2937' }}>Reports</span>
-        <Tag style={{ marginLeft: 2, fontSize: 10 }}>{publishedArtifacts.length} published</Tag>
-        {(livingReports.length > 0 || scratchReports.length > 0) && <Tag color="blue" style={{ marginLeft: 0, fontSize: 10 }}>{livingReports.length + scratchReports.length} scratch</Tag>}
-        <Tooltip title="Refresh">
-          <Button size="small" type="text" icon={<ReloadOutlined />} loading={loading && artifacts.length > 0} onClick={load} style={{ marginLeft: 'auto' }} />
-        </Tooltip>
-      </div>
-
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {error ? (
         <Alert type="error" showIcon message="Artifact library unavailable" description={error} />
       ) : loading && artifacts.length === 0 ? (
@@ -203,14 +191,17 @@ export default function ArtifactPanel({
         <Empty description="No reports yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />
       ) : (
         <>
-          <div style={{ padding: '7px 9px', border: '1px solid #e7ecf3', borderRadius: 7, background: '#fafcff', fontSize: 11.5, color: '#667085', lineHeight: 1.45 }}>
-            Published reports are versioned and counted on the rail. Scratch reports are session drafts; review or publish them from here when they are ready.
+          <div style={{ padding: '6px 8px', border: '1px solid #e7ecf3', borderRadius: 7, background: '#fafcff', fontSize: 10.5, color: '#667085', lineHeight: 1.35 }}>
+            Published reports are versioned. Scratch reports are session drafts.
           </div>
 
           {artifacts.length > 0 && <Select
+            className="dataclaw-report-picker"
+            data-testid="report-picker"
+            size="small"
             value={selected?.artifact_id}
             onChange={onSelectArtifact}
-            style={{ width: '100%' }}
+            style={{ width: '100%', minWidth: 0 }}
             options={artifacts.map(a => ({
               value: a.artifact_id,
               label: a.kind === 'living_report'
@@ -220,32 +211,33 @@ export default function ArtifactPanel({
           />}
 
           {selected && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+              <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
                 {isLivingReport ? (
-                  <Tag color="green" style={{ margin: 0 }}>live</Tag>
+                  <Tag color="green" style={{ margin: 0, fontSize: 10 }}>live</Tag>
                 ) : (
                   <Select
+                    className="dataclaw-report-version"
                     size="small"
                     value={version || undefined}
                     onChange={setSelectedVersion}
-                    style={{ width: 120 }}
+                    style={{ width: 105 }}
                     options={[...(selected.versions || [])].reverse().map(v => ({
                       value: v.version,
                       label: v.label ? `v${v.version} · ${v.label}` : `v${v.version}`,
                     }))}
                   />
                 )}
-                <Button size="small" icon={<ExportOutlined />} href={artifactUrl} target="_blank">Open</Button>
-                {!isLivingReport && <Button size="small" icon={<DownloadOutlined />} href={exportUrl}>Export</Button>}
+                <Button size="small" icon={<ExportOutlined />} href={artifactUrl} target="_blank" style={{ height: 28, paddingInline: 9, fontSize: 11 }}>Open</Button>
+                {!isLivingReport && <Button size="small" icon={<DownloadOutlined />} href={exportUrl} style={{ height: 28, paddingInline: 9, fontSize: 11 }}>Export</Button>}
               </div>
 
               {selected.description && (
-                <div style={{ fontSize: 12, color: '#667085', lineHeight: 1.5 }}>{selected.description}</div>
+                <div data-testid="report-description" title={selected.description} style={{ fontSize: 10.5, color: '#667085', lineHeight: 1.4 }}>{selected.description}</div>
               )}
               {selected.source_path && (
-                <div style={{ fontSize: 11, color: '#98a2b3', wordBreak: 'break-all' }}>
-                  <code>{selected.source_path}</code>
+                <div title={selected.source_path} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 9.5, color: '#98a2b3' }}>
+                  <code style={{ fontSize: 'inherit' }}>{selected.source_path}</code>
                 </div>
               )}
 

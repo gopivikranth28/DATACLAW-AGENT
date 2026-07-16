@@ -103,6 +103,7 @@ test('publishes a storyboard-backed interactive report into the Artifacts panel'
   await page.getByRole('button', { name: 'Reports' }).click()
 
   await expect(page.getByText(`${title} · v1`)).toBeVisible()
+  await expect(page.getByTestId('report-description')).toHaveCSS('font-size', '10.5px')
   await expect(page.locator('[data-testid="artifact-preview-frame"]')).toBeVisible()
 
   const artifactShell = page.frameLocator('[data-testid="artifact-preview-frame"]')

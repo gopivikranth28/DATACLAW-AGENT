@@ -11,6 +11,14 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _without_openclaw_directory_marker(text: str) -> str:
+    lines = [
+        line for line in text.splitlines()
+        if not line.startswith("<!-- Canonical OpenClaw skill directory:")
+    ]
+    return "\n".join(lines).replace("---\n\n\n", "---\n\n").rstrip() + "\n"
+
+
 def test_structured_eda_skill_is_bundled_and_parseable():
     text = _read(SKILL_LIBRARY / "structured_eda.md")
 
@@ -71,7 +79,7 @@ def test_openclaw_dataclaw_skill_routes_eda_to_structured_eda():
         / "openclaw-plugins"
         / "dataclaw"
         / "skills"
-        / "dataclaw-data-science"
+        / "dataclaw"
         / "SKILL.md"
     )
 
@@ -80,7 +88,7 @@ def test_openclaw_dataclaw_skill_routes_eda_to_structured_eda():
     assert "Use `data_profiling` only for a compact quick profile" in bundled_skill
     assert "dataclaw_request_analysis_review" in bundled_skill
     assert "report_publish" in bundled_skill
-    assert bundled_skill == _read(SKILL_LIBRARY / "dataclaw.md")
+    assert _without_openclaw_directory_marker(bundled_skill) == _read(SKILL_LIBRARY / "dataclaw.md")
 
 
 def test_openclaw_bundles_structured_eda_skill():
@@ -90,8 +98,8 @@ def test_openclaw_bundles_structured_eda_skill():
         / "openclaw-plugins"
         / "dataclaw"
         / "skills"
-        / "structured-eda"
+        / "structured_eda"
         / "SKILL.md"
     )
 
-    assert bundled_structured_eda == canonical_structured_eda
+    assert _without_openclaw_directory_marker(bundled_structured_eda) == canonical_structured_eda

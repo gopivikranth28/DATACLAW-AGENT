@@ -16,6 +16,14 @@ def _has(text: str, phrase: str) -> bool:
     return " ".join(phrase.split()) in " ".join(text.split())
 
 
+def _without_openclaw_directory_marker(text: str) -> str:
+    lines = [
+        line for line in text.splitlines()
+        if not line.startswith("<!-- Canonical OpenClaw skill directory:")
+    ]
+    return "\n".join(lines).replace("---\n\n\n", "---\n\n").rstrip() + "\n"
+
+
 def test_artifacts_skill_is_bundled_and_parseable():
     text = _read(SKILL_LIBRARY / "artifacts.md")
 
@@ -149,11 +157,11 @@ def test_openclaw_bundles_report_design_skill():
         / "openclaw-plugins"
         / "dataclaw"
         / "skills"
-        / "report-design"
+        / "report_design"
         / "SKILL.md"
     )
 
-    assert bundled_report_design == canonical_report_design
+    assert _without_openclaw_directory_marker(bundled_report_design) == canonical_report_design
 
 
 def test_openclaw_plugin_contract_includes_report_designer_tool():
@@ -168,7 +176,7 @@ def test_openclaw_data_science_routes_final_reports_to_artifacts():
         / "openclaw-plugins"
         / "dataclaw"
         / "skills"
-        / "dataclaw-data-science"
+        / "dataclaw"
         / "SKILL.md"
     )
 

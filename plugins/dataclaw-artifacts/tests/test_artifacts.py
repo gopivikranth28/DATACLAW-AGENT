@@ -527,16 +527,22 @@ def test_plotly_runtime_prefers_ui_vendored_bundle(tmp_path, monkeypatch):
     bundle.parent.mkdir(parents=True)
     bundle.write_text("window.Plotly = {newPlot: function(){}};", encoding="utf-8")
 
-    monkeypatch.setattr("dataclaw_artifacts.wrapper._repo_root", lambda: tmp_path)
-    plotly_runtime_source.cache_clear()
-    plotly_runtime_js.cache_clear()
+    try:
+        monkeypatch.setattr("dataclaw_artifacts.wrapper._repo_root", lambda: tmp_path)
+        plotly_runtime_source.cache_clear()
+        plotly_runtime_js.cache_clear()
 
-    source = plotly_runtime_source()
-    js = plotly_runtime_js()
+        source = plotly_runtime_source()
+        js = plotly_runtime_js()
 
-    assert source["kind"] == "ui_vendored"
-    assert source["path"] == str(bundle)
-    assert "window.Plotly" in js
+        assert source["kind"] == "ui_vendored"
+        assert source["path"] == str(bundle)
+        assert "window.Plotly" in js
+    finally:
+        # Do not leak the fake bundle into later report-renderer tests after
+        # pytest restores _repo_root. Both functions are process-wide caches.
+        plotly_runtime_source.cache_clear()
+        plotly_runtime_js.cache_clear()
 
 
 def test_artifact_caps_are_raised_for_runtime_exports():

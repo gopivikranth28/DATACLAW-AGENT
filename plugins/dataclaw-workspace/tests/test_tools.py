@@ -1235,7 +1235,7 @@ async def test_report_add_section_builds_live_html_report(cfg):
     assert "data-dc-selection-detail" in html
     assert "aria-pressed=\"false\"" in html
     assert "r-empty-state" in html
-    assert "Plotly.newPlot" in html
+    assert "Plotly.react" in html
     assert "Plotly is loaded by the DataClaw artifact runtime" not in html
     assert "DATACLAW_REPORT_SECTIONS_START" in html
     assert "r-story-nav" in html
@@ -1307,7 +1307,7 @@ async def test_runtime_smoke_emits_passing_semantic_review_for_a_designed_report
     # Browser capability is optional in this plugin, but a browser-enabled
     # environment must expose the deterministic semantic result as well as its
     # screenshot and layout checks.
-    assert smoke["status"] in {"passed", "skipped"}
+    assert smoke["status"] in {"passed", "skipped"}, smoke
     if smoke["status"] == "passed":
         semantic = smoke["semantic_visual"]
         assert semantic["visual_semantic_schema"] == 1
@@ -1342,11 +1342,15 @@ async def test_runtime_smoke_honors_a_documented_desktop_layout_exception(cfg):
         }],
     )
     smoke = await workspace_tools._run_report_runtime_smoke(Path(designed["html_path"]))
-    assert smoke["status"] in {"passed", "skipped"}
+    assert smoke["status"] in {"passed", "skipped"}, smoke
     if smoke["status"] == "passed":
         assert not [
             check for check in smoke["checks"]
-            if check["check"] in {"desktop_composition_width", "desktop_composition_measure"}
+            if check["check"] in {
+                "desktop_composition_width",
+                "desktop_composition_measure",
+                "interpretation_rail_balance",
+            }
         ]
 
 

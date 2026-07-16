@@ -40,7 +40,7 @@ The report workflow is HTML-first. DOCX conversion remains best-effort and shoul
 
 Chat is organized around sessions. **Independent chats** are personal sessions listed outside a project; project chats are listed only inside their project. The focused chat view keeps the transcript and composer centered, groups agent work into concise timestamped notebook-style logs, and adapts the composer while a run, queue, or plan approval is active.
 
-The session rail provides Plans, Files, Reports, Datasets, Experiments, and Scope. Reports distinguish durable, versioned published artifacts from session-scoped scratch drafts; Files retain session/project workspace grouping and can be sorted by name or size. The supporting [critique and decision log](docs/ui-upgrade/chat-redesign.md), [PRD](docs/ui-upgrade/chat-redesign-prd.md), [build specification](docs/ui-upgrade/chat-redesign-spec.md), and [clickable mock](docs/ui-upgrade/mockups/chat-redesign.html) document the design and implementation rationale.
+The session rail provides Plans, Files, Reports, Datasets, Experiments, and Scope. Reports distinguish durable, versioned published artifacts from session-scoped scratch drafts. In an opened independent or project session, the Reports panel keeps published/scratch counts beside its title, uses compact report and version selectors, and previews the selected report in place; it does not alter the Independent chats directory. Files retain session/project workspace grouping and can be sorted by name or size. The supporting [critique and decision log](docs/ui-upgrade/chat-redesign.md), [PRD](docs/ui-upgrade/chat-redesign-prd.md), [build specification](docs/ui-upgrade/chat-redesign-spec.md), and [clickable mock](docs/ui-upgrade/mockups/chat-redesign.html) document the design and implementation rationale.
 
 ## Quick Start
 
@@ -433,12 +433,16 @@ Do not expose Dataclaw to untrusted networks without adding authentication, TLS,
 
 ```bash
 uv sync --extra dev
-uv run pytest tests/ -v                          # core tests
-uv run pytest plugins/dataclaw-data/tests/ -v    # data plugin
-uv run pytest plugins/dataclaw-notebooks/tests/  # notebooks
-uv run pytest plugins/dataclaw-eda/tests/ plugins/dataclaw-analysis-review/tests/ -v
-uv run pytest plugins/dataclaw-workspace/tests/ -v
+uv run pytest                                    # full Python suite
+
+cd ui
+npm run build                                    # TypeScript + production bundle
+npm run test:e2e                                 # Playwright chat/report flows
 ```
+
+The repository-wide pytest configuration uses importlib mode so plugin test modules
+with matching filenames are collected independently. The end-to-end suite covers both
+an independent session's Reports rail and the published report artifact flow.
 
 ### Rebuild the frontend
 

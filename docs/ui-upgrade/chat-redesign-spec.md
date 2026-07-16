@@ -1,4 +1,4 @@
-# Chat Console Redesign - Build Spec
+# Chat Console and Report Review - Build Spec
 
 Companion to [chat-redesign-prd.md](chat-redesign-prd.md). Reference implementation of
 every visual and interaction decision: [mockups/chat-redesign.html](mockups/chat-redesign.html)
@@ -34,6 +34,10 @@ defaults to tune, not constants to re-litigate.
 - Topbar: back · session title · context chip (Independent | Project name) · (spacer)
   · plan pill · Auto · session actions. Datasets, Experiments, and Scope open from the right rail.
 - Panel width 400px (resizable 360–560 later; not in v1). Rail is permanent.
+- Report list and status summary use the 400px panel. Selecting a report opens a
+  `ReportReviewView` over the console at `min(1120px, calc(100vw - rail - 32px))`;
+  on ≤1160px it becomes a full console sheet. Full-page captures must never be
+  squeezed into the ordinary side panel.
 
 ### 1.1 Session ↔ project boundary
 
@@ -98,6 +102,11 @@ success states in the transcript wear no color at all.
 | update_plan | `Updated plan — {summary of step changes}` |
 | delegate_to_subagent | `Delegated to {name} · {k} turns` (expand → conversation, current renderer) |
 | display_* | not a step line — reader-facing evidence (see §4) |
+| finalize_analysis_package | `Finalized analysis package — {n} findings · review {status}` |
+| create_report_storyboard | `Built report story — {n} beats · {k} explicit omissions` |
+| author_visual_report | `Authored visual report — {desktop/mobile capture status}` |
+| review_visual_report | `Reviewed visual report — {approved|rejected|blocked}` |
+| publish_report | `Published report {title} · v{version}` only when a valid `PublishReceipt` is returned; otherwise show the concrete blocker |
 | report_add_section | Conversational report mutation inside `Worked`: `Set the report opening: {title} — {subtitle}`, `Added the headline metrics — {labels}`, or `Added an interpreted chart: {title} — {caption}`. Adjacent identical mutations collapse to one line with a consolidation note. |
 | mlflow log | `Logged run {name} to MLflow — {headline metric}` |
 | *(unknown)* | Humanize the tool name and attach its best available target: `Read|Created|Updated|… {object} — {file|dataset|query|URL}`; final fallback is `Completed {human-readable tool name}`, never `Ran a tool` |
@@ -126,7 +135,9 @@ Shared rail: 58px gutter + 12px gap; all assistant content aligns to it.
   - `display_image` → image, max-height 480px
   - DataFrame/table HTML → styled table capped at ~10 rows + `{k} more rows · open
     full table — {path}` footer; wide tables scroll inside the cell body only
-  - `report_add_section` → one-line summary + Reports rail badge increment
+  - reporting lifecycle tools → one-line status summary + Reports rail badge/state
+    update; capture and review images render in `ReportReviewView`, not as notebook
+    output cells
 - Every chart/table cell carries a one-line caption slot (stat + caveat, per
   `skill-library/visualization.md`).
 
@@ -199,25 +210,131 @@ workspace-snapshot design.
   place. Restriction counts appear on the relevant rail tab. Settings-vs-review nuance:
   editing here is allowed; content approvals are not.
 
-## 9. Removals checklist
+## 9. Reports
+
+The Reports rail is the primary inspection and publication surface for the canonical
+[analysis → storyboard → visual report pipeline](../report-authoring-system-v2.md).
+The UI does not reconstruct state from a sequence of tool calls. It consumes one
+session-scoped report summary endpoint and one detail endpoint.
+
+### 9.1 UI contract
+
+The detail response has four nullable, monotonic records:
+
+```ts
+interface ReportDetail {
+  reportId: string
+  state: 'ANALYZING' | 'ANALYSIS_READY' | 'STORY_READY' | 'REPORT_READY' | 'PUBLISHED'
+  analysisPackage?: AnalysisPackageSummary
+  storyboard?: StoryboardSummary
+  build?: ReportBuildSummary
+  receipt?: PublishReceiptSummary
+  blocker?: { stage: 'analysis' | 'story' | 'visual' | 'publish'; code: string; message: string }
+}
+```
+
+Every summary carries its stable id and SHA-256. The API supplies dependency and stale
+state explicitly; the client does not compare timestamps or parse filenames to infer
+validity.
+
+Until the canonical endpoint ships, a compatibility adapter may list existing living
+reports and artifacts, but it must label them `legacy` and cannot synthesize
+`REPORT_READY`, review approval, or a receipt.
+
+### 9.2 Report list
+
+- Row: title · canonical state · last valid stage · updated time · blocker badge.
+- Sort: blocked/review-needed first, active next, published last by update time.
+- Rail badge counts reports needing action, not all historical artifacts.
+- `designed`, `authored`, `scratch`, and `living` are compatibility labels, not v2
+  lifecycle states.
+- Selecting a row opens `ReportReviewView`; Open published report is a secondary
+  direct action only when a receipt exists.
+
+### 9.3 Review view
+
+The wide review view has four compact tabs with shared identity header:
+
+1. **Analysis** — goal, primary findings, support status, caveats, and analytical
+   review decision.
+2. **Story** — thesis, ordered beats, finding coverage, explicit omissions, evidence
+   gaps, and editorial review decision.
+3. **Visual review** — report preview, desktop/mobile/key-section captures,
+   deterministic browser findings, visual-review findings, and repair ownership.
+4. **Publication** — exact HTML hash, capture hashes, receipt, version, and shareable
+   link.
+
+The identity header always shows report state and the short hashes of the analysis
+package, storyboard, and build. Clicking a short hash exposes the full copyable value.
+
+### 9.4 Capture renderer
+
+- Recognize `report_capture_visuals` and `report_review_visuals` payloads through a
+  typed renderer, never the generic JSON viewer.
+- Fetch images through authenticated session-scoped artifact URLs; do not load local
+  filesystem paths in the browser.
+- Show viewport tabs with dimensions and SHA-256. Fit the image to width initially;
+  provide 100% zoom and open-full-size actions.
+- A capture is inspectable only after image load succeeds. Error and retry states keep
+  approval/publication unavailable.
+- Review findings link to a capture and, when present, a region or storyboard beat.
+  Selecting a finding focuses that evidence.
+- Image `alt` describes report title, viewport, and review role; hashes are metadata,
+  not alternative text.
+
+### 9.5 Actions and invalidation
+
+- Presentation defects offer **Repair visual report**; editorial defects offer
+  **Revise story**; analytical gaps offer **Return to analysis**. Each action invokes
+  the owning stage and does not mutate downstream contracts locally.
+- Provider/auth/browser failures show **Retry** and preserve the last valid state.
+  There is no “publish draft”, tier downgrade, or deterministic fallback action.
+- **Publish report** is enabled only in `REPORT_READY`. It calls `publish_report`
+  once and consumes the returned `PublishReceipt`; it never follows with
+  `publish_artifact`.
+- New analysis clears the visible storyboard/build/receipt bindings, storyboard
+  revision clears build/receipt, and HTML-byte revision clears captures/review/receipt
+  as directed by the server response.
+- After publication, the receipt card is the source of truth for artifact id, version,
+  HTML hash, publication time, and shareable URL.
+
+### 9.6 Component boundary
+
+```text
+ArtifactPanel
+  ReportList
+  ReportReviewView
+    AnalysisPackageView
+    StoryboardView
+    ReportCaptureGallery
+    ReportReviewFindings
+    PublishReceiptView
+```
+
+`ArtifactPanel` may continue to host legacy non-report artifacts during migration.
+Canonical report state and actions live in the report components and typed API client,
+not in `ChatPage.tsx` tool-result scans.
+
+## 10. Removals checklist
 
 `ProjectPage` tab strip · standalone Alert · `PendingPlanBanner` · plan popover +
 auto-focus effect (`ChatPage` ~L314-323) · per-call `ToolCallCard` chrome · five
 filter modals · `react-ipynb-renderer` from thread path · `AUTO_EXPAND_TOOLS` (replaced
 by evidence allowlist) · `Plan 1/Plan 2` buttons in `PlanPanel`.
 
-## 10. Phases & exit criteria
+## 11. Phases & exit criteria
 
 | Phase | Scope | Exit criteria |
 |---|---|---|
 | P0 | tokens.css; swap literals in touched files | no visual change; snapshot parity |
 | P1 | turn grouping + step lines + verb map + unknown fix; evidence allowlist; md/Out cells; capped blocks | fixture renders per PRD gate; height metric met |
-| P2 | edge rail + panel (Plans list/doc, Files, Experiments, Reports); pill; syslines; remove banner/popover | plan review in 1 click; no plan UI in thread except syslines |
+| P2 | edge rail + panel (Plans list/doc, Files, Experiments, legacy Reports list); pill; syslines; remove banner/popover | plan review in 1 click; no plan UI in thread except syslines |
 | P3 | queue incl. pause/resume + session API; provenance footers + ↓ output links | queued fixture dispatches FIFO on natural end only; Stop holds the queue; every evidence cell footers its cell |
 | P4 | Scope tab; delete modals; rail state badge | scope edits persist; amber rail badge on restriction |
 | P5 | session-context navigation, chrome cleanup, removals checklist, delete `chat_v2` flag | independent sessions are reachable from Chats; project pages list their own sessions; no global interleaved session list; both fixtures pass |
+| P6 | typed report API adapter; wide review view; analysis/story coverage; capture renderer; review findings; receipt-backed publication; legacy report cutover | report fixture passes; images are inspectable in the main UI; stale evidence blocks publish; one `publish_report` call returns the shareable link; no generic report publication remains |
 
-## 11. Accessibility & interaction
+## 12. Accessibility & interaction
 
 - All disclosure affordances are buttons with `aria-expanded`; step rows reachable by
   keyboard (Enter/Space toggle). Scope and Auto use keyboard-operable switches; the
@@ -228,8 +345,11 @@ by evidence allowlist) · `Plan 1/Plan 2` buttons in `PlanPanel`.
 - `prefers-reduced-motion`: no pulse/spin animation, instant expand.
 - Color is never the only signal: errored steps carry the error text; guardrail modes
   carry tags; plan status has text tags beside dots.
+- Capture tabs, findings, and report-stage tabs use roving keyboard focus. Full-size
+  capture inspection traps focus and returns it to the invoking thumbnail on close.
+  Report status, blockers, and review decisions always include text.
 
-## 12. Open questions (tracked, not blocking)
+## 13. Open questions (tracked, not blocking)
 
 1. Auto toggle: stays in topbar (flip frequency) vs. Scope group with its settings —
    currently topbar.
@@ -238,3 +358,5 @@ by evidence allowlist) · `Plan 1/Plan 2` buttons in `PlanPanel`.
    per-turn and is not persisted.
 4. Multiple pending plans at once: pill reads `Plans · {k} need review` → list
    filtered to pending (plain list acceptable v1).
+5. Cross-version visual diff is not required for v2; the receipt/version selector
+   preserves enough identity to add it later without changing the report contracts.
