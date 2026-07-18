@@ -33,6 +33,7 @@ Release 3 adds a governed analysis-to-report workflow on top of the baseline pla
 - Added: `structured_eda`, `insight_validation`, `analysis_review`, `artifacts`, `report_design`, `visualization`, and `dashboarding`.
 - Updated: `dataclaw_data_science` routes governed EDA, review, report, and artifact work; `data_profiling` remains the compact profile path and points goal-directed exploration to `structured_eda`.
 - These skills are installed from `skill-library/` and can be synchronized to the Dataclaw OpenClaw extension separately from the tool manifest.
+- The **Skills page** was reworked into a two-column master–detail layout: the left column lists skills — grouped into **My Skills** (with `Custom` / `From Library` badges) and the not-yet-installed **Skill Library**, each library row carrying an inline **Install** button — while the right column renders the selected skill's full write-up. New skills can be authored inline or imported from a `.md` file.
 
 The report workflow is HTML-first. `report_design_report` creates a storyboard-backed report, `report_review_visuals` records browser captures and a named review decision when required, `report_publish` creates the publish receipt, and `publish_artifact` versions the approved HTML for session use and export.
 
@@ -248,10 +249,13 @@ dataclaw/
     plugins/                             # Plugin system (discovery, registry)
 
   plugins/                               # Installable plugins
-    dataclaw-workspace/                  #   File I/O + shell execution
+    dataclaw-workspace/                  #   File I/O + shell execution + storyboard reports
     dataclaw-data/                       #   Dataset registry + DuckDB querying
     dataclaw-notebooks/                  #   Jupyter notebook management (isolated venvs)
-    dataclaw-plans/                      #   Plan proposals + MLflow tracking
+    dataclaw-eda/                        #   Evidence-backed EDA hypothesis/finding ledger
+    dataclaw-analysis-review/            #   Deterministic analysis review + review gate
+    dataclaw-artifacts/                  #   Session-scoped, versioned HTML artifacts
+    dataclaw-plans/                      #   Plan proposals + MLflow tracking + validation gates
     dataclaw-projects/                   #   Project management
     dataclaw-browser/                    #   AI browser automation (feature-flagged)
     dataclaw-openclaw/                   #   OpenClaw agent bridge
@@ -274,10 +278,13 @@ Plugins are installed via pip and auto-discovered at startup:
 
 | Plugin | Tools | Routes | Key Dependencies |
 |---|---|---|---|
-| `dataclaw-workspace` | 6 (file I/O, shell exec) | — | stdlib |
+| `dataclaw-workspace` | 11 (file I/O, shell exec, report build/design/review/publish/add-section) | — | stdlib |
 | `dataclaw-data` | 6 (list, profile, preview, query, describe, docs) | `/api/data/*` | duckdb |
-| `dataclaw-notebooks` | 13 (open, close, read, edit, execute, etc.) | `/api/notebooks` | nbformat, jupyter_client |
-| `dataclaw-plans` | 5 (propose, update, list, get, mlflow) | `/api/plans/*`, `/api/mlflow/*` | mlflow |
+| `dataclaw-notebooks` | 14 (open, close, read, edit, execute, display_metric, etc.) | `/api/notebooks` | nbformat, jupyter_client |
+| `dataclaw-eda` | 8 (propose/update/list hypotheses, record/read/list/supersede findings, summarize readiness) | `/api/eda/*` | stdlib |
+| `dataclaw-analysis-review` | 5 (request review, list/resolve findings, review gate, list runs) | `/api/analysis-review/*` | stdlib |
+| `dataclaw-artifacts` | 6 (publish, read, list, export, delete, report_note) | `/api/artifacts/*` | stdlib |
+| `dataclaw-plans` | 6 (propose, update, list, get, mlflow, accept_gate_risk) | `/api/plans/*`, `/api/mlflow/*` | mlflow |
 | `dataclaw-projects` | — | `/api/projects/*` | — |
 | `dataclaw-browser` | 1 (browser_use) + browser sub-agent | — | browser-use |
 | `dataclaw-openclaw` | — (replaces agent provider) | `/api/openclaw/*`, `/api/tools/{name}/call` | httpx |
