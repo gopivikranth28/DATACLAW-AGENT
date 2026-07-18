@@ -15,7 +15,16 @@ https://github.com/user-attachments/assets/25dc8181-bd14-41ad-a81c-5f9fe108e30a
 
 ## Release 3 updates
 
-Release 3 adds a governed analysis-to-report workflow on top of the baseline platform: structured EDA and analysis review create durable evidence, artifacts version the resulting HTML, and Chat keeps independent and project sessions separate. In an opened session, the Reports rail distinguishes published artifacts from scratch drafts, keeps their counts beside the title, provides compact report/version controls, and previews the selected report in place. It does not change the Independent chats directory.
+Release 3 turns Dataclaw's analysis into a **governed, evidence-first workflow** instead of a chat that emits charts. The baseline platform could explore data and produce a report, but nothing tied a claim in that report back to the analysis that produced it, and nothing stopped an unreviewed or unsupported finding from shipping. Release 3 closes that gap end to end: exploration is recorded as durable evidence, that evidence is reviewed against explicit gates before it can be called "ready," and only approved output is versioned into a shareable artifact.
+
+Concretely, the release introduces four ideas that build on one another:
+
+- **A durable EDA ledger.** Exploration no longer lives only in notebook scrollback. Hypotheses and findings are proposed, updated, and recorded as first-class entries (`dataclaw-eda`), each anchored to the notebook cells or structured evidence that support it. `summarize_eda_readiness` reports whether the ledger is coherent enough to move forward.
+- **A deterministic review gate.** Before a high-risk or EDA-like step is marked `ready_for_validation`, it can be routed through `dataclaw-analysis-review`, which audits coherence between claims, ledger state, and evidence anchors. Reviews raise checklist findings that must be resolved — or explicitly `accepted_with_rationale` when the user knowingly accepts the risk — and the gate stays `unknown` when a scope requires a sub-agent reviewer that has not run.
+- **Versioned artifacts.** Approved HTML deliverables (reports, dashboards, model cards, living-report notes) are published as session-scoped, versioned artifacts (`dataclaw-artifacts`) that can be re-read, exported, and shared without losing their history.
+- **A storyboard-first report path.** Final reports are composed deliberately — `report_design_report` builds a storyboard, `report_review_visuals` captures and records a named review decision, and `report_publish` writes a publish receipt — rather than appending chart dumps to a page.
+
+On the UI side, Chat keeps independent and project sessions separate. In an opened session, the Reports rail distinguishes published artifacts from scratch drafts, keeps their counts beside the title, provides compact report/version controls, and previews the selected report in place. It does not change the Independent chats directory.
 
 ### Plugins and tools added or expanded in Release 3
 
@@ -36,6 +45,16 @@ Release 3 adds a governed analysis-to-report workflow on top of the baseline pla
 - The **Skills page** was reworked into a two-column master–detail layout: the left column lists skills — grouped into **My Skills** (with `Custom` / `From Library` badges) and the not-yet-installed **Skill Library**, each library row carrying an inline **Install** button — while the right column renders the selected skill's full write-up. New skills can be authored inline or imported from a `.md` file.
 
 The report workflow is HTML-first. `report_design_report` creates a storyboard-backed report, `report_review_visuals` records browser captures and a named review decision when required, `report_publish` creates the publish receipt, and `publish_artifact` versions the approved HTML for session use and export.
+
+**How the pieces fit together (typical flow):**
+
+1. **Explore** — `structured_eda` runs goal-directed analysis and records hypotheses and findings into the `dataclaw-eda` ledger, each anchored to notebook evidence.
+2. **Validate** — `insight_validation` recomputes and pressure-tests a claim before it is recorded as a confirmed finding.
+3. **Review** — `request_analysis_review` opens a deterministic gate over the plan step or session; checklist findings are resolved (or accepted with a recorded rationale) until the gate clears.
+4. **Design** — `report_design` composes a storyboard-backed report from the confirmed findings, aggregate assets, and methodology.
+5. **Publish** — `report_publish` records the publish receipt and `publish_artifact` versions the approved HTML into a session-scoped artifact that can be previewed in the Reports rail, exported, or synced to OpenClaw.
+
+Each stage leaves an auditable trail, so a published report can be traced back through its review gate to the specific findings and notebook cells that support it.
 
 ## Quick Start
 
