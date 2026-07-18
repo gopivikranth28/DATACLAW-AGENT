@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Button, Card, Empty, Input, Modal, Popconfirm, Tabs, Tag, message } from 'antd'
+import { Button, Empty, Input, Modal, Popconfirm, Tag, Tooltip, message } from 'antd'
 import { PlusOutlined, UploadOutlined, EditOutlined, DeleteOutlined, DownloadOutlined,
+         CheckCircleOutlined, AppstoreOutlined, FolderOpenOutlined,
          BoldOutlined, ItalicOutlined, OrderedListOutlined, UnorderedListOutlined } from '@ant-design/icons'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
@@ -24,6 +25,8 @@ interface LibrarySkill {
   body?: string
   installed: boolean
 }
+
+type Selection = { kind: 'my' | 'library'; id: string } | null
 
 // ---------------------------------------------------------------------------
 // Toolbar
@@ -109,18 +112,111 @@ function SkillEditor({ value, onChange }: { value: string; onChange: (md: string
 }
 
 // ---------------------------------------------------------------------------
+// Read-only rendered skill body (TipTap, editable: false)
+// ---------------------------------------------------------------------------
+
+function SkillBody({ value }: { value: string }) {
+  const editor = useEditor({
+    editable: false,
+    extensions: [StarterKit, Markdown],
+    content: value,
+  }, [value])
+
+  if (!value?.trim()) {
+    return <div style={{ color: '#999', fontStyle: 'italic' }}>No instructions provided.</div>
+  }
+
+  return (
+    <div className="skill-body-render" style={{ fontSize: 14, lineHeight: 1.6, color: '#262626' }}>
+      <EditorContent editor={editor} />
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Left-hand list row
+// ---------------------------------------------------------------------------
+
+function SkillRow({
+  title, description, selected, badge, action, onClick,
+}: {
+  title: string
+  description?: string
+  selected: boolean
+  badge?: React.ReactNode
+  action?: React.ReactNode
+  onClick: () => void
+}) {
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 8,
+        padding: '10px 12px',
+        borderRadius: 8,
+        cursor: 'pointer',
+        border: '1px solid',
+        borderColor: selected ? '#1677ff' : '#f0f0f0',
+        background: selected ? '#e6f4ff' : '#fff',
+        transition: 'background 0.12s, border-color 0.12s',
+      }}
+    >
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontWeight: 500, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {title}
+          </span>
+          {badge}
+        </div>
+        {description && (
+          <div style={{
+            fontSize: 12, color: '#8c8c8c', marginTop: 2,
+            overflow: 'hidden', textOverflow: 'ellipsis',
+            display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+          }}>
+            {description}
+          </div>
+        )}
+      </div>
+      {action && <div onClick={e => e.stopPropagation()} style={{ flexShrink: 0 }}>{action}</div>}
+    </div>
+  )
+}
+
+function SectionHeader({ icon, label, count }: { icon: React.ReactNode; label: string; count: number }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 6,
+      padding: '4px 4px', marginTop: 4,
+      fontSize: 11, fontWeight: 600, letterSpacing: 0.4, textTransform: 'uppercase', color: '#8c8c8c',
+    }}>
+      {icon}
+      <span>{label}</span>
+      <span style={{ color: '#bfbfbf', fontWeight: 500 }}>{count}</span>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
 export default function SkillsPage() {
   const [skills, setSkills] = useState<Skill[]>([])
+  const [librarySkills, setLibrarySkills] = useState<LibrarySkill[]>([])
+
+  const [selection, setSelection] = useState<Selection>(null)
+  const [detail, setDetail] = useState<(Skill & LibrarySkill) | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+
+  // Edit modal
   const [editing, setEditing] = useState<Skill | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
 
-  // Library
-  const [librarySkills, setLibrarySkills] = useState<LibrarySkill[]>([])
-  const [previewSkill, setPreviewSkill] = useState<LibrarySkill | null>(null)
-  const [previewOpen, setPreviewOpen] = useState(false)
+  // Install in-flight
+  const [installing, setInstalling] = useState<string | null>(null)
 
   // OpenClaw sync
   const [openclawEnabled, setOpenclawEnabled] = useState(false)
@@ -150,17 +246,31 @@ export default function SkillsPage() {
     }).catch(() => {})
   }, [])
 
+  // Load the detail for the current selection
+  const selectSkill = useCallback(async (sel: Selection) => {
+    setSelection(sel)
+    setDetail(null)
+    if (!sel) return
+    setDetailLoading(true)
+    try {
+      const url = sel.kind === 'my' ? `${API}/skills/${sel.id}` : `${API}/skill-library/${sel.id}`
+      const res = await fetch(url)
+      if (res.ok) setDetail(await res.json())
+    } catch {} finally {
+      setDetailLoading(false)
+    }
+  }, [])
+
   const openNew = () => {
     setEditing({ id: '', name: '', description: '', body: '' })
     setModalOpen(true)
   }
 
-  const openEdit = async (skill: Skill) => {
+  const openEdit = async (id: string) => {
     try {
-      const res = await fetch(`${API}/skills/${skill.id}`)
+      const res = await fetch(`${API}/skills/${id}`)
       if (res.ok) {
-        const full = await res.json()
-        setEditing(full)
+        setEditing(await res.json())
         setModalOpen(true)
       }
     } catch {}
@@ -220,7 +330,8 @@ export default function SkillsPage() {
       if (res.ok) {
         message.success(isNew ? 'Skill created' : 'Skill updated')
         setModalOpen(false)
-        loadSkills()
+        await loadSkills()
+        selectSkill({ kind: 'my', id: skillId })
         if (openclawEnabled) {
           setPendingSyncId(skillId)
           setSyncModalOpen(true)
@@ -238,6 +349,7 @@ export default function SkillsPage() {
       const res = await fetch(`${API}/skills/${id}`, { method: 'DELETE' })
       if (res.ok) {
         message.success('Skill deleted')
+        if (selection?.kind === 'my' && selection.id === id) selectSkill(null)
         loadSkills()
         loadLibrarySkills()
         if (openclawEnabled) {
@@ -249,12 +361,14 @@ export default function SkillsPage() {
   }
 
   const installLibrarySkill = async (skillId: string) => {
+    setInstalling(skillId)
     try {
       const res = await fetch(`${API}/skill-library/${skillId}/install`, { method: 'POST' })
       if (res.ok) {
         message.success('Skill installed')
-        loadSkills()
-        loadLibrarySkills()
+        await Promise.all([loadSkills(), loadLibrarySkills()])
+        // Refresh the detail so the Install button flips to Installed
+        if (selection?.kind === 'library' && selection.id === skillId) selectSkill(selection)
         if (openclawEnabled) {
           setPendingSyncId(skillId)
           setSyncModalOpen(true)
@@ -265,17 +379,9 @@ export default function SkillsPage() {
       }
     } catch {
       message.error('Install failed')
+    } finally {
+      setInstalling(null)
     }
-  }
-
-  const previewLibrarySkill = async (skill: LibrarySkill) => {
-    try {
-      const res = await fetch(`${API}/skill-library/${skill.id}`)
-      if (res.ok) {
-        setPreviewSkill(await res.json())
-        setPreviewOpen(true)
-      }
-    } catch {}
   }
 
   const syncToOpenclaw = async () => {
@@ -315,109 +421,172 @@ export default function SkillsPage() {
     }
   }
 
+  const isEditingExisting = !!(editing?.id && skills.some(s => s.id === editing.id))
+
+  // Library skills that are not yet installed (installed ones live under My Skills)
+  const availableLibrary = librarySkills.filter(s => !s.installed)
+
   return (
-    <div style={{ padding: 24, maxWidth: 800, margin: '0 auto' }}>
-      <h2 style={{ margin: 0, fontWeight: 600, marginBottom: 16 }}>Skills</h2>
+    <div style={{ display: 'flex', height: '100%', minHeight: 0 }}>
+      {/* ------------------------------------------------------------------ */}
+      {/* Left column — skill list                                           */}
+      {/* ------------------------------------------------------------------ */}
+      <div style={{
+        width: 340,
+        flexShrink: 0,
+        borderRight: '1px solid #f0f0f0',
+        display: 'flex',
+        flexDirection: 'column',
+        background: '#fafafa',
+      }}>
+        <div style={{ padding: '18px 16px 12px', borderBottom: '1px solid #f0f0f0' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <h2 style={{ margin: 0, fontWeight: 600, fontSize: 18 }}>Skills</h2>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button size="small" type="primary" icon={<PlusOutlined />} onClick={openNew} style={{ flex: 1 }}>
+              New Skill
+            </Button>
+            <Button size="small" icon={<UploadOutlined />} onClick={handleUpload} style={{ flex: 1 }}>
+              Import .md
+            </Button>
+          </div>
+        </div>
 
-      <Tabs
-        defaultActiveKey="my-skills"
-        items={[
-          {
-            key: 'my-skills',
-            label: 'My Skills',
-            children: (
-              <>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16, gap: 8 }}>
-                  <Button icon={<UploadOutlined />} onClick={handleUpload}>Import .md</Button>
-                  <Button type="primary" icon={<PlusOutlined />} onClick={openNew}>New Skill</Button>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {/* Imported / created skills */}
+          <SectionHeader icon={<FolderOpenOutlined />} label="My Skills" count={skills.length} />
+          {skills.length === 0 ? (
+            <div style={{ fontSize: 12, color: '#bfbfbf', padding: '6px 10px 12px' }}>
+              Nothing yet — create one or install from the library.
+            </div>
+          ) : (
+            skills.map(skill => (
+              <SkillRow
+                key={skill.id}
+                title={skill.name || skill.id}
+                description={skill.description}
+                selected={selection?.kind === 'my' && selection.id === skill.id}
+                badge={skill.source === 'library'
+                  ? <Tag color="blue" style={{ fontSize: 10, lineHeight: '16px', margin: 0, padding: '0 6px' }}>Library</Tag>
+                  : <Tag color="geekblue" style={{ fontSize: 10, lineHeight: '16px', margin: 0, padding: '0 6px' }}>Custom</Tag>}
+                onClick={() => selectSkill({ kind: 'my', id: skill.id })}
+              />
+            ))
+          )}
+
+          {/* Skill library (not-yet-installed) */}
+          <SectionHeader icon={<AppstoreOutlined />} label="Skill Library" count={availableLibrary.length} />
+          {availableLibrary.length === 0 ? (
+            <div style={{ fontSize: 12, color: '#bfbfbf', padding: '6px 10px 12px' }}>
+              All library skills installed.
+            </div>
+          ) : (
+            availableLibrary.map(skill => (
+              <SkillRow
+                key={skill.id}
+                title={skill.name || skill.id}
+                description={skill.description}
+                selected={selection?.kind === 'library' && selection.id === skill.id}
+                action={
+                  <Tooltip title="Install skill">
+                    <Button
+                      size="small"
+                      type="primary"
+                      ghost
+                      icon={<DownloadOutlined />}
+                      loading={installing === skill.id}
+                      onClick={() => installLibrarySkill(skill.id)}
+                    >
+                      Install
+                    </Button>
+                  </Tooltip>
+                }
+                onClick={() => selectSkill({ kind: 'library', id: skill.id })}
+              />
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Right column — skill write-up                                      */}
+      {/* ------------------------------------------------------------------ */}
+      <div style={{ flex: 1, minWidth: 0, overflowY: 'auto' }}>
+        {!selection ? (
+          <div style={{ height: '100%', display: 'grid', placeItems: 'center' }}>
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description="Select a skill to view its write-up"
+            />
+          </div>
+        ) : detailLoading ? (
+          <div style={{ padding: 40, color: '#8c8c8c' }}>Loading…</div>
+        ) : detail ? (
+          <div style={{ maxWidth: 820, margin: '0 auto', padding: '28px 32px 60px' }}>
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, marginBottom: 8 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <h1 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>{detail.name || detail.id}</h1>
+                  {selection.kind === 'my' && (
+                    detail.source === 'library'
+                      ? <Tag color="blue">From Library</Tag>
+                      : <Tag color="geekblue">Custom</Tag>
+                  )}
+                  {selection.kind === 'library' && detail.installed && (
+                    <Tag icon={<CheckCircleOutlined />} color="success">Installed</Tag>
+                  )}
                 </div>
-
-                {skills.length === 0 ? (
-                  <Empty description="No skills yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    {skills.map(skill => (
-                      <Card
-                        key={skill.id}
-                        size="small"
-                        style={{ borderRadius: 8 }}
-                        extra={
-                          <div style={{ display: 'flex', gap: 4 }}>
-                            <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(skill)} />
-                            <Popconfirm title="Delete this skill?" onConfirm={() => deleteSkill(skill.id)}>
-                              <Button size="small" icon={<DeleteOutlined />} danger />
-                            </Popconfirm>
-                          </div>
-                        }
-                      >
-                        <div style={{ fontWeight: 500 }}>
-                          {skill.name || skill.id}
-                          {skill.source === 'library' && (
-                            <Tag color="blue" style={{ marginLeft: 8, fontSize: 11 }}>Library</Tag>
-                          )}
-                        </div>
-                        {skill.description && (
-                          <div style={{ fontSize: 13, color: '#666', marginTop: 2 }}>{skill.description}</div>
-                        )}
-                      </Card>
-                    ))}
-                  </div>
+                {detail.description && (
+                  <p style={{ margin: '8px 0 0', color: '#595959', fontSize: 14 }}>{detail.description}</p>
                 )}
-              </>
-            ),
-          },
-          {
-            key: 'library',
-            label: 'Skill Library',
-            children: (
-              <>
-                {librarySkills.length === 0 ? (
-                  <Empty description="No library skills available" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    {librarySkills.map(skill => (
-                      <Card
-                        key={skill.id}
-                        size="small"
-                        style={{ borderRadius: 8, cursor: 'pointer' }}
-                        onClick={() => previewLibrarySkill(skill)}
-                        extra={
-                          skill.installed ? (
-                            <Tag color="green">Installed</Tag>
-                          ) : (
-                            <Button
-                              size="small"
-                              type="primary"
-                              icon={<DownloadOutlined />}
-                              onClick={e => { e.stopPropagation(); installLibrarySkill(skill.id) }}
-                            >
-                              Install
-                            </Button>
-                          )
-                        }
-                      >
-                        <div style={{ fontWeight: 500 }}>{skill.name || skill.id}</div>
-                        {skill.description && (
-                          <div style={{ fontSize: 13, color: '#666', marginTop: 2 }}>{skill.description}</div>
-                        )}
-                        {skill.tags && skill.tags.length > 0 && (
-                          <div style={{ marginTop: 6, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                            {skill.tags.map(tag => <Tag key={tag}>{tag}</Tag>)}
-                          </div>
-                        )}
-                      </Card>
-                    ))}
-                  </div>
-                )}
-              </>
-            ),
-          },
-        ]}
-      />
+              </div>
 
-      {/* Edit Modal */}
+              {/* Actions */}
+              <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                {selection.kind === 'my' ? (
+                  <>
+                    <Button icon={<EditOutlined />} onClick={() => openEdit(detail.id)}>Edit</Button>
+                    <Popconfirm title="Delete this skill?" onConfirm={() => deleteSkill(detail.id)}>
+                      <Button icon={<DeleteOutlined />} danger />
+                    </Popconfirm>
+                  </>
+                ) : !detail.installed ? (
+                  <Button
+                    type="primary"
+                    icon={<DownloadOutlined />}
+                    loading={installing === detail.id}
+                    onClick={() => installLibrarySkill(detail.id)}
+                  >
+                    Install
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+
+            {/* Tags */}
+            {detail.tags && detail.tags.length > 0 && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '14px 0' }}>
+                {detail.tags.map(tag => <Tag key={tag}>{tag}</Tag>)}
+              </div>
+            )}
+
+            <div style={{ height: 1, background: '#f0f0f0', margin: '18px 0 22px' }} />
+
+            {/* Body */}
+            <SkillBody value={detail.body || ''} />
+          </div>
+        ) : (
+          <div style={{ padding: 40, color: '#8c8c8c' }}>Could not load this skill.</div>
+        )}
+      </div>
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Edit / New modal                                                   */}
+      {/* ------------------------------------------------------------------ */}
       <Modal
-        title={editing?.id && skills.some(s => s.id === editing.id) ? 'Edit Skill' : 'New Skill'}
+        title={isEditingExisting ? 'Edit Skill' : 'New Skill'}
         open={modalOpen}
         onCancel={() => setModalOpen(false)}
         onOk={save}
@@ -456,51 +625,6 @@ export default function SkillsPage() {
                 />
               )}
             </div>
-          </div>
-        )}
-      </Modal>
-
-      {/* Library preview modal */}
-      <Modal
-        title={previewSkill?.name || previewSkill?.id || 'Skill Preview'}
-        open={previewOpen}
-        onCancel={() => setPreviewOpen(false)}
-        footer={
-          previewSkill && !previewSkill.installed ? (
-            <Button
-              type="primary"
-              icon={<DownloadOutlined />}
-              onClick={() => { installLibrarySkill(previewSkill.id); setPreviewOpen(false) }}
-            >
-              Install
-            </Button>
-          ) : (
-            <Tag color="green">Installed</Tag>
-          )
-        }
-        width={700}
-      >
-        {previewSkill && (
-          <div>
-            {previewSkill.description && (
-              <div style={{ color: '#666', marginBottom: 12 }}>{previewSkill.description}</div>
-            )}
-            {previewSkill.tags && previewSkill.tags.length > 0 && (
-              <div style={{ marginBottom: 12, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                {previewSkill.tags.map(tag => <Tag key={tag}>{tag}</Tag>)}
-              </div>
-            )}
-            <pre style={{
-              background: '#f5f5f5',
-              padding: 16,
-              borderRadius: 8,
-              fontSize: 13,
-              whiteSpace: 'pre-wrap',
-              maxHeight: 400,
-              overflow: 'auto',
-            }}>
-              {previewSkill.body}
-            </pre>
           </div>
         )}
       </Modal>
