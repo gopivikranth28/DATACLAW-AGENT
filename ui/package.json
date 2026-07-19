@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@ag-ui/client": "^0.0.52",
@@ -17,6 +18,7 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "antd": "^6.3.6",
+    "plotly.js-dist-min": "^2.35.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-ipynb-renderer": "^2.3.2",
@@ -28,6 +30,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
+    "@playwright/test": "^1.61.1",
     "@types/node": "^24.12.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

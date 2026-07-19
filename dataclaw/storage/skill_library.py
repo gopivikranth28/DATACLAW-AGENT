@@ -7,16 +7,22 @@ Installing a library skill copies it into ~/.dataclaw/skills/ with a
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import yaml
 
 from dataclaw.config.paths import skill_library_dir, skills_dir
-from dataclaw.storage.skills import write_skill
+from dataclaw.storage.skills import read_skill, write_skill
 
 logger = logging.getLogger(__name__)
+
+
+def skill_body_hash(body: str) -> str:
+    """Stable hash for skill instruction body content."""
+    return hashlib.sha256(body.strip().encode("utf-8")).hexdigest()
 
 
 def _read_frontmatter(path: Path) -> dict[str, Any] | None:
@@ -72,7 +78,6 @@ def list_library_skills() -> list[dict[str, Any]]:
     if not lib_dir.exists():
         return []
 
-    user_dir = skills_dir()
     skills: list[dict[str, Any]] = []
     for path in sorted(lib_dir.glob("*.md")):
         if path.name.lower() == "readme.md":
@@ -80,10 +85,12 @@ def list_library_skills() -> list[dict[str, Any]]:
         meta = _read_frontmatter(path)
         if meta is not None:
             skill_id = path.stem
+            body = (_read_full(path) or {}).get("body", "")
+            installed_state = _installed_library_state(skill_id, body)
             skills.append({
                 "id": skill_id,
-                "installed": (user_dir / f"{skill_id}.md").exists(),
                 **meta,
+                **installed_state,
             })
     return skills
 
@@ -98,8 +105,7 @@ def read_library_skill(skill_id: str) -> dict[str, Any] | None:
     if result is None:
         return None
 
-    user_dir = skills_dir()
-    result["installed"] = (user_dir / f"{skill_id}.md").exists()
+    result.update(_installed_library_state(skill_id, result.get("body", "")))
     return result
 
 
@@ -119,12 +125,106 @@ def install_library_skill(skill_id: str, force: bool = False) -> Path:
     if not force and lib_skill.get("installed"):
         raise FileExistsError(f"Skill already installed: {skill_id}")
 
+    body = lib_skill.get("body", "")
     meta = {
         "name": lib_skill.get("name", skill_id),
         "description": lib_skill.get("description", ""),
         "tags": lib_skill.get("tags", []),
         "source": "library",
         "library_id": skill_id,
+        "library_hash": skill_body_hash(body),
     }
-    body = lib_skill.get("body", "")
     return write_skill(skill_id, meta, body)
+
+
+def skill_freshness_for_installed_skill(
+    skill_id: str,
+    body: str,
+    meta: dict[str, Any],
+) -> dict[str, Any]:
+    """Return freshness metadata for an installed skill.
+
+    Library installs created before hashes existed are still checked by
+    comparing the installed body with the current bundled library body.
+    """
+    source = meta.get("source")
+    explicit_library_id = meta.get("library_id")
+    library_id = str(explicit_library_id or skill_id)
+    inferred_legacy_library = False
+    if source != "library" and not explicit_library_id:
+        if not (skill_library_dir() / f"{skill_id}.md").exists():
+            return {}
+        inferred_legacy_library = True
+
+    library = _read_full(skill_library_dir() / f"{library_id}.md")
+    if library is None:
+        return {
+            "source": source,
+            "library_id": library_id,
+            "installed_stale": True,
+            "stale_reason": "library_skill_missing",
+        }
+
+    library_body = str(library.get("body", ""))
+    library_hash = skill_body_hash(library_body)
+    installed_hash = skill_body_hash(body)
+    recorded_hash = clean_optional_text(meta.get("library_hash") or meta.get("installed_from_library_hash"))
+    installed_stale = installed_hash != library_hash
+    stale_reason = ""
+    if installed_stale and recorded_hash and recorded_hash != library_hash:
+        stale_reason = "library_skill_changed"
+    elif installed_stale:
+        stale_reason = "installed_body_differs_from_library"
+
+    return {
+        "source": "library",
+        "library_id": library_id,
+        "library_hash": library_hash,
+        "installed_hash": installed_hash,
+        "installed_library_hash": recorded_hash,
+        "installed_stale": installed_stale,
+        "stale_reason": stale_reason,
+        "legacy_library_inferred": inferred_legacy_library,
+    }
+
+
+def stale_installed_library_skills(skill_ids: Iterable[str] | None = None) -> list[dict[str, Any]]:
+    """List installed library skills whose active body differs from the bundled copy."""
+    allowed = set(skill_ids) if skill_ids is not None else None
+    stale: list[dict[str, Any]] = []
+    for path in sorted(skills_dir().glob("*.md")):
+        skill_id = path.stem
+        if allowed is not None and skill_id not in allowed:
+            continue
+        installed = read_skill(skill_id)
+        if not installed:
+            continue
+        state = skill_freshness_for_installed_skill(skill_id, str(installed.get("body", "")), installed)
+        if state.get("installed_stale"):
+            stale.append({
+                "id": skill_id,
+                "name": installed.get("name", skill_id),
+                **state,
+            })
+    return stale
+
+
+def clean_optional_text(value: Any) -> str:
+    return "" if value in (None, "") else str(value)
+
+
+def _installed_library_state(skill_id: str, library_body: str) -> dict[str, Any]:
+    installed = read_skill(skill_id)
+    if not installed:
+        return {
+            "installed": False,
+            "installed_stale": False,
+            "library_hash": skill_body_hash(library_body),
+        }
+    state = skill_freshness_for_installed_skill(skill_id, str(installed.get("body", "")), installed)
+    state.setdefault("installed_stale", False)
+    state.setdefault("library_hash", skill_body_hash(library_body))
+    return {
+        "installed": True,
+        **state,
+    }

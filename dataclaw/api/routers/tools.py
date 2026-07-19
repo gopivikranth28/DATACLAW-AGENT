@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -53,6 +55,8 @@ async def call_tool(tool_name: str, body: ToolCallRequest, request: Request) -> 
         except Exception:
             pass
 
+    call_id = f"direct-{uuid.uuid4().hex[:8]}"
+
     # Build state and run preToolCallHook (injects project/session context)
     state: dict[str, Any] = {
         "session_id": body.session_id,
@@ -60,8 +64,35 @@ async def call_tool(tool_name: str, body: ToolCallRequest, request: Request) -> 
         "messages": [],
         "tools": [],
         "tool_callables": {},
+        "pending_tool_calls": [{
+            "tool_name": tool_name,
+            "tool_input": dict(body.params),
+            "call_id": call_id,
+        }],
     }
     state = await hooks.run("preToolCallHook", state)
+
+    patched_calls = state.get("pending_tool_calls", [])
+    matched = next(
+        (c for c in patched_calls if c.get("call_id") == call_id),
+        None,
+    )
+    if matched is None:
+        verdict = next(
+            (
+                v for v in state.get("guardrail_verdicts", [])
+                if v.get("tool_call_id") == call_id
+            ),
+            None,
+        )
+        message = (
+            verdict.get("message")
+            if isinstance(verdict, dict) and verdict.get("message")
+            else "Tool call blocked by guardrail"
+        )
+        raise HTTPException(403, message)
+
+    params = matched.get("tool_input", body.params)
 
     # Resolve tool callable
     _, tool_callables = await providers.tool_availability.resolve_tools(state)
@@ -70,10 +101,38 @@ async def call_tool(tool_name: str, body: ToolCallRequest, request: Request) -> 
         raise HTTPException(404, f"Unknown tool: {tool_name}")
 
     try:
-        result = await fn(**body.params)
-        return {"ok": True, "result": result}
+        result = await fn(**params)
     except Exception as e:
         raise HTTPException(500, str(e))
+
+    state = {
+        **state,
+        "pending_tool_calls": [],
+        "tool_results": [{
+            "call_id": call_id,
+            "tool_name": tool_name,
+            "tool_input": params,
+            "result": json.dumps(result, default=str),
+            "is_error": False,
+        }],
+    }
+    state = await hooks.run("postToolCallHook", state)
+
+    result_record = next(
+        (
+            tr for tr in state.get("tool_results", [])
+            if tr.get("call_id") == call_id
+        ),
+        None,
+    )
+    if isinstance(result_record, dict) and result_record.get("guardrail_redacted"):
+        return {
+            "ok": True,
+            "result": result_record.get("result", ""),
+            "guardrail_redacted": True,
+        }
+
+    return {"ok": True, "result": result}
 
 
 # ── Tool config (enable / disable) ───────────────────────────────────────────

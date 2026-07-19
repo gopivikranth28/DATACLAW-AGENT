@@ -1,0 +1,21 @@
+:root {
+  --ink: #1a222e;
+  --muted: #667085;
+  --faint: #667085;
+  --line: #e7ebf0;
+  --line-soft: #f0f3f7;
+  --bg: #ffffff;
+  --bg-soft: #f7f8fa;
+  --rail: #10151e;
+  --rail-ink: #e8ecf2;
+  --rail-muted: #8b95a3;
+  --accent: #0b63ce;
+  --accent-soft: #eef4ff;
+  --bad: #b42318;
+  --bad-soft: #fef3f2;
+  --good: #137333;
+  --warn: #8a5a00;
+  --warn-soft: #fffaeb;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --shadow-panel: -18px 0 42px rgb(15 23 42 / 16%);
+}

@@ -51,7 +51,7 @@ class AppConfig(BaseModel):
     debug: bool = False
     max_turns: int = 30
     max_auto_turns: int = 10
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 8000
 
 

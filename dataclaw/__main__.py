@@ -33,7 +33,7 @@ def _build_ui() -> None:
 def main() -> None:
     _build_ui()
 
-    host = resolve("app.host", "DATACLAW_HOST", "0.0.0.0")
+    host = resolve("app.host", "DATACLAW_HOST", "127.0.0.1")
     port = int(resolve("app.port", "DATACLAW_PORT", "8000"))
     debug = resolve("app.debug", "DATACLAW_DEBUG", "false")
     reload = str(debug).lower() in ("true", "1", "yes")

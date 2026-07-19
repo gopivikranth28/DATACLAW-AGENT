@@ -8,6 +8,7 @@ import remarkGfm from 'remark-gfm'
 import { IpynbRenderer as IpynbView } from 'react-ipynb-renderer'
 import 'react-ipynb-renderer/dist/styles/default.css'
 import { API } from '../api'
+import { reportDocumentUrl, reportPreviewUrl } from './reportPreview'
 
 const { Text } = Typography
 
@@ -22,9 +23,16 @@ function isPdfFile(name: string): boolean {
   return name.split('.').pop()?.toLowerCase() === 'pdf'
 }
 
-export function FileViewerModal({ file, onClose }: {
+function workspaceFileUrl(path: string, sessionId?: string | null): string {
+  const params = new URLSearchParams({ path })
+  if (sessionId) params.set('session_id', sessionId)
+  return `${API}/workspace/files?${params.toString()}`
+}
+
+export function FileViewerModal({ file, onClose, sessionId }: {
   file: { name: string; path: string } | null
   onClose: () => void
+  sessionId?: string | null
 }) {
   const [content, setContent] = useState<string | null>(null)
   const [imageUrl, setImageUrl] = useState<string | null>(null)
@@ -38,7 +46,7 @@ export function FileViewerModal({ file, onClose }: {
     setImageUrl(null)
     setPdfUrl(null)
 
-    const url = `${API}/workspace/files?path=${encodeURIComponent(file.path)}`
+    const url = workspaceFileUrl(file.path, sessionId)
 
     if (isPdfFile(file.name)) {
       fetch(url)
@@ -65,11 +73,11 @@ export function FileViewerModal({ file, onClose }: {
       setImageUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null })
       setPdfUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null })
     }
-  }, [file?.path])
+  }, [file?.path, sessionId])
 
   const handleDownload = async () => {
     if (!file) return
-    const url = `${API}/workspace/files?path=${encodeURIComponent(file.path)}`
+    const url = workspaceFileUrl(file.path, sessionId)
     const res = await fetch(url)
     const blob = await res.blob()
     const blobUrl = URL.createObjectURL(blob)
@@ -104,7 +112,7 @@ export function FileViewerModal({ file, onClose }: {
       {!isReady ? <div style={{ textAlign: 'center', padding: 32 }}><Spin /></div>
         : pdfUrl ? <PdfRenderer url={pdfUrl} />
         : imageUrl ? <div style={{ textAlign: 'center', padding: 16 }}><img src={imageUrl} alt={file!.name} style={{ maxWidth: '100%', borderRadius: 8 }} /></div>
-        : <FileRenderer name={file!.name} content={content!} path={file!.path} />}
+        : <FileRenderer name={file!.name} content={content!} path={file!.path} sessionId={sessionId} />}
     </Modal>
   )
 }
@@ -113,7 +121,7 @@ function isMarimo(content: string) {
   return content.includes('marimo.App') || content.includes('import marimo')
 }
 
-export function FileRenderer({ name, content, path }: { name: string; content: string; path?: string }) {
+export function FileRenderer({ name, content, path, sessionId }: { name: string; content: string; path?: string; sessionId?: string | null }) {
   const ext = name.split('.').pop()?.toLowerCase()
   switch (ext) {
     case 'md':    return <MarkdownRenderer content={content} />
@@ -122,7 +130,7 @@ export function FileRenderer({ name, content, path }: { name: string; content: s
     case 'ipynb': return <IpynbFileRenderer content={content} />
     case 'py':    return isMarimo(content) ? <MarimoRenderer content={content} name={name} /> : <PythonRenderer content={content} />
     case 'html':
-    case 'htm':   return <HtmlRenderer content={content} dirPath={path ? path.substring(0, path.lastIndexOf('/')) : undefined} />
+    case 'htm':   return <HtmlRenderer content={content} path={path} dirPath={path ? path.substring(0, path.lastIndexOf('/')) : undefined} sessionId={sessionId} />
     case 'json':  return <pre style={CODE_STYLE}>{tryPrettyJson(content)}</pre>
     default:      return <pre style={CODE_STYLE}>{content}</pre>
   }
@@ -172,9 +180,15 @@ function parseCsvLine(line: string): string[] {
 }
 
 function SvgRenderer({ content }: { content: string }) {
+  const srcDoc = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#fafafa;}body{display:flex;justify-content:center;padding:16px;}svg{max-width:100%;height:auto;}</style></head><body>${content}</body></html>`
   return (
     <div style={{ textAlign: 'center', padding: 16, background: '#fafafa', borderRadius: 8 }}>
-      <div dangerouslySetInnerHTML={{ __html: content }} style={{ maxWidth: 700, margin: '0 auto' }} />
+      <iframe
+        title="SVG preview"
+        sandbox=""
+        srcDoc={srcDoc}
+        style={{ width: '100%', minHeight: 420, maxWidth: 760, border: 0, background: '#fafafa' }}
+      />
     </div>
   )
 }
@@ -200,18 +214,27 @@ export function rewriteRelativeUrls(html: string, dirPath: string): string {
   )
 }
 
-function HtmlRenderer({ content, dirPath }: { content: string; dirPath?: string }) {
+function HtmlRenderer({ content, path, dirPath, sessionId }: { content: string; path?: string; dirPath?: string; sessionId?: string | null }) {
   const [mode, setMode] = useState<'preview' | 'source'>('preview')
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
+  const documentUrl = path ? reportDocumentUrl(path, undefined, { sessionId }) : ''
+  const previewUrl = path ? reportPreviewUrl(path, { sessionId }) : ''
 
   useEffect(() => {
+    if (path) {
+      setBlobUrl(prev => {
+        if (prev) URL.revokeObjectURL(prev)
+        return null
+      })
+      return
+    }
     if (mode !== 'preview') return
     const resolved = dirPath ? rewriteRelativeUrls(content, dirPath) : content
     const blob = new Blob([resolved], { type: 'text/html' })
     const url = URL.createObjectURL(blob)
     setBlobUrl(url)
     return () => URL.revokeObjectURL(url)
-  }, [content, dirPath, mode])
+  }, [content, dirPath, mode, path])
 
   return (
     <div>
@@ -221,15 +244,23 @@ function HtmlRenderer({ content, dirPath }: { content: string; dirPath?: string 
         <div style={{ flex: 1, fontSize: 12, color: '#1d39c4' }}>
           <strong>HTML Document</strong>
         </div>
+        {previewUrl && <Button size="small" href={previewUrl} target="_blank">New Tab</Button>}
         <Button.Group size="small">
           <Button type={mode === 'preview' ? 'primary' : 'default'} onClick={() => setMode('preview')}>Preview</Button>
           <Button type={mode === 'source' ? 'primary' : 'default'} onClick={() => setMode('source')}>Source</Button>
         </Button.Group>
       </div>
       {mode === 'preview' ? (
-        blobUrl ? (
+        documentUrl ? (
+          <iframe
+            src={documentUrl}
+            sandbox="allow-scripts allow-forms allow-popups allow-modals"
+            style={{ width: '100%', minHeight: 500, border: '1px solid #f0f0f0', borderRadius: 8, background: '#fff' }}
+          />
+        ) : blobUrl ? (
           <iframe
             src={blobUrl}
+            sandbox="allow-scripts"
             style={{ width: '100%', minHeight: 500, border: '1px solid #f0f0f0', borderRadius: 8, background: '#fff' }}
           />
         ) : null

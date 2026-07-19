@@ -1,19 +1,24 @@
 import { useState, useEffect } from 'react'
 import { LoadingOutlined, CheckCircleOutlined, ExclamationCircleOutlined, RightOutlined, TeamOutlined, CodeOutlined } from '@ant-design/icons'
 import type { ToolCallState } from '../hooks/useAGUI'
-import ToolResultRenderer, { shouldAutoExpand } from './tool-renderers/ToolResultRenderer'
+import ToolResultRenderer, { hasCustomRenderer, shouldAutoExpand, shouldRenderWhileCalling } from './tool-renderers/ToolResultRenderer'
 import SubagentProgressPanel from './SubagentProgressPanel'
+import { hasToolError, toolBaseName } from './reportPublishState'
 
 interface Props {
   toolCall: ToolCallState
   onFileClick?: (path: string) => void
-  onDecision?: (proposalId: string, status: string, feedback?: string) => void
+  sessionId?: string | null
 }
 
-export default function ToolCallCard({ toolCall, onFileClick, onDecision }: Props) {
+export default function ToolCallCard({ toolCall, onFileClick, sessionId }: Props) {
   const isDelegate = toolCall.name === 'delegate_to_subagent'
   const hasSubagent = isDelegate && !!toolCall.subagent
-  const autoExpand = hasSubagent || (shouldAutoExpand(toolCall.name) && toolCall.status === 'complete' && toolCall.result !== null)
+  const failed = toolCall.status === 'error' || hasToolError(toolCall.result)
+  const canRenderWhileCalling = shouldRenderWhileCalling(toolCall.name)
+  const autoExpand = hasSubagent || (shouldAutoExpand(toolCall.name) && (
+    (toolCall.status === 'complete' && toolCall.result !== null) || canRenderWhileCalling
+  ))
   const [expanded, setExpanded] = useState(autoExpand)
 
   // Auto-expand when a tool that should be expanded completes
@@ -23,11 +28,11 @@ export default function ToolCallCard({ toolCall, onFileClick, onDecision }: Prop
 
   const statusIcon = toolCall.status === 'calling'
     ? <LoadingOutlined style={{ color: '#1677ff', fontSize: 13 }} spin />
-    : toolCall.status === 'complete'
-    ? <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 13 }} />
-    : <ExclamationCircleOutlined style={{ color: '#ff4d4f', fontSize: 13 }} />
+    : failed
+      ? <ExclamationCircleOutlined style={{ color: '#ff4d4f', fontSize: 13 }} />
+      : <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 13 }} />
 
-  const hasRichRenderer = shouldAutoExpand(toolCall.name)
+  const hasRichRenderer = hasCustomRenderer(toolCall.name)
 
   return (
     <div style={{
@@ -60,7 +65,7 @@ export default function ToolCallCard({ toolCall, onFileClick, onDecision }: Prop
         <span style={{ fontWeight: 500, color: '#333' }}>
           {isDelegate
             ? <>{hasSubagent ? toolCall.subagent!.name : (safeParseField(toolCall.args, 'subagent_name') || 'unknown')} <span style={{ fontWeight: 400, color: '#999', fontSize: 12 }}>(<TeamOutlined style={{ fontSize: 11 }} /> subagent)</span></>
-            : toolCall.name}
+            : toolLabel(toolCall.name)}
         </span>
         {hasSubagent && (
           <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 4, background: '#f0f0f0', color: '#666' }}>
@@ -102,14 +107,15 @@ export default function ToolCallCard({ toolCall, onFileClick, onDecision }: Prop
                   </pre>
                 </div>
               )}
-              {toolCall.result !== null && (
+              {(toolCall.result !== null || canRenderWhileCalling) && (
                 <div>
                   {!hasRichRenderer && (
                     <div style={{ fontSize: 11, color: '#888', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                       Result
                     </div>
                   )}
-                  <ToolResultRenderer toolName={toolCall.name} result={toolCall.result} args={toolCall.args} onFileClick={onFileClick} onDecision={onDecision} />
+                  <ToolResultRenderer toolName={toolCall.name} result={toolCall.result} args={toolCall.args}
+                    status={toolCall.status} onFileClick={onFileClick} sessionId={sessionId} />
                 </div>
               )}
             </>
@@ -118,6 +124,19 @@ export default function ToolCallCard({ toolCall, onFileClick, onDecision }: Prop
       </div>
     </div>
   )
+}
+
+function toolLabel(toolName: string): string {
+  const labels: Record<string, string> = {
+    report_add_section: 'Report update',
+    report_design_report: 'Design report',
+    build_report: 'Report',
+    report_publish: 'Publish report',
+    propose_plan: 'Plan proposal',
+    update_plan: 'Plan update',
+  }
+  const normalized = toolBaseName(toolName)
+  return labels[normalized] || normalized
 }
 
 /** Friendly display for a completed delegate_to_subagent call.

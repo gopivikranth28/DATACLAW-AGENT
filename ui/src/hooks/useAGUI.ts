@@ -26,6 +26,8 @@ export interface AGUIMessage {
   order: number
   compactedCount?: number
   keptCount?: number
+  sentFromQueue?: boolean
+  queuedAt?: number
 }
 
 export interface SubagentToolCallInfo {
@@ -53,6 +55,8 @@ export interface ToolCallState {
   result: string | null
   status: 'calling' | 'complete' | 'error'
   order: number
+  startedAt?: number
+  finishedAt?: number
   subagent?: SubagentProgress | null
   conversationId?: string
 }
@@ -113,7 +117,9 @@ function snapshotToState(messages: Message[]): { msgs: AGUIMessage[]; tcs: ToolC
           order++
           const tcState: ToolCallState = {
             id: tc.id,
-            name: tc.function?.name || 'unknown',
+            // Persisted streams from older providers can omit this field. Keep
+            // the event valid, but never leak an `unknown` card into the UI.
+            name: tc.function?.name || '',
             args: tc.function?.arguments || '{}',
             result: null,
             status: 'calling',
@@ -254,10 +260,11 @@ export function useAGUI(options?: { onRunFinished?: () => void }) {
             ...prev,
             isRunning: true,
             toolCalls: [...prev.toolCalls, {
-              id: e.toolCallId,
-              name: e.toolCallName,
-              args: '', result: null, status: 'calling',
-              order,
+            id: e.toolCallId,
+            name: e.toolCallName || '',
+            args: '', result: null, status: 'calling',
+            order,
+            startedAt: Date.now(),
             }],
           }
         })
@@ -284,7 +291,7 @@ export function useAGUI(options?: { onRunFinished?: () => void }) {
           ...prev,
           toolCalls: prev.toolCalls.map(tc => {
             if (tc.id !== e.toolCallId) return tc
-            const updated: ToolCallState = { ...tc, result: e.content, status: 'complete' }
+            const updated: ToolCallState = { ...tc, result: e.content, status: 'complete', finishedAt: Date.now() }
             // Extract conversationId from delegate result
             if (updated.name === 'delegate_to_subagent' && e.content) {
               try {
@@ -382,6 +389,55 @@ export function useAGUI(options?: { onRunFinished?: () => void }) {
               g.approvalId === value?.approvalId ? { ...g, status } : g
             ),
           }))
+          break
+        }
+
+        if (name === 'artifact_published') {
+          const result = JSON.stringify({
+            success: true,
+            artifact_id: value?.artifact_id,
+            version: value?.version,
+            url: value?.url,
+            session_id: value?.session_id,
+            title: value?.title,
+            description: value?.description,
+          })
+          setState(prev => {
+            const alreadyRendered = prev.toolCalls.some(tc => {
+              if (tc.name !== 'publish_artifact' || !tc.result) return false
+              try {
+                const parsed = JSON.parse(tc.result)
+                return parsed?.artifact_id === value?.artifact_id && parsed?.version === value?.version
+              } catch {
+                return false
+              }
+            })
+            if (alreadyRendered) return prev
+
+            const activeIdx = prev.toolCalls
+              .map((tc, idx) => ({ tc, idx }))
+              .reverse()
+              .find(({ tc }) => tc.name === 'publish_artifact' && tc.status === 'calling')?.idx
+
+            if (activeIdx !== undefined) {
+              const updated = [...prev.toolCalls]
+              updated[activeIdx] = { ...updated[activeIdx], result, status: 'complete' }
+              return { ...prev, toolCalls: updated }
+            }
+
+            orderRef.current++
+            return {
+              ...prev,
+              toolCalls: [...prev.toolCalls, {
+                id: `artifact-event-${value?.artifact_id || Date.now()}-${value?.version || 'latest'}`,
+                name: 'publish_artifact',
+                args: '{}',
+                result,
+                status: 'complete',
+                order: orderRef.current,
+              }],
+            }
+          })
           break
         }
 
@@ -530,10 +586,13 @@ export function useAGUI(options?: { onRunFinished?: () => void }) {
     threadId: string,
     history: Array<{ role: string; content: string }>,
     userText: string,
+    options?: { sentFromQueue?: boolean; queuedAt?: number },
   ) => {
     orderRef.current++
     const userMsg: AGUIMessage = {
       id: crypto.randomUUID(), role: 'user', content: userText, order: orderRef.current,
+      sentFromQueue: options?.sentFromQueue,
+      queuedAt: options?.queuedAt,
     }
 
     skipSnapshotRef.current = true

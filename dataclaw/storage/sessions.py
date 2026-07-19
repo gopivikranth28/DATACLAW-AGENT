@@ -35,6 +35,18 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _normalize_session_scope(session: dict[str, Any]) -> dict[str, Any]:
+    """Read pre-redesign ``project_id`` session files without misclassifying them.
+
+    Session metadata is camelCase on disk today, but older clients persisted the
+    project link as ``project_id``. Treat both forms as the same scope so an old
+    project chat cannot leak into the independent Chats list.
+    """
+    if "projectId" not in session and "project_id" in session:
+        session["projectId"] = session["project_id"]
+    return session
+
+
 async def create_session(
     *,
     session_id: str | None = None,
@@ -58,6 +70,8 @@ async def create_session(
         "skillIds": skill_ids,
         "subagentIds": subagent_ids,
         "autoTurnsUsed": 0,
+        "queuedMessages": [],
+        "queuePaused": False,
         "messages": [],
         "createdAt": _now_iso(),
         "updatedAt": _now_iso(),
@@ -75,19 +89,21 @@ async def get_session(session_id: str) -> dict[str, Any] | None:
     if not path.exists():
         return None
     async with _get_lock(session_id):
-        return json.loads(path.read_text())
+        return _normalize_session_scope(json.loads(path.read_text()))
 
 
-async def list_sessions(project_id: str | None = None) -> list[dict[str, Any]]:
-    """List all sessions, optionally filtered by project."""
+async def list_sessions(project_id: str | None = None, *, independent_only: bool = False) -> list[dict[str, Any]]:
+    """List sessions for one explicit project or only independent sessions."""
     sdir = sessions_dir()
     if not sdir.exists():
         return []
     sessions = []
     for path in sorted(sdir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
         try:
-            data = json.loads(path.read_text())
-            if project_id and data.get("projectId") != project_id:
+            data = _normalize_session_scope(json.loads(path.read_text()))
+            if independent_only and data.get("projectId") is not None:
+                continue
+            if project_id is not None and data.get("projectId") != project_id:
                 continue
             # Return without messages for listing
             sessions.append({k: v for k, v in data.items() if k != "messages"})
@@ -114,7 +130,7 @@ async def append_message(session_id: str, message: dict[str, Any]) -> None:
 
     async with _get_lock(session_id):
         if path.exists():
-            data = json.loads(path.read_text())
+            data = _normalize_session_scope(json.loads(path.read_text()))
         else:
             data = {
                 "id": session_id,
@@ -146,7 +162,7 @@ async def insert_message_at(session_id: str, index: int, message: dict[str, Any]
         return
 
     async with _get_lock(session_id):
-        data = json.loads(path.read_text())
+        data = _normalize_session_scope(json.loads(path.read_text()))
 
         # Dedup by messageId
         msg_id = message.get("messageId")
@@ -169,7 +185,7 @@ async def update_session(session_id: str, updates: dict[str, Any]) -> dict[str, 
         return None
 
     async with _get_lock(session_id):
-        data = json.loads(path.read_text())
+        data = _normalize_session_scope(json.loads(path.read_text()))
         for key, value in updates.items():
             if key not in ("id", "messages", "createdAt"):
                 data[key] = value

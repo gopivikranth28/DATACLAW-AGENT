@@ -9,10 +9,11 @@ from dataclaw.plugins.base import (
 )
 from dataclaw.providers.tool.implementations.python_tool import PythonTool
 
-from dataclaw_plans.tools import propose_plan, update_plan, list_plans, get_plan
+from dataclaw_plans.tools import propose_plan, update_plan, list_plans, get_plan, accept_gate_risk
 from dataclaw_plans.mlflow_tools import query_mlflow_runs
 from dataclaw_plans.router import router as plans_router, mlflow_router
 from dataclaw_plans.hooks import active_plan_context_hook
+from dataclaw_plans.gates import GateRiskAcceptanceGuardrail
 
 
 class PlansPlugin:
@@ -26,6 +27,8 @@ class PlansPlugin:
 
         # Register hooks
         ctx.hooks.register("preToolCallHook", active_plan_context_hook)
+        if ctx.guardrail_registry is not None:
+            ctx.guardrail_registry.register(GateRiskAcceptanceGuardrail())
 
         # Register tools
         _tools = [
@@ -34,16 +37,28 @@ class PlansPlugin:
                 "properties": {
                     "name": {"type": "string", "description": "Plan name"},
                     "description": {"type": "string", "description": "What the plan will accomplish"},
+                    "plan_markdown": {
+                        "type": "string",
+                        "description": (
+                            "Detailed Markdown review document for plan.md. Include objective, prior observations, "
+                            "assumptions or data limits, grouped workstreams, validation checks, deliverables, "
+                            "risks or open questions, and execution notes. This should be richer than the compact steps."
+                        ),
+                        "default": "",
+                    },
                     "steps": {
                         "type": "array",
                         "items": {
                             "type": "object",
                             "properties": {
+                                "plan_step_id": {"type": "string", "description": "Stable plan step id; generated automatically when omitted"},
+                                "id": {"type": "string", "description": "Deprecated alias for plan_step_id; accepted for legacy calls"},
                                 "name": {"type": "string", "description": "Step name"},
                                 "description": {"type": "string", "description": "What this step will do"},
                                 "status": {"type": "string", "description": "Step status", "enum": ["not_started", "in_progress", "completed", "error", "blocked"], "default": "not_started"},
                                 "summary": {"type": "string", "description": "Step summary", "default": ""},
                                 "outputs": {"type": "array", "items": {"type": "string"}, "description": "Output file paths", "default": []},
+                                "ready_for_validation": {"type": "boolean", "description": "Whether this step is ready for human validation", "default": False},
                             },
                             "required": ["name", "description"],
                         },
@@ -62,14 +77,21 @@ class PlansPlugin:
                         "items": {
                             "type": "object",
                             "properties": {
+                                "plan_step_id": {"type": "string", "description": "Stable plan step id; when provided, matching is by id only"},
+                                "id": {"type": "string", "description": "Deprecated alias for plan_step_id; accepted for legacy calls"},
                                 "name": {"type": "string", "description": "Step name to update"},
                                 "status": {"type": "string", "description": "New step status", "enum": ["not_started", "in_progress", "completed", "error", "blocked"]},
                                 "summary": {"type": "string", "description": "Step summary"},
                                 "description": {"type": "string", "description": "Updated description"},
                                 "outputs": {"type": "array", "items": {"type": "string"}, "description": "Output file paths"},
                                 "note": {"type": "string", "description": "Additional note"},
+                                "ready_for_validation": {"type": "boolean", "description": "Set true only after required gates pass or are accepted"},
                             },
-                            "required": ["name"],
+                            "anyOf": [
+                                {"required": ["plan_step_id"]},
+                                {"required": ["id"]},
+                                {"required": ["name"]},
+                            ],
                         },
                         "description": "Step updates with name and new status/summary",
                     },
@@ -93,6 +115,16 @@ class PlansPlugin:
             ("query_mlflow_runs", "Query MLflow experiment runs for the current session", query_mlflow_runs, {
                 "type": "object",
                 "properties": {},
+            }),
+            ("accept_gate_risk", "Accept a required validation gate risk with explicit user approval and audit", accept_gate_risk, {
+                "type": "object",
+                "properties": {
+                    "proposal_id": {"type": "string", "description": "Plan proposal ID"},
+                    "plan_step_id": {"type": "string", "description": "Stable plan step id"},
+                    "gate_name": {"type": "string", "description": "Gate name to accept"},
+                    "rationale": {"type": "string", "description": "User-approved rationale for proceeding despite the gate"},
+                },
+                "required": ["proposal_id", "plan_step_id", "gate_name", "rationale"],
             }),
         ]
 

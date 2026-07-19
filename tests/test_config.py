@@ -18,6 +18,7 @@ def test_default_config():
     assert config.llm.backend == "openclaw"
     assert config.compaction.enabled is False
     assert config.app.max_turns == 30
+    assert config.app.host == "127.0.0.1"
 
 
 def test_resolve_default():

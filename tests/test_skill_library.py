@@ -8,6 +8,8 @@ from dataclaw.storage.skill_library import (
     install_library_skill,
     list_library_skills,
     read_library_skill,
+    skill_body_hash,
+    stale_installed_library_skills,
 )
 
 
@@ -121,6 +123,7 @@ def test_install(library_dir, user_skills_dir):
     content = path.read_text()
     assert "source: library" in content
     assert "library_id: profiling" in content
+    assert f"library_hash: {skill_body_hash('Step 1: Load')}" in content
     # Verify original content is preserved
     assert "Step 1: Load" in content
 
@@ -161,3 +164,50 @@ def test_install_updates_installed_status(library_dir, user_skills_dir):
     # After install
     result = read_library_skill("my_skill")
     assert result["installed"] is True
+
+
+def test_list_marks_stale_installed_library_skill(library_dir, user_skills_dir):
+    _write_library_skill(library_dir, "visualization", "name: visualization", "new body")
+    (user_skills_dir / "visualization.md").write_text(
+        "---\nname: visualization\nsource: library\nlibrary_id: visualization\n---\n\nold body\n",
+        encoding="utf-8",
+    )
+
+    result = list_library_skills()
+    assert result[0]["installed"] is True
+    assert result[0]["installed_stale"] is True
+    assert result[0]["stale_reason"] == "installed_body_differs_from_library"
+
+    stale = stale_installed_library_skills()
+    assert stale[0]["id"] == "visualization"
+    assert stale[0]["installed_stale"] is True
+
+
+def test_list_marks_legacy_unmarked_library_skill_stale(library_dir, user_skills_dir):
+    _write_library_skill(library_dir, "dashboarding", "name: dashboarding", "new body")
+    (user_skills_dir / "dashboarding.md").write_text(
+        "---\nname: dashboarding\n---\n\nold body\n",
+        encoding="utf-8",
+    )
+
+    result = list_library_skills()
+    assert result[0]["installed"] is True
+    assert result[0]["installed_stale"] is True
+    assert result[0]["legacy_library_inferred"] is True
+
+    stale = stale_installed_library_skills()
+    assert stale[0]["id"] == "dashboarding"
+    assert stale[0]["legacy_library_inferred"] is True
+
+
+def test_read_marks_hash_based_library_change(library_dir, user_skills_dir):
+    _write_library_skill(library_dir, "dashboarding", "name: dashboarding", "new body")
+    (user_skills_dir / "dashboarding.md").write_text(
+        "---\nname: dashboarding\nsource: library\nlibrary_id: dashboarding\nlibrary_hash: oldhash\n---\n\nold body\n",
+        encoding="utf-8",
+    )
+
+    result = read_library_skill("dashboarding")
+    assert result["installed"] is True
+    assert result["installed_stale"] is True
+    assert result["stale_reason"] == "library_skill_changed"

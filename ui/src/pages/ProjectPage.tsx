@@ -51,6 +51,25 @@ export default function ProjectPage() {
   if (loading) return <div style={{ padding: 48, textAlign: 'center' }}><Spin /></div>
   if (!project) return <div style={{ padding: 48, textAlign: 'center' }}>Project not found</div>
 
+  // A project chat uses the same focused chat surface as an independent one.
+  // The project context is already named in ChatPage's toolbar and its session
+  // rail owns Files, Reports, Datasets, Experiments, and Scope. Keeping the
+  // project-detail tab bar here duplicated that navigation only for project
+  // sessions.
+  if (activeTab === 'chat') {
+    return (
+      <div style={{ height: '100%' }}>
+        <ChatPage
+          projectId={project.id}
+          initialSessionId={selectedSessionId}
+          initialDatasetIds={project.dataset_ids}
+          onSessionChange={setSelectedSessionId}
+          onBackToSessions={() => { setSelectedSessionId(null); setActiveTab('sessions') }}
+        />
+      </div>
+    )
+  }
+
   const scrollPane: React.CSSProperties = { height: 'calc(100vh - 140px)', overflow: 'auto' }
 
   return (
@@ -73,7 +92,6 @@ export default function ProjectPage() {
         tabBarStyle={{ padding: '0 24px', marginBottom: 0 }}
         items={[
           { key: 'sessions', label: 'Sessions', children: <div style={scrollPane}><SessionsTab projectId={project.id} visible={activeTab === 'sessions'} onOpenChat={(sessionId) => setSelectedSessionId(sessionId)} /></div> },
-          { key: 'chat', label: 'Chat', children: <div style={{ height: 'calc(100vh - 140px)' }}><ChatPage projectId={project.id} initialSessionId={selectedSessionId} initialDatasetIds={project.dataset_ids} onSessionChange={setSelectedSessionId} /></div> },
           { key: 'data', label: 'Data Sources', children: <div style={scrollPane}><DataSourcesTab projectId={project.id} initialDatasetIds={project.dataset_ids} onDatasetIdsChange={(ids) => setProject(prev => prev ? { ...prev, dataset_ids: ids } : prev)} /></div> },
           { key: 'tools', label: 'Tools', children: <div style={scrollPane}><ProjectToolsTab projectId={project.id} initialToolIds={project.tool_ids} onToolIdsChange={(ids) => setProject(prev => prev ? { ...prev, tool_ids: ids } : prev)} /></div> },
           { key: 'skills', label: 'Skills', children: <div style={scrollPane}><ProjectSkillsTab projectId={project.id} initialSkillIds={project.skill_ids} onSkillIdsChange={(ids) => setProject(prev => prev ? { ...prev, skill_ids: ids } : prev)} /></div> },
@@ -125,7 +143,7 @@ function SessionsTab({ projectId, onOpenChat, visible }: { projectId: string; on
     <div style={{ padding: 24, maxWidth: 700 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <span style={{ fontWeight: 500 }}>{sessions.length} session(s)</span>
-        <Button icon={<PlusOutlined />} onClick={create}>New Session</Button>
+        <Button icon={<PlusOutlined />} onClick={create}>New chat</Button>
       </div>
       {sessions.length === 0 ? (
         <Empty description="No sessions yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />

@@ -8,9 +8,28 @@ track either.
 from __future__ import annotations
 
 from dataclaw.state import AgentState
-from dataclaw_plans.store import get_active_plan_id
+from dataclaw_plans.store import find_proposal, get_active_plan_id
 
 PLAN_TOOLS = {"propose_plan", "update_plan", "list_plans", "get_plan", "query_mlflow_runs"}
+
+
+def _step_identity(step: dict) -> str:
+    return str(step.get("plan_step_id") or step.get("id") or step.get("step_id") or "").strip()
+
+
+def _active_plan_step_id(plan_id: str | None) -> str | None:
+    if not plan_id:
+        return None
+    try:
+        proposal = find_proposal(plan_id)
+    except KeyError:
+        return None
+    for step in proposal.get("steps", []):
+        if step.get("status") == "in_progress":
+            step_id = _step_identity(step)
+            if step_id:
+                return step_id
+    return None
 
 
 async def active_plan_context_hook(state: AgentState) -> AgentState:
@@ -22,6 +41,7 @@ async def active_plan_context_hook(state: AgentState) -> AgentState:
         return state
 
     active_id = get_active_plan_id(session_id)
+    active_step_id = _active_plan_step_id(active_id)
     auto_mode = state.get("metadata", {}).get("auto_mode", False)
 
     updated = []
@@ -45,4 +65,7 @@ async def active_plan_context_hook(state: AgentState) -> AgentState:
 
         updated.append(tc)
 
-    return {**state, "pending_tool_calls": updated}
+    next_state = {**state, "pending_tool_calls": updated}
+    if active_step_id:
+        next_state["active_plan_step_id"] = active_step_id
+    return next_state

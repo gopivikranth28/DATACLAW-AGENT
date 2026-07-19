@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Any
 
@@ -14,12 +15,18 @@ def cell_summary(cell: Any, index: int) -> dict[str, Any]:
     lines = source.split("\n")
     return {
         "index": index,
+        "cell_id": cell.get("id", ""),
         "cell_type": cell.get("cell_type", "unknown"),
         "source_lines": len(lines),
+        "source_sha256": source_sha256(source),
         "preview": lines[0][:80] if lines else "",
         "output_count": len(cell.get("outputs", [])),
         "execution_count": cell.get("execution_count"),
     }
+
+
+def source_sha256(source: str) -> str:
+    return hashlib.sha256((source or "").encode("utf-8")).hexdigest()
 
 
 def format_cell_outputs(cell: Any) -> list[dict[str, str]]:
@@ -33,6 +40,8 @@ def format_cell_outputs(cell: Any) -> list[dict[str, str]]:
             data = output.get("data", {})
             if "image/png" in data:
                 results.append({"type": "image", "data": data["image/png"], "mimetype": "image/png"})
+            elif "application/vnd.plotly.v1+json" in data:
+                results.append({"type": "plotly", "figure": data["application/vnd.plotly.v1+json"]})
             elif "text/html" in data:
                 results.append({"type": "html", "text": data["text/html"]})
             elif "text/plain" in data:
@@ -57,6 +66,12 @@ def outputs_to_nbformat(outputs: list[dict]) -> list:
                 output_type="execute_result",
                 data={"text/html": out["text"]},
                 metadata={}, execution_count=None,
+            ))
+        elif out["type"] == "plotly":
+            nb_outputs.append(nbformat.v4.new_output(
+                output_type="display_data",
+                data={"application/vnd.plotly.v1+json": out["figure"]},
+                metadata={},
             ))
         elif out["type"] == "image":
             nb_outputs.append(nbformat.v4.new_output(

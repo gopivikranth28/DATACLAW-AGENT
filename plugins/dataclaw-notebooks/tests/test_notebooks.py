@@ -107,6 +107,8 @@ async def test_read_cell_tool(sample_notebook):
     result = await tools.read_cell(cell_index=0)
     assert result["source"] == "x = 1"
     assert result["cell_type"] == "code"
+    assert result["cell_id"]
+    assert len(result["source_sha256"]) == 64
 
 
 @pytest.mark.asyncio
@@ -116,6 +118,8 @@ async def test_insert_cell_tool(sample_notebook):
     assert result["inserted_at"] == 1
     assert result["cell_index"] == 1            # alias for the renderer
     assert result["source"] == "z = 42"          # echoed for the renderer
+    assert result["cell_id"]
+    assert len(result["source_sha256"]) == 64
     assert result["cell_type"] == "code"
     assert result["num_cells"] == 4
 
@@ -281,6 +285,8 @@ async def test_execute_cell_empty_source_returns_source(sample_notebook):
     await tools.edit_cell(cell_index=0, new_source="   \n   ")
     result = await tools.execute_cell(cell_index=0)
     assert "source" in result
+    assert result["cell_id"]
+    assert len(result["source_sha256"]) == 64
     assert result["source"].strip() == ""
     assert result["outputs"] == []
 
@@ -298,6 +304,78 @@ async def test_execute_and_collect_text_unchanged():
         {"type": "text", "text": "hello\n"},
         {"type": "text", "text": "42"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_execute_and_collect_plotly_prefers_json_over_html():
+    """Plotly emits both the JSON MIME and a text/html fallback — keep the JSON."""
+    figure = {"data": [{"type": "bar", "x": ["a"], "y": [1]}], "layout": {"title": {"text": "T"}}}
+    fake_kc = _FakeKernelClient([
+        _msg("display_data", {"data": {
+            "application/vnd.plotly.v1+json": figure,
+            "text/html": "<div>plotly fallback html</div>",
+            "text/plain": "Figure({...})",
+        }}),
+        _msg("status", {"execution_state": "idle"}),
+    ])
+    outputs = await tools._execute_and_collect(fake_kc, "fig.show()", timeout=5)
+    assert len(outputs) == 1
+    out = outputs[0]
+    assert out["type"] == "plotly"
+    assert out["figure"] == figure
+    assert out["summary"] == "Figure({...})"
+
+
+def test_plotly_output_roundtrip_nbformat():
+    """plotly output survives outputs_to_nbformat → format_cell_outputs."""
+    from dataclaw_notebooks.helpers import format_cell_outputs, outputs_to_nbformat
+
+    figure = {"data": [{"type": "scatter", "x": [1, 2], "y": [3, 4]}], "layout": {}}
+    nb_outputs = outputs_to_nbformat([{"type": "plotly", "figure": figure, "summary": ""}])
+    assert nb_outputs[0]["output_type"] == "display_data"
+    assert nb_outputs[0]["data"]["application/vnd.plotly.v1+json"] == figure
+
+    cell = nbformat.v4.new_code_cell(source="fig.show()")
+    cell["outputs"] = nb_outputs
+    results = format_cell_outputs(cell)
+    assert results == [{"type": "plotly", "figure": figure}]
+
+
+@pytest.mark.asyncio
+async def test_display_metric_tool():
+    result = await tools.display_metric(
+        label="AI Adoption Rate", value="67%", delta="+12 pp vs 2022", trend="up",
+    )
+    assert result == {
+        "type": "metric",
+        "label": "AI Adoption Rate",
+        "value": "67%",
+        "delta": "+12 pp vs 2022",
+        "unit": "",
+        "trend": "up",
+    }
+
+
+@pytest.mark.asyncio
+async def test_display_metric_rejects_bad_trend():
+    with pytest.raises(ValueError, match="trend"):
+        await tools.display_metric(label="X", value="1", trend="sideways")
+
+
+def test_resolve_python_keeps_venv_symlink(tmp_path):
+    """Regression: a venv's bin/python is a symlink to the base interpreter.
+    _resolve_python must NOT dereference it, or the kernel loses the venv's
+    site-packages (plotly, pandas, ...).
+    """
+    base = tmp_path / "base-python"
+    base.touch()
+    link = tmp_path / "venv" / "bin" / "python"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(base)
+
+    mgr = NotebookManager(notebooks_dir=tmp_path, kernel_python=str(link))
+    resolved = mgr._resolve_python()
+    assert resolved == link, f"symlink was dereferenced to {resolved}"
 
 
 # ── Event-loop regression tests ───────────────────────────────────────────

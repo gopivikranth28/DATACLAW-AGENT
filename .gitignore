@@ -29,6 +29,7 @@ Thumbs.db
 # Runtime data
 *.db
 *.sqlite
+mlruns/
 workspaces/
 docker-data/
 dataclaw-data/   # legacy bundled-compose mount path (now docker-data/dataclaw)
@@ -36,6 +37,9 @@ data/
 
 # Testing
 .pytest_cache/
+ui/test-results/
+ui/playwright-report/
+ui/blob-report/
 
 # Claude
 .claude/
@@ -46,3 +50,7 @@ CLAUDE.md
 ui/build/
 
 *.zip
+
+# Local-only planning, research, and documentation
+.local-planning/
+docs/

@@ -8,9 +8,12 @@ This allows reconnection, cancellation, and message queuing.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import uuid
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -35,6 +38,131 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 agent_router = APIRouter()
+
+APP_CELL_OUTPUT_TOOLS = {"execute_cell", "display_cell_output", "execute_code"}
+APP_REPORT_TOOLS = {"build_report", "report_design_report", "report_add_section", "report_publish"}
+
+
+def _stable_app_payload_key(payload: Any) -> str:
+    raw = json.dumps(payload, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _extract_visual_artifacts(
+    *,
+    tool_name: str,
+    tool_call_id: str,
+    tool_input: dict[str, Any],
+    result: Any,
+) -> list[dict[str, Any]]:
+    """Normalize loose visual tool results into compatibility App items.
+
+    Notebook cells remain the compute/reproducibility layer. The durable output
+    surface is dataclaw-artifacts; these items only keep older App views useful.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    artifacts: list[dict[str, Any]] = []
+
+    if tool_name == "display_metric" and isinstance(result, dict) and result.get("type") == "metric":
+        payload = {
+            "label": result.get("label", ""),
+            "value": result.get("value", ""),
+            "delta": result.get("delta", ""),
+            "unit": result.get("unit", ""),
+            "trend": result.get("trend", ""),
+        }
+        key = _stable_app_payload_key({"kind": "metric", "payload": payload})
+        artifacts.append({
+            "id": f"metric-{key}",
+            "kind": "metric",
+            "metric": payload,
+            "source_tool_call_id": tool_call_id,
+            "source_tool_name": tool_name,
+            "created_at": now,
+        })
+        return artifacts
+
+    if tool_name not in APP_CELL_OUTPUT_TOOLS or not isinstance(result, dict):
+        is_published_report = isinstance(result, dict) and (
+            tool_name != "report_publish"
+            or result.get("published") is True
+            or result.get("publication_status") == "published"
+        )
+        if tool_name in APP_REPORT_TOOLS and is_published_report and result.get("html_path"):
+            key = _stable_app_payload_key({"kind": "report", "html_path": result.get("html_path")})
+            artifacts.append({
+                "id": f"report-{key}",
+                "kind": "report",
+                "html_path": result.get("html_path"),
+                "title": result.get("title") or result.get("html_path", "Report").split("/")[-1],
+                "source_tool_call_id": tool_call_id,
+                "source_tool_name": tool_name,
+                "created_at": now,
+                "updated_at": now,
+            })
+        return artifacts
+
+    caption = result.get("caption") if isinstance(result.get("caption"), str) else ""
+    cell_index = result.get("cell_index")
+    outputs = result.get("outputs")
+    if not isinstance(outputs, list):
+        return artifacts
+
+    for out in outputs:
+        if not isinstance(out, dict) or out.get("type") != "plotly" or not out.get("figure"):
+            continue
+        figure = out["figure"]
+        key = _stable_app_payload_key({
+            "kind": "chart",
+            "figure_data": figure.get("data") if isinstance(figure, dict) else figure,
+        })
+        artifact: dict[str, Any] = {
+            "id": f"chart-{key}",
+            "kind": "chart",
+            "figure": figure,
+            "caption": caption,
+            "source_tool_call_id": tool_call_id,
+            "source_tool_name": tool_name,
+            "created_at": now,
+        }
+        if cell_index is not None:
+            artifact["cell_index"] = cell_index
+        if "cell_index" in tool_input:
+            artifact["source_cell_index"] = tool_input.get("cell_index")
+        artifacts.append(artifact)
+
+    return artifacts
+
+
+async def _append_visual_artifacts(
+    session_id: str,
+    artifacts: list[dict[str, Any]],
+) -> None:
+    if not artifacts:
+        return
+    session = await sessions.get_session(session_id)
+    if session is None:
+        return
+
+    existing = list(session.get("visualArtifacts") or [])
+    by_id = {a.get("id"): a for a in existing if isinstance(a, dict)}
+    order = [a.get("id") for a in existing if isinstance(a, dict)]
+
+    for artifact in artifacts:
+        artifact_id = artifact.get("id")
+        if not artifact_id:
+            continue
+        current = by_id.get(artifact_id)
+        if current:
+            if artifact.get("caption") and not current.get("caption"):
+                current["caption"] = artifact["caption"]
+            current["updated_at"] = artifact.get("created_at")
+        else:
+            by_id[artifact_id] = artifact
+            order.append(artifact_id)
+
+    merged = [by_id[i] for i in order if i in by_id]
+    await sessions.update_session(session_id, {"visualArtifacts": merged})
 
 
 # ── Agent Background Task ──────────────────────────────────────────────────
@@ -186,6 +314,21 @@ async def _run_agent_loop(
         # Agent loop with real streaming
         max_turns = int(resolve("app.max_turns", "DATACLAW_MAX_TURNS", "30"))
         _text_chunks: list[str] = []
+        tool_started_at: dict[str, str] = {}
+
+        def tool_timing(call_id: str) -> dict[str, str]:
+            """Persist the user-visible span of a tool call.
+
+            Session records used to receive only their append timestamp, which
+            made replayed notebook logs render every entry at +0:00.  Capture
+            both endpoints instead; the front end can then show a truthful
+            per-turn timeline after a refresh or reconnect.
+            """
+            finished_at = datetime.now(timezone.utc).isoformat()
+            return {
+                "startedAt": tool_started_at.pop(call_id, finished_at),
+                "finishedAt": finished_at,
+            }
 
         for turn in range(max_turns):
             msg_id = str(uuid.uuid4())
@@ -203,6 +346,7 @@ async def _run_agent_loop(
                     emit(emitter.text_delta(event.text, msg_id))
 
                 elif isinstance(event, ToolUseStartEvent):
+                    tool_started_at[event.call_id] = datetime.now(timezone.utc).isoformat()
                     emit(emitter.tool_call_start(event.call_id, event.tool_name))
 
                 elif isinstance(event, PendingToolCall):
@@ -338,7 +482,7 @@ async def _run_agent_loop(
                         "role": "tool_call", "messageId": f"tc-{call_id}",
                         "toolCallId": call_id, "toolName": orig.get("tool_name", "unknown"),
                         "args": json.dumps(orig.get("tool_input", {}), default=str),
-                        "result": result_json, "status": "error",
+                        "result": result_json, "status": "error", **tool_timing(call_id),
                     })
 
                 # For denied user-approval calls, emit the tool_call_result (but no extra guardrail card)
@@ -353,7 +497,7 @@ async def _run_agent_loop(
                         "role": "tool_call", "messageId": f"tc-{call_id}",
                         "toolCallId": call_id, "toolName": orig.get("tool_name", "unknown"),
                         "args": json.dumps(orig.get("tool_input", {}), default=str),
-                        "result": result_json, "status": "error",
+                        "result": result_json, "status": "error", **tool_timing(call_id),
                     })
 
                 # Rebuild pending list:
@@ -417,7 +561,7 @@ async def _run_agent_loop(
                             "role": "tool_call", "messageId": f"tc-{tc.call_id}",
                             "toolCallId": tc.call_id, "toolName": tc.tool_name,
                             "args": json.dumps(tc.tool_input, default=str),
-                            "result": result_json, "status": "error",
+                            "result": result_json, "status": "error", **tool_timing(tc.call_id),
                         })
                         continue
                     try:
@@ -435,11 +579,20 @@ async def _run_agent_loop(
                             "role": "tool_call", "messageId": f"tc-{tc.call_id}",
                             "toolCallId": tc.call_id, "toolName": tc.tool_name,
                             "args": json.dumps(tc.tool_input, default=str),
-                            "result": result_json, "status": "complete",
+                            "result": result_json, "status": "complete", **tool_timing(tc.call_id),
                         }
                         if llm_view_json != result_json:
                             msg_record["result_for_llm"] = llm_view_json
                         await sessions.append_message(thread_id, msg_record)
+                        await _append_visual_artifacts(
+                            thread_id,
+                            _extract_visual_artifacts(
+                                tool_name=tc.tool_name,
+                                tool_call_id=tc.call_id,
+                                tool_input=tc.tool_input,
+                                result=result,
+                            ),
+                        )
                     except Exception as e:
                         logger.exception("Tool %s failed", tc.tool_name)
                         results_list.append({})
@@ -450,7 +603,7 @@ async def _run_agent_loop(
                             "role": "tool_call", "messageId": f"tc-{tc.call_id}",
                             "toolCallId": tc.call_id, "toolName": tc.tool_name,
                             "args": json.dumps(tc.tool_input, default=str),
-                            "result": result_json, "status": "error",
+                            "result": result_json, "status": "error", **tool_timing(tc.call_id),
                         })
 
                 # Build canonical messages and append to conversation. Use the
@@ -916,26 +1069,15 @@ class CreateSessionRequest(BaseModel):
 
 @router.get("/sessions")
 async def list_chat_sessions(project_id: str | None = None) -> list[dict[str, Any]]:
-    return await sessions.list_sessions(project_id)
+    # The Chats destination contains independent sessions only. Project pages
+    # deliberately pass their id and receive only their own sessions.
+    return await sessions.list_sessions(project_id, independent_only=project_id is None)
 
 
 @router.post("/sessions")
 async def create_chat_session(req: CreateSessionRequest) -> dict[str, Any]:
     dataset_ids = req.dataset_ids
     project_id = req.project_id
-    session_id: str | None = None
-
-    # Auto-create a session-scoped project so notebooks and files have a home
-    if not project_id:
-        from dataclaw_projects.registry import create_project
-        from dataclaw.config.paths import workspaces_dir
-
-        session_id = str(uuid.uuid4())
-        project = create_project(
-            name=req.title or "New Chat",
-            directory=str(workspaces_dir() / session_id),
-        )
-        project_id = project["id"]
 
     # Seed from project defaults if not explicitly provided
     tool_ids = req.tool_ids
@@ -957,7 +1099,7 @@ async def create_chat_session(req: CreateSessionRequest) -> dict[str, Any]:
             pass
 
     return await sessions.create_session(
-        session_id=session_id, project_id=project_id,
+        project_id=project_id,
         title=req.title, dataset_ids=dataset_ids,
         tool_ids=tool_ids, skill_ids=skill_ids, subagent_ids=subagent_ids,
     )
@@ -971,6 +1113,58 @@ async def get_chat_session(session_id: str) -> dict[str, Any]:
     return session
 
 
+def _workspace_tree(root: Path) -> list[dict[str, Any]]:
+    if not root.exists():
+        return []
+    items: list[dict[str, Any]] = []
+    try:
+        for path in sorted(root.iterdir()):
+            if path.name.startswith(".") or path.name == "__pycache__":
+                continue
+            item: dict[str, Any] = {
+                "name": path.name,
+                "path": str(path),
+                "is_dir": path.is_dir(),
+                "size": path.stat().st_size if path.is_file() else 0,
+            }
+            if path.is_dir():
+                item["children"] = _workspace_tree(path)
+            items.append(item)
+    except OSError:
+        logger.warning("Could not read workspace files at %s", root)
+    return items
+
+
+@router.get("/sessions/{session_id}/files")
+async def get_chat_session_files(session_id: str) -> dict[str, Any]:
+    """Return the files that belong to one chat session and its project context.
+
+    A project chat can create session-specific outputs as well as reference the
+    project's shared workspace.  Keep those trees separate so the Files panel
+    does not hide generated work merely because the chat belongs to a project.
+    """
+    session = await sessions.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    from dataclaw.config.paths import workspaces_dir
+
+    session_files = _workspace_tree(workspaces_dir() / session_id)
+    project_id = session.get("projectId")
+    if project_id:
+        try:
+            from dataclaw_projects.registry import list_project_files
+            return {
+                "files": session_files,
+                "projectFiles": list_project_files(project_id).get("project", []),
+                "kind": "project",
+            }
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+    return {"files": session_files, "kind": "session"}
+
+
 class UpdateSessionRequest(BaseModel):
     title: str | None = None
     datasetIds: list[str] | None = None
@@ -981,6 +1175,12 @@ class UpdateSessionRequest(BaseModel):
     autoMessage: str | None = None
     maxAutoTurns: int | None = None
     autoTurnsUsed: int | None = None
+    queuedMessages: list[dict[str, Any]] | None = None
+    queuePaused: bool | None = None
+    # Compatibility App view curation (hidden element ids + chart order) —
+    # read by the legacy /app/<session-id> route, so it must live on the session,
+    # not in the author's browser.
+    appLayout: dict[str, Any] | None = None
 
 
 @router.patch("/sessions/{session_id}")
@@ -1014,14 +1214,103 @@ class IncomingMessage(BaseModel):
     role: str = "assistant"
     content: str = ""
     messageId: str | None = None
+    toolCallId: str | None = None
+    toolName: str | None = None
+    args: Any | None = None
+    result: Any | None = None
+    result_for_llm: str | None = None
+    status: str | None = None
+    startedAt: str | None = None
+    finishedAt: str | None = None
 
 
 @router.post("/sessions/{session_id}/message")
 async def receive_message(session_id: str, msg: IncomingMessage) -> dict[str, Any]:
     """Persist a message to a session. Used by OpenClaw's fire-and-forget callback."""
-    await sessions.append_message(session_id, {
-        "role": msg.role,
-        "content": msg.content,
-        **({"messageId": msg.messageId} if msg.messageId else {}),
-    })
+    message_id = msg.messageId or f"msg-{uuid.uuid4()}"
+
+    existing = await sessions.get_session(session_id)
+    if existing and any(m.get("messageId") == message_id for m in existing.get("messages", [])):
+        return {"ok": True, "duplicate": True}
+
+    record: dict[str, Any]
+    if msg.role == "tool_call":
+        tool_call_id = msg.toolCallId or message_id
+        tool_name = _normalize_openclaw_tool_name(msg.toolName or "unknown")
+        args_text = _json_text(msg.args if msg.args is not None else {})
+        result_text = _json_text(msg.result if msg.result is not None else msg.content)
+        try:
+            parsed_args = json.loads(args_text) if args_text else {}
+        except Exception:
+            parsed_args = {}
+        try:
+            parsed_result = json.loads(result_text) if result_text else result_text
+        except Exception:
+            parsed_result = result_text
+        result_for_llm = msg.result_for_llm or _json_text(redact_for_llm(parsed_result))
+        record = {
+            "role": "tool_call",
+            "messageId": message_id,
+            "toolCallId": tool_call_id,
+            "toolName": tool_name,
+            "args": args_text,
+            "result": result_text,
+            "result_for_llm": result_for_llm,
+            "status": msg.status or "complete",
+        }
+        if msg.startedAt:
+            record["startedAt"] = msg.startedAt
+        if msg.finishedAt:
+            record["finishedAt"] = msg.finishedAt
+        await sessions.append_message(session_id, record)
+
+        await _append_visual_artifacts(
+            session_id,
+            _extract_visual_artifacts(
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+                tool_input=parsed_args if isinstance(parsed_args, dict) else {},
+                result=parsed_result,
+            ),
+        )
+        _emit_external_tool_call(session_id, record)
+    else:
+        record = {
+            "role": msg.role,
+            "content": msg.content,
+            "messageId": message_id,
+        }
+        await sessions.append_message(session_id, record)
     return {"ok": True}
+
+
+def _json_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, default=str)
+
+
+def _normalize_openclaw_tool_name(tool_name: str) -> str:
+    return tool_name.removeprefix("dataclaw_")
+
+
+def _emit_external_tool_call(session_id: str, record: dict[str, Any]) -> None:
+    tracker = get_run_tracker()
+    run = tracker.get_run(session_id)
+    if run is None:
+        return
+
+    emitter = AgentEventEmitter(session_id, run.run_id)
+    tool_call_id = record.get("toolCallId") or record.get("messageId") or str(uuid.uuid4())
+    tool_name = record.get("toolName") or "unknown"
+    tracker.append_event(session_id, emitter.tool_call_start(tool_call_id, tool_name))
+    tracker.append_event(session_id, emitter.tool_call_args(tool_call_id, record.get("args") or "{}"))
+    tracker.append_event(session_id, emitter.tool_call_end(tool_call_id))
+    tracker.append_event(
+        session_id,
+        emitter.tool_call_result(
+            tool_call_id,
+            record.get("result") or "",
+            f"result-{tool_call_id}",
+        ),
+    )

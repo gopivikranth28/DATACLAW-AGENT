@@ -15,7 +15,7 @@ from typing import Any
 import nbformat
 
 from dataclaw_notebooks.manager import NotebookManager
-from dataclaw_notebooks.helpers import cell_summary, format_cell_outputs, outputs_to_nbformat
+from dataclaw_notebooks.helpers import cell_summary, format_cell_outputs, outputs_to_nbformat, source_sha256
 
 # The manager is set during plugin registration
 _manager: NotebookManager | None = None
@@ -90,8 +90,9 @@ async def read_cell(*, cell_index: int, **kw: Any) -> dict[str, Any]:
     _validate_index(cell_index, len(state.notebook.cells))
     cell = state.notebook.cells[cell_index]
     return {
-        "index": cell_index, "cell_type": cell.cell_type,
+        "index": cell_index, "cell_index": cell_index, "cell_id": cell.get("id", ""), "cell_type": cell.cell_type,
         "source": cell.source, "execution_count": cell.get("execution_count"),
+        "source_sha256": source_sha256(cell.source),
         "outputs": format_cell_outputs(cell),
     }
 
@@ -121,8 +122,10 @@ async def insert_cell(*, index: int = -1, cell_type: str = "code", source: str =
     return {
         "inserted_at": actual,
         "cell_index": actual,
+        "cell_id": new_cell.get("id", ""),
         "cell_type": cell_type,
         "source": source,
+        "source_sha256": source_sha256(source),
         "num_cells": len(cells),
     }
 
@@ -134,7 +137,8 @@ async def edit_cell(*, cell_index: int, new_source: str, **kw: Any) -> dict[str,
     state.notebook.cells[cell_index].source = new_source
     state.dirty = True
     await _mgr().save(state.name)
-    return {"cell_index": cell_index, "diff": _diff(old, new_source)}
+    cell = state.notebook.cells[cell_index]
+    return {"cell_index": cell_index, "cell_id": cell.get("id", ""), "source_sha256": source_sha256(new_source), "diff": _diff(old, new_source)}
 
 
 async def edit_cell_source(*, cell_index: int, old_string: str, new_string: str, replace_all: bool = False, **kw: Any) -> dict[str, Any]:
@@ -147,7 +151,8 @@ async def edit_cell_source(*, cell_index: int, old_string: str, new_string: str,
     state.notebook.cells[cell_index].source = new_source
     state.dirty = True
     await _mgr().save(state.name)
-    return {"cell_index": cell_index, "diff": _diff(source, new_source)}
+    cell = state.notebook.cells[cell_index]
+    return {"cell_index": cell_index, "cell_id": cell.get("id", ""), "source_sha256": source_sha256(new_source), "diff": _diff(source, new_source)}
 
 
 async def move_cell(*, source_index: int, target_index: int, **kw: Any) -> dict[str, Any]:
@@ -190,7 +195,7 @@ async def execute_cell(*, cell_index: int, timeout: int = 120, **kw: Any) -> dic
         raise ValueError(f"Cell {cell_index} is {cell.cell_type}, not code")
     source = cell.source
     if not source.strip():
-        return {"cell_index": cell_index, "source": source, "outputs": [], "error": None}
+        return {"cell_index": cell_index, "cell_id": cell.get("id", ""), "source": source, "source_sha256": source_sha256(source), "outputs": [], "error": None}
 
     if not state.kernel_alive:
         await _mgr().start_kernel(state.name)
@@ -201,7 +206,14 @@ async def execute_cell(*, cell_index: int, timeout: int = 120, **kw: Any) -> dic
     cell.execution_count = max_count + 1
     state.dirty = True
     await _mgr().save(state.name)
-    return {"cell_index": cell_index, "source": source, "outputs": outputs, "error": error}
+    return {
+        "cell_index": cell_index,
+        "cell_id": cell.get("id", ""),
+        "source": source,
+        "source_sha256": source_sha256(source),
+        "outputs": outputs,
+        "error": error,
+    }
 
 
 async def execute_code(*, code: str, timeout: int = 120, **kw: Any) -> dict[str, Any]:
@@ -212,6 +224,28 @@ async def execute_code(*, code: str, timeout: int = 120, **kw: Any) -> dict[str,
     return {"outputs": outputs, "error": error}
 
 
+async def display_metric(
+    *,
+    label: str,
+    value: str,
+    delta: str = "",
+    unit: str = "",
+    trend: str = "",
+    **kw: Any,
+) -> dict[str, Any]:
+    """Display a metric tile — a key number with a label and optional change indicator."""
+    if trend not in ("", "up", "down", "flat"):
+        raise ValueError(f"trend must be 'up', 'down', 'flat', or empty — got {trend!r}")
+    return {
+        "type": "metric",
+        "label": label,
+        "value": value,
+        "delta": delta,
+        "unit": unit,
+        "trend": trend,
+    }
+
+
 async def display_cell_output(*, cell_index: int, caption: str = "", **kw: Any) -> dict[str, Any]:
     state = _mgr().get_current()
     _validate_index(cell_index, len(state.notebook.cells))
@@ -219,7 +253,14 @@ async def display_cell_output(*, cell_index: int, caption: str = "", **kw: Any) 
     outputs = format_cell_outputs(cell)
     if not outputs:
         raise ValueError(f"Cell {cell_index} has no outputs. Execute it first.")
-    return {"cell_index": cell_index, "output_count": len(outputs), "outputs": outputs, "caption": caption}
+    return {
+        "cell_index": cell_index,
+        "cell_id": cell.get("id", ""),
+        "source_sha256": source_sha256(cell.source),
+        "output_count": len(outputs),
+        "outputs": outputs,
+        "caption": caption,
+    }
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -272,6 +313,14 @@ async def _execute_and_collect(kc: Any, code: str, timeout: int) -> list[dict]:
                     "type": "image",
                     "mimetype": "image/png",
                     "data": data["image/png"],
+                    "summary": data.get("text/plain", ""),
+                })
+            # Plotly emits both the JSON MIME and a text/html fallback;
+            # this branch must come before text/html to keep the JSON.
+            elif "application/vnd.plotly.v1+json" in data:
+                outputs.append({
+                    "type": "plotly",
+                    "figure": data["application/vnd.plotly.v1+json"],
                     "summary": data.get("text/plain", ""),
                 })
             elif "text/html" in data:

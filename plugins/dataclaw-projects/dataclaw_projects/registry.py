@@ -71,6 +71,7 @@ def get_project(project_id: str) -> dict[str, Any]:
 # Required — always installed (DataClaw runtime + experiment tracking)
 REQUIRED_PACKAGES = [
     "ipykernel",       # Jupyter kernel support
+    "nbformat>=4.2.0", # Plotly fig.show() mime rendering refuses to run without it
     "requests",        # DataClaw runtime API calls
     "duckdb",          # DataClaw SQL queries
     "mlflow",          # Experiment logging

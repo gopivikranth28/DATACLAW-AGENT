@@ -87,7 +87,7 @@ export default {
           async execute(_id: string, params: Record<string, unknown>) {
             const toolParams = withContext(params as Record<string, unknown>, ctx);
             logToolCall(api, tool.name, toolParams);
-            const result = await client.callTool(tool.name, toolParams);
+            const result = await client.callTool(tool.name, toolParams, _id);
             return toOpenClawToolResult(result);
           },
         }),

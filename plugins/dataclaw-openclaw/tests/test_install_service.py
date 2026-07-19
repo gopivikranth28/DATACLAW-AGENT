@@ -12,6 +12,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+import dataclaw.config.paths as paths
+import dataclaw_openclaw.openclaw_install_service as install_service
 from dataclaw_openclaw.openclaw_install_service import (
     PLUGIN_MANIFEST_FILENAME,
     build_batch_entries,
@@ -19,6 +21,7 @@ from dataclaw_openclaw.openclaw_install_service import (
     read_plugin_manifest,
     resolve_channel_section_values,
     resolve_plugin_entry_config_values,
+    validate_report_tool_manifest,
     write_plugin_manifest_contracts_tools,
 )
 
@@ -29,6 +32,17 @@ def _write_manifest(tmp_path: Path, manifest: dict) -> Path:
     plugin_dir.mkdir(parents=True, exist_ok=True)
     (plugin_dir / PLUGIN_MANIFEST_FILENAME).write_text(json.dumps(manifest))
     return plugin_dir
+
+
+@pytest.fixture(autouse=True)
+def isolate_openclaw_install_state(tmp_path: Path, monkeypatch):
+    """Never let installer tests overwrite the user's real sync snapshot."""
+    monkeypatch.setattr(paths, "DATACLAW_HOME", tmp_path / "dataclaw-home")
+
+
+async def _empty_async_events(*_args, **_kwargs):
+    if False:  # pragma: no cover - keeps this an async generator
+        yield {}
 
 
 # ── Pure helpers ────────────────────────────────────────────────────────────
@@ -76,6 +90,34 @@ def test_resolve_plugin_entry_config_values_picks_up_dataclaw_cfg() -> None:
     )
 
     assert resolved == {"toolsPrefix": "dc_", "toolsOptional": True}
+
+
+def test_report_tool_manifest_requires_the_governed_publish_parameters() -> None:
+    issues = validate_report_tool_manifest([
+        {"name": "report_design_report", "parameters": {"type": "object", "properties": {}}},
+        {"name": "report_publish", "parameters": {"type": "object", "properties": {}}},
+        {"name": "publish_artifact", "parameters": {"type": "object", "properties": {}}},
+    ])
+
+    assert "report_design_report missing properties: design_passes, visual_author" in issues
+    assert "report_publish missing properties: require_visual_review" in issues
+    assert "publish_artifact missing properties: report_receipt_path" in issues
+    assert "report_publish is present but report_review_visuals is unavailable" in issues
+
+
+def test_report_tool_manifest_accepts_a_complete_governed_publish_flow() -> None:
+    tools = [
+        {"name": "report_design_report", "parameters": {"properties": {"design_passes": {}, "visual_author": {}}}},
+        {"name": "report_review_visuals", "parameters": {"properties": {}}},
+        {"name": "report_publish", "parameters": {"properties": {"require_visual_review": {}}}},
+        {"name": "publish_artifact", "parameters": {"properties": {"report_receipt_path": {}}}},
+    ]
+
+    assert validate_report_tool_manifest(tools) == []
+
+
+def test_report_tool_manifest_requires_a_live_registry_snapshot() -> None:
+    assert validate_report_tool_manifest(None) == ["live Dataclaw tool registry is unavailable"]
 
 
 def test_build_batch_entries_appends_to_tools_allow_when_no_profile() -> None:
@@ -331,6 +373,24 @@ async def test_install_plugin_atomic_pre_flight_fails_on_missing_dir(
 
 
 @pytest.mark.asyncio
+async def test_install_plugin_atomic_refuses_to_reuse_a_stale_generated_manifest(tmp_path: Path) -> None:
+    plugin_dir = _write_manifest(tmp_path, {"id": "dataclaw"})
+
+    events = []
+    async for event in install_plugin_atomic(
+        plugin_dir=plugin_dir,
+        openclaw_cfg={},
+        argv=["openclaw"],
+        tools=None,
+    ):
+        events.append(event)
+
+    assert len(events) == 1
+    assert events[0]["exit_code"] == 1
+    assert "live Dataclaw tool registry is unavailable" in events[0]["error"]
+
+
+@pytest.mark.asyncio
 async def test_install_plugin_atomic_happy_path(tmp_path: Path) -> None:
     plugin_dir = _write_manifest(
         tmp_path,
@@ -372,7 +432,17 @@ async def test_install_plugin_atomic_happy_path(tmp_path: Path) -> None:
             openclaw_cfg={"token": "tok"},
             argv=["openclaw"],
             also_allow_addition="dataclaw",
-            tools=[{"name": "demo", "description": "d", "parameters": {}}],
+            tools=[
+                {"name": "demo", "description": "d", "parameters": {}},
+                {
+                    "name": "report_design_report",
+                    "description": "Design cohesive analytical reports",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"design_passes": {}, "visual_author": {}},
+                    },
+                },
+            ],
         ):
             events.append(event)
 
@@ -383,6 +453,7 @@ async def test_install_plugin_atomic_happy_path(tmp_path: Path) -> None:
     assert refreshed.exists()
     body = refreshed.read_text()
     assert 'name: "demo"' in body
+    assert 'name: "report_design_report"' in body
     assert "DATACLAW_TOOL_MANIFEST" in body
 
     # And it should have mirrored the tool list into openclaw.plugin.json's
@@ -392,7 +463,10 @@ async def test_install_plugin_atomic_happy_path(tmp_path: Path) -> None:
     refreshed_manifest = json.loads(
         (plugin_dir / PLUGIN_MANIFEST_FILENAME).read_text()
     )
-    assert refreshed_manifest["contracts"]["tools"] == ["dataclaw_demo"]
+    assert refreshed_manifest["contracts"]["tools"] == [
+        "dataclaw_demo",
+        "dataclaw_report_design_report",
+    ]
 
     # Expected subprocess calls (in order). Channel config writes happen AFTER
     # plugin install: OpenClaw 2026.5's plugin-install commit hard-fails on
@@ -454,3 +528,44 @@ async def test_install_plugin_atomic_happy_path(tmp_path: Path) -> None:
     assert paths["tools.allow"] == ["group:openclaw", "dataclaw"]
     assert "plugins.entries.dataclaw.enabled" in paths
     assert "plugins.allow" not in paths
+
+
+@pytest.mark.asyncio
+async def test_install_plugin_uses_config_unset_for_existing_orphan_channel(tmp_path: Path, monkeypatch) -> None:
+    plugin_dir = _write_manifest(tmp_path, {"id": "dataclaw"})
+    calls: list[list[str]] = []
+
+    async def fake_stream(argv: list[str], cwd: Path | None = None):
+        calls.append(argv)
+        yield {"_rc": 0}
+
+    async def fake_build(_plugin_dir: Path):
+        yield {"line": "built"}
+
+    async def fake_channel_section(*_args, **_kwargs):
+        return {"dataclawApiUrl": "http://legacy"}
+
+    monkeypatch.setattr(install_service, "_stream_subprocess", fake_stream)
+    monkeypatch.setattr(install_service, "build_plugin_runtime", fake_build)
+    monkeypatch.setattr(install_service, "_wait_for_gateway", _empty_async_events)
+    monkeypatch.setattr(install_service, "fetch_current_channel_section", fake_channel_section)
+    monkeypatch.setattr(install_service, "fetch_current_also_allow", AsyncMock(return_value=[]))
+    monkeypatch.setattr(install_service, "fetch_current_tools_allow", AsyncMock(return_value=[]))
+    monkeypatch.setattr(install_service, "fetch_current_tools_profile", AsyncMock(return_value=None))
+    monkeypatch.setattr(install_service, "fetch_current_plugins_allow", AsyncMock(return_value=[]))
+    monkeypatch.setattr(install_service, "fetch_current_plugin_entry_config", AsyncMock(return_value={}))
+    monkeypatch.setattr(install_service, "fetch_current_plugin_enabled", AsyncMock(return_value=False))
+
+    events = [
+        event
+        async for event in install_plugin_atomic(
+            plugin_dir=plugin_dir,
+            openclaw_cfg={},
+            argv=["openclaw"],
+            tools=[{"name": "demo", "description": "Demo tool", "parameters": {}}],
+        )
+    ]
+
+    assert ["openclaw", "config", "unset", "channels.dataclaw"] in calls
+    assert not any("--batch-json" in call and "channels.dataclaw" in call for call in calls)
+    assert events[-1] == {"exit_code": 0}

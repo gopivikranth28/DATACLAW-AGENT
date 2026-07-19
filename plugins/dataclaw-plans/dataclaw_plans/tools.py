@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+import copy
 from datetime import datetime, timezone
 from typing import Any
 
@@ -16,6 +17,56 @@ from dataclaw_plans.store import (
     get_active_plan_id,
     append_snapshot,
 )
+from dataclaw_plans.gates import (
+    accept_gate_risk,
+    append_ready_check_event,
+    blocking_gates,
+)
+
+
+def _new_step_id() -> str:
+    return f"step-{uuid.uuid4().hex[:8]}"
+
+
+def _step_identity(step: dict[str, Any]) -> str:
+    explicit = str(step.get("plan_step_id") or step.get("id") or step.get("step_id") or "").strip()
+    if explicit:
+        return explicit
+    return ""
+
+
+def _normalize_steps(steps: list[dict[str, Any]], previous_steps: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    previous = previous_steps or []
+    previous_by_id = {_step_identity(s): s for s in previous if _step_identity(s)}
+    previous_by_name: dict[str, list[dict[str, Any]]] = {}
+    for step in previous:
+        name_key = str(step.get("name") or "").strip().lower()
+        if name_key:
+            previous_by_name.setdefault(name_key, []).append(step)
+
+    normalized: list[dict[str, Any]] = []
+    for raw in steps:
+        name = str(raw.get("name", "")).strip()
+        description = str(raw.get("description", "")).strip()
+        provided_id = _step_identity(raw)
+        prior = previous_by_id.get(provided_id) if provided_id else None
+        if prior is None and name:
+            name_matches = previous_by_name.get(name.lower(), [])
+            if len(name_matches) == 1:
+                prior = name_matches[0]
+        prior_id = _step_identity(prior) if prior else ""
+        step_id = provided_id or prior_id or _new_step_id()
+        normalized.append({
+            "plan_step_id": step_id,
+            "name": name,
+            "description": description,
+            "status": str(raw.get("status") or "not_started"),
+            "summary": str(raw.get("summary") or ""),
+            "outputs": raw.get("outputs") or [],
+            "ready_for_validation": bool(raw.get("ready_for_validation", False)),
+            "gates": copy.deepcopy((prior or {}).get("gates") or {}),
+        })
+    return normalized
 
 
 async def propose_plan(
@@ -24,6 +75,7 @@ async def propose_plan(
     description: str,
     steps: list[dict[str, Any]],
     context: str = "",
+    plan_markdown: str = "",
     session_id: str = "default",
     _auto_approve: bool = False,
     **kw: Any,
@@ -36,32 +88,29 @@ async def propose_plan(
     if not steps:
         raise ValueError("At least one step is required")
 
-    normalized = [
-        {
-            "name": str(s.get("name", "")).strip(),
-            "description": str(s.get("description", "")).strip(),
-            "status": str(s.get("status") or "not_started"),
-            "summary": str(s.get("summary") or ""),
-            "outputs": s.get("outputs") or [],
-        }
-        for s in steps
-    ]
-    for s in normalized:
-        if not s["name"] or not s["description"]:
-            raise ValueError("Each step requires name and description")
-
     proposals = read_proposals()
-    now = datetime.now(timezone.utc).isoformat()
 
-    # Auto-resolve: overwrite most recent unapproved plan for this session
+    # Auto-resolve: overwrite most recent unapproved plan for this session.
+    # Grab it before normalizing so revised plans can keep stable step ids.
     unapproved = next(
         (p for p in proposals if p.get("session_id") == session_id and p.get("status") in ("pending", "changes_requested")),
         None,
     )
 
+    normalized = _normalize_steps(steps, unapproved.get("steps", []) if unapproved else None)
+    for s in normalized:
+        if not s["name"] or not s["description"]:
+            raise ValueError("Each step requires name and description")
+
+    now = datetime.now(timezone.utc).isoformat()
+    previous_snapshot = None
+    previous_feedback = ""
+
     if unapproved:
+        previous_feedback = str(unapproved.get("feedback") or "")
+        previous_snapshot = append_snapshot(unapproved, trigger="pre_revise")
         unapproved.update({
-            "name": name, "description": description, "context": context,
+            "name": name, "description": description, "context": context, "plan_markdown": plan_markdown,
             "steps": normalized, "status": "pending",
             "updated_at": now, "decision": None, "feedback": "",
             "revision": int(unapproved.get("revision", 1)) + 1,
@@ -72,7 +121,7 @@ async def propose_plan(
         proposal = {
             "id": f"plan-{uuid.uuid4().hex[:8]}",
             "iteration": iteration,
-            "name": name, "description": description, "context": context,
+            "name": name, "description": description, "context": context, "plan_markdown": plan_markdown,
             "session_id": session_id,
             "steps": normalized,
             "status": "pending",
@@ -96,7 +145,7 @@ async def propose_plan(
 
     write_proposals(proposals)
     snapshot = append_snapshot(proposal, trigger="propose")
-    return {
+    result = {
         "proposal_id": proposal["id"],
         "snapshot_id": snapshot["id"],
         "status": proposal["status"],
@@ -106,6 +155,11 @@ async def propose_plan(
             else "Plan submitted — awaiting user decision."
         ),
     }
+    if previous_snapshot:
+        result["previous_snapshot_id"] = previous_snapshot["id"]
+    if previous_feedback:
+        result["previous_feedback"] = previous_feedback
+    return result
 
 
 async def update_plan(
@@ -128,13 +182,74 @@ async def update_plan(
         existing = proposal.get("steps", [])
         for update in patches:
             step_name = str(update.get("name", "")).strip()
-            if not step_name:
-                raise ValueError("Each step update requires name")
-            match = next((s for s in existing if s.get("name") == step_name), None)
+            step_id = _step_identity(update)
+            if not step_id and not step_name:
+                raise ValueError("Each step update requires plan_step_id or name")
+            match = next((s for s in existing if step_id and _step_identity(s) == step_id), None)
+            if match is None and not step_id:
+                matches = [s for s in existing if s.get("name") == step_name]
+                if len(matches) > 1:
+                    raise ValueError(f"Step name is ambiguous; use plan_step_id: {step_name}")
+                match = matches[0] if matches else None
             if match is None:
-                match = {"name": step_name, "description": "", "status": "not_started"}
+                if step_id and not step_name:
+                    raise ValueError(f"Unknown plan_step_id requires name: {step_id}")
+                match = {"plan_step_id": step_id or _new_step_id(), "name": step_name, "description": "", "status": "not_started"}
                 existing.append(match)
-            for key in ("description", "status", "summary", "outputs", "note"):
+
+            candidate = copy.deepcopy(match)
+            if step_id:
+                candidate["plan_step_id"] = step_id
+            elif not candidate.get("plan_step_id"):
+                candidate["plan_step_id"] = _step_identity(candidate) or _new_step_id()
+            candidate.pop("id", None)
+            candidate.pop("step_id", None)
+            for key in ("name", "description", "status", "summary", "outputs", "note", "ready_for_validation"):
+                if key in update:
+                    candidate[key] = update[key]
+
+            if update.get("ready_for_validation") is True:
+                blockers = await blocking_gates(proposal, candidate)
+                if blockers:
+                    append_ready_check_event(
+                        proposal_id=proposal["id"],
+                        plan_step_id=str(candidate.get("plan_step_id") or ""),
+                        requested=True,
+                        outcome="blocked",
+                        blocking=blockers,
+                    )
+                    return {
+                        "success": False,
+                        "proposal_id": proposal["id"],
+                        "error": {
+                            "code": "gate_blocked",
+                            "plan_step_id": candidate.get("plan_step_id"),
+                            "blocking_gates": blockers,
+                        },
+                    }
+                append_ready_check_event(
+                    proposal_id=proposal["id"],
+                    plan_step_id=str(candidate.get("plan_step_id") or ""),
+                    requested=True,
+                    outcome="allowed",
+                    blocking=[],
+                )
+            elif update.get("ready_for_validation") is False:
+                append_ready_check_event(
+                    proposal_id=proposal["id"],
+                    plan_step_id=str(candidate.get("plan_step_id") or ""),
+                    requested=False,
+                    outcome="allowed",
+                    blocking=[],
+                )
+
+            if step_id:
+                match["plan_step_id"] = step_id
+            elif not match.get("plan_step_id"):
+                match["plan_step_id"] = _step_identity(match) or _new_step_id()
+            match.pop("id", None)
+            match.pop("step_id", None)
+            for key in ("name", "description", "status", "summary", "outputs", "note", "ready_for_validation"):
                 if key in update:
                     match[key] = update[key]
             match["updated_at"] = datetime.now(timezone.utc).isoformat()
