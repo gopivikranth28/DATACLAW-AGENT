@@ -1,4 +1,4 @@
-"""Tests for full-document creative authoring and bounded visual editing."""
+"""Tests for full-document creative authoring under the single-path contract."""
 
 from __future__ import annotations
 
@@ -21,13 +21,9 @@ from dataclaw_workspace.report_renderer import (
 from dataclaw_workspace.tools import report_design_report, report_publish
 from dataclaw_workspace.visual_author import (
     VisualAuthorRequiredError,
-    apply_visual_spec,
     author_report_visuals,
     build_creative_author_dossier,
-    build_visual_author_catalog,
     validate_authored_document,
-    visual_author_config,
-    validate_visual_spec,
 )
 
 
@@ -119,82 +115,6 @@ def _authored_html(*, title: str = "Customer intervention brief", claim: str | N
 </html>'''
 
 
-def _multi_surface_storyboard() -> dict:
-    storyboard = _storyboard()
-    storyboard["section_plan"].insert(1, {
-        "section_type": "chart_interpretation",
-        "layout_role": "renewal_evidence",
-        "data": {
-            "title": "Renewal evidence",
-            "caption": "Aggregate renewal evidence by customer age.",
-            "figure": {"data": [{"type": "bar", "x": ["New", "Mature"], "y": [61, 84]}]},
-            "interpretation": "New customers renew less often.",
-            "display_facts": [
-                {"fact_id": "cohort-window", "text": "First 90 days", "uses": ["pill"]},
-                {"fact_id": "renewal-gap", "text": "23-point renewal gap", "uses": ["scan_point"]},
-                {"fact_id": "renewal-note", "text": "Observed cohorts only", "uses": ["annotation"]},
-            ],
-        },
-    })
-    storyboard["section_plan"].append({
-        "section_type": "insight_grid",
-        "layout_role": "secondary_insights",
-        "data": {
-            "title": "Secondary finding",
-            "items": [{
-                "finding_id": "find-mature-customers",
-                "title": "Mature customers are stable",
-                "detail": "The mature cohort is less volatile.",
-                "bullets": ["Higher renewal rate"],
-            }],
-        },
-    })
-    return storyboard
-
-
-@pytest.mark.asyncio
-async def test_runtime_visual_author_materializes_only_selected_source_facts():
-    storyboard = _storyboard()
-    response = {
-        "schema": 1,
-        "theme": "ocean",
-        "sections": [{
-            "section_id": "primary_insights",
-            "surface": "quiet",
-            "layout": "editorial_list",
-            "evidence_presentation": "linked",
-        }],
-        "insights": [{
-            "insight_id": "find-new-customers",
-            "pills": [{"fact_id": "find-new-customers-pill-1", "tone": "accent"}],
-            "scan_points": ["find-new-customers-scan-1"],
-            "examples": ["find-new-customers-example-1"],
-        }],
-    }
-
-    authored, record = await author_report_visuals(
-        storyboard,
-        config={"mode": "runtime"},
-        llm=_JSONLLM(response),
-    )
-
-    assert record["status"] == "applied"
-    assert record["source"] == "runtime"
-    primary = next(item for item in authored["section_plan"] if item["layout_role"] == "primary_insights")
-    insight = primary["data"]["items"][0]
-    assert primary["data"]["layout_variant"] == "editorial_list"
-    assert insight["display_pills"] == [{"label": "First 90 days", "tone": "accent"}]
-    assert insight["scan_points"] == ["Lowest renewal rate"]
-    assert insight["representative_examples"] == ["Self-serve customers"]
-    assert authored["visual_theme"]["name"] == "ocean"
-
-    html = render_report_from_storyboard(authored)
-    assert "--dc-accent: #0369a1" in html
-    assert "r-insight-grid is-editorial_list" in html
-    assert "Examples" in html
-    assert "Self-serve customers" in html
-
-
 @pytest.mark.asyncio
 async def test_creative_visual_author_writes_full_html_prose_and_custom_visuals_from_dossier():
     storyboard = _ledger_backed_storyboard()
@@ -255,84 +175,9 @@ async def test_creative_visual_author_writes_full_html_prose_and_custom_visuals_
     assert "authored_evidence_review_failed" in {item["code"] for item in review_quality["warnings"]}
 
 
-@pytest.mark.parametrize(
-    ("layout_html", "css", "message"),
-    [
-        (
-            '<div>{{section:opening_context}}{{section:executive_readout}}</div>',
-            ".r-page{display:grid}",
-            "every supplied section exactly once",
-        ),
-        (
-            '<div>New claim{{section:opening_context}}{{section:executive_readout}}{{section:primary_insights}}</div>',
-            ".r-page{display:grid}",
-            "not visible text",
-        ),
-        (
-            '<script>{{section:opening_context}}</script><div>{{section:executive_readout}}{{section:primary_insights}}</div>',
-            ".r-page{display:grid}",
-            "cannot use <script>",
-        ),
-        (
-            '<div>{{section:opening_context}}{{section:executive_readout}}{{section:primary_insights}}</div>',
-            ".r-page{background:url(https://example.test/pixel.png)}",
-            "remote or embedded assets",
-        ),
-        (
-            '<div>{{section:opening_context}}{{section:executive_readout}}{{section:primary_insights}}</div>',
-            '.r-page::before{content:"Unsupported conclusion"}',
-            "generated visible copy",
-        ),
-    ],
-)
-def test_creative_visual_author_rejects_missing_sections_copy_code_and_remote_assets(
-    layout_html, css, message,
-):
-    catalog = build_visual_author_catalog(_ledger_backed_storyboard(), {"mode": "creative"})
-    with pytest.raises(ValueError, match=message):
-        validate_visual_spec({
-            "schema": 1,
-            "sections": [],
-            "insights": [],
-            "creative": {"layout_html": layout_html, "css": css},
-        }, catalog)
-
-
-def test_creative_visual_author_requires_non_empty_evidence_ledger():
+def test_creative_author_requires_non_empty_evidence_ledger():
     with pytest.raises(ValueError, match="non-empty evidence ledger"):
-        build_visual_author_catalog(_storyboard(), {"mode": "creative"})
-
-
-def test_creative_catalog_exposes_asset_shape_and_semantics_without_row_values():
-    storyboard = _ledger_backed_storyboard()
-    storyboard["section_plan"].append({
-        "section_type": "advanced_visual",
-        "layout_role": "probability_shift",
-        "data": {
-            "title": "Probability shift",
-            "caption": "Change across the two supplied aggregate snapshots.",
-            "interpretation": "The supplied leader changed after the update.",
-            "semantic_role": "comparison",
-            "records": [
-                {"team": "Private Team A", "before": 0.34, "after": 0.51},
-                {"team": "Private Team B", "before": 0.42, "after": 0.37},
-            ],
-            "visual": {"type": "slopegraph", "label": "team", "start": "before", "end": "after"},
-            "evidence": [{"kind": "notebook_cell", "ref": "cell-shift"}],
-        },
-    })
-
-    catalog = build_visual_author_catalog(storyboard, {"mode": "creative"})
-    section = next(item for item in catalog["sections"] if item["section_id"] == "probability_shift")
-    semantics = section["asset_semantics"]
-
-    assert semantics["visual_type"] == "slopegraph"
-    assert semantics["field_mappings"] == {"label": "team", "start": "before", "end": "after"}
-    assert semantics["aggregate_record_count"] == 2
-    assert semantics["aggregate_columns"] == ["team", "before", "after"]
-    assert semantics["semantic_role"] == "comparison"
-    assert semantics["evidence_ids"] == ["cell-shift"]
-    assert "Private Team A" not in json.dumps(catalog)
+        build_creative_author_dossier(_storyboard())
 
 
 def test_creative_dossier_includes_bounded_aggregate_values_and_complete_ledger():
@@ -367,6 +212,60 @@ def test_creative_dossier_includes_bounded_aggregate_values_and_complete_ledger(
     assert {item["alias"] for item in contract["evidence"]} == {"ev-1", "ev-2"}
 
 
+def test_bespoke_visual_intent_reaches_dossier_without_governed_vocabulary():
+    """A custom visual type or explicit visual_direction must survive to the author.
+
+    An unsupported ``visual.type`` is bespoke intent, not an error: it folds into
+    free-text ``visual_direction`` rather than failing the closed advanced-visual
+    validator. A per-asset ``visual_direction``/``medium`` also reaches the dossier.
+    """
+    requirements = {"evidence_registry": {"targets": [
+        {"id": "cell-paths", "kind": "notebook_cell"},
+    ]}}
+    storyboard = design_report_storyboard(
+        report_goal="Explain how the draw reshaped contender paths.",
+        title="Draw",
+        insights=[{
+            "finding_id": "find-paths",
+            "title": "The draw reordered contenders",
+            "detail": "Bracket structure favors the top seed.",
+            "evidence": [{"kind": "notebook_cell", "ref": "cell-paths"}],
+        }],
+        analyses=[
+            {   # unsupported visual.type must NOT raise; it becomes bespoke intent
+                "title": "Tournament paths",
+                "caption": "Contender paths through the bracket.",
+                "interpretation": "The bracket favors the top seed.",
+                "records": [{"team": "A", "prob": 0.4}, {"team": "B", "prob": 0.2}],
+                "visual": {"type": "radial_tree", "description": "annotated radial bracket"},
+                "required_visual": True,
+                "evidence": [{"kind": "notebook_cell", "ref": "cell-paths"}],
+            },
+            {   # explicit per-asset direction + medium, no governed type
+                "title": "Momentum",
+                "caption": "Momentum across rounds.",
+                "interpretation": "Momentum swung in the late rounds.",
+                "visual_direction": "Build an annotated SVG streamgraph of momentum.",
+                "medium": "svg",
+                "records": [{"round": 1, "value": 3}, {"round": 2, "value": 5}],
+                "evidence": [{"kind": "notebook_cell", "ref": "cell-paths"}],
+            },
+        ],
+        requirements=requirements,
+        max_design_passes=1,
+    )
+    storyboard["evidence_registry"] = build_evidence_registry(storyboard)
+
+    dossier, _ = build_creative_author_dossier(storyboard, {"mode": "creative"})
+
+    # Unsupported type folded into bespoke direction, not rejected.
+    assert "radial_tree" in dossier
+    assert "bespoke" in dossier.lower()
+    # Per-asset direction and medium survive to the author.
+    assert "streamgraph" in dossier
+    assert '"visual_medium": "svg"' in dossier
+
+
 def test_full_document_validator_enforces_source_coverage_evidence_and_safe_javascript():
     dossier, contract = build_creative_author_dossier(_ledger_backed_storyboard())
     assert dossier
@@ -394,6 +293,54 @@ def test_full_document_validator_enforces_source_coverage_evidence_and_safe_java
     )
     with pytest.raises(ValueError, match="artifact safety failed: live_data_call"):
         validate_authored_document(unsafe, contract)
+
+
+def test_full_document_validator_preserves_explicitly_required_visual_assets():
+    storyboard = design_report_storyboard(
+        report_goal="Show the validated comparison.",
+        title="Required comparison",
+        insights=[{
+            "finding_id": "find-required",
+            "title": "A is higher",
+            "detail": "A has the higher supplied value.",
+            "evidence": [{"kind": "notebook_cell", "ref": "cell-required"}],
+        }],
+        analyses=[{
+            "id": "comparison-asset",
+            "required_visual": True,
+            "title": "Validated comparison",
+            "records": [{"label": "A", "value": 2}, {"label": "B", "value": 1}],
+            "evidence": [{"kind": "notebook_cell", "ref": "cell-required"}],
+        }],
+        requirements={
+            "evidence_registry": {
+                "targets": [{"id": "cell-required", "kind": "notebook_cell", "present": True}],
+            },
+        },
+    )
+    storyboard["evidence_registry"] = build_evidence_registry(storyboard)
+    _, contract = build_creative_author_dossier(storyboard)
+
+    omitted = _authored_html().replace(
+        '{"omitted":[]}',
+        '{"omitted":[{"source":"src-asset-1","reason":"Not selected for the story."}]}',
+    )
+    with pytest.raises(ValueError, match="required visual sources cannot be omitted"):
+        validate_authored_document(omitted, contract)
+
+    used_as_prose = _authored_html().replace(
+        'data-source="src-finding-1"',
+        'data-source="src-finding-1 src-asset-1"',
+    )
+    with pytest.raises(ValueError, match="did not render required visual sources"):
+        validate_authored_document(used_as_prose, contract)
+
+    rendered = _authored_html().replace(
+        '<figure data-evidence="ev-1">',
+        '<figure data-source="src-asset-1" data-evidence="ev-1">',
+    )
+    validated = validate_authored_document(rendered, contract)
+    assert validated["coverage"]["visual_sources"] == ["src-asset-1"]
 
 
 @pytest.mark.asyncio
@@ -430,91 +377,29 @@ async def test_creative_author_runs_one_evidence_repair_pass():
 
 
 @pytest.mark.asyncio
-async def test_runtime_visual_author_rejects_a_fabricated_fact_and_preserves_storyboard():
-    storyboard = _storyboard()
-    response = {
-        "schema": 1,
-        "sections": [],
-        "insights": [{
-            "insight_id": "find-new-customers",
-            "scan_points": ["invented-fact"],
-        }],
-    }
-
-    authored, record = await author_report_visuals(
-        storyboard,
-        config={"mode": "runtime"},
-        llm=_JSONLLM(response),
-    )
-
-    assert record["status"] == "fallback"
-    assert record["applied"] is False
-    primary = next(item for item in authored["section_plan"] if item["layout_role"] == "primary_insights")
-    assert "display_pills" not in primary["data"]["items"][0]
-    assert "invented-fact" not in render_report_from_storyboard(authored)
+async def test_visual_author_rejects_non_creative_modes():
+    for mode in ("runtime", "provided", "off", "required"):
+        with pytest.raises(ValueError, match="must be 'creative'"):
+            await author_report_visuals(_ledger_backed_storyboard(), config={"mode": mode})
 
 
-def test_visual_author_validator_rejects_unbounded_theme_and_cross_insight_fact():
-    catalog = build_visual_author_catalog(_storyboard(), {"mode": "runtime"})
-    with pytest.raises(ValueError, match="unknown theme"):
-        validate_visual_spec({"schema": 1, "theme": "#ff00ff", "sections": [], "insights": []}, catalog)
-    with pytest.raises(ValueError, match="cannot be used"):
-        validate_visual_spec({
-            "schema": 1,
-            "sections": [],
-            "insights": [{
-                "insight_id": "find-new-customers",
-                "scan_points": ["find-new-customers-pill-1"],
-            }],
-        }, catalog)
+@pytest.mark.asyncio
+async def test_creative_author_fails_closed_without_llm_or_ledger():
+    ledgered = _ledger_backed_storyboard()
+    with pytest.raises(VisualAuthorRequiredError) as failed:
+        await author_report_visuals(ledgered, config={"mode": "creative"})
+    assert failed.value.reason.startswith("No LLM provider")
+    assert failed.value.record["mode"] == "creative"
+
+    with pytest.raises(VisualAuthorRequiredError, match="non-empty evidence ledger"):
+        await author_report_visuals(
+            _storyboard(),
+            config={"mode": "creative"},
+            llm=_JSONLLM(_authored_html()),
+        )
 
 
-def test_visual_author_can_reorder_only_declared_story_blocks():
-    storyboard = _storyboard()
-    storyboard["section_plan"].extend([
-        {
-            "section_type": "callout",
-            "layout_role": "mechanism",
-            "visual_author_story_zone": "evidence_sequence",
-            "visual_author_story_block": "mechanism",
-            "data": {"title": "Mechanism", "text": "The supplied mechanism explains the observed change."},
-        },
-        {
-            "section_type": "callout",
-            "layout_role": "scenarios",
-            "visual_author_story_zone": "evidence_sequence",
-            "visual_author_story_block": "scenarios",
-            "data": {"title": "Scenarios", "text": "The supplied scenarios change the decision threshold."},
-        },
-    ])
-    catalog = build_visual_author_catalog(storyboard, {"mode": "provided", "allow_story_reorder": True})
-    assert catalog["composition"] == [{
-        "zone_id": "evidence_sequence",
-        "blocks": [
-            {"block_id": "mechanism", "section_ids": ["mechanism"]},
-            {"block_id": "scenarios", "section_ids": ["scenarios"]},
-        ],
-    }]
-    spec = validate_visual_spec({
-        "schema": 1,
-        "sections": [],
-        "insights": [],
-        "composition": [{"zone_id": "evidence_sequence", "order": ["scenarios", "mechanism"]}],
-    }, catalog)
-    authored = apply_visual_spec(storyboard, spec, catalog)
-    roles = [item["layout_role"] for item in authored["section_plan"]]
-    assert roles[-2:] == ["scenarios", "mechanism"]
-
-    with pytest.raises(ValueError, match="every declared block exactly once"):
-        validate_visual_spec({
-            "schema": 1,
-            "sections": [],
-            "insights": [],
-            "composition": [{"zone_id": "evidence_sequence", "order": ["mechanism"]}],
-        }, catalog)
-
-
-def test_authoring_review_requires_typed_facts_when_runtime_visuals_are_requested():
+def test_authoring_review_requires_typed_facts_when_creative_visuals_are_requested():
     storyboard = _storyboard()
     storyboard["visual_author_config"] = {"mode": "runtime", "facts": []}
     review = review_storyboard_authoring(storyboard)
@@ -533,216 +418,31 @@ def test_authoring_review_requires_typed_facts_when_runtime_visuals_are_requeste
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("finding_id", "title", "detail", "fact_id", "fact_text"),
-    [
-        ("customer-retention", "New customers have the weakest renewal", "The first contract cohort has the lowest renewal rate.", "renewal-gap", "23-point renewal gap"),
-        ("clinical-pathway", "Treatment delay concentrates in one pathway", "The supplied pathway has the longest time to treatment.", "treatment-delay", "Median 18-hour treatment delay"),
-        ("supply-route", "One route drives the service risk", "The supplied route has the largest late-delivery share.", "late-delivery", "14% late-delivery share"),
-    ],
-)
-async def test_runtime_visual_author_uses_same_typed_fact_contract_across_domains(
-    finding_id, title, detail, fact_id, fact_text,
-):
-    storyboard = design_report_storyboard(
-        report_goal="Identify the evidence-backed decision priority.",
-        title="Cross-domain report",
-        insights=[{
-            "finding_id": finding_id,
-            "title": title,
-            "detail": detail,
-            "display_facts": [{"fact_id": fact_id, "text": fact_text, "uses": ["scan_point"]}],
-        }],
-    )
-    response = {
-        "schema": 1,
-        "sections": [],
-        "insights": [{"insight_id": finding_id, "scan_points": [fact_id]}],
-    }
-    authored, record = await author_report_visuals(storyboard, config={"mode": "runtime"}, llm=_JSONLLM(response))
-    assert record["status"] == "applied"
-    primary = next(item for item in authored["section_plan"] if item["layout_role"] == "primary_insights")
-    assert primary["data"]["items"][0]["scan_points"] == [fact_text]
-
-
-@pytest.mark.asyncio
-async def test_disabled_visual_author_bypasses_legacy_fact_catalog_validation():
-    storyboard = _storyboard()
-    primary = next(item for item in storyboard["section_plan"] if item["layout_role"] == "primary_insights")
-    primary["data"]["items"].append({
-        "finding_id": "find-other",
-        "title": "Another cohort",
-        "detail": "A second source insight.",
-        "pills": [{"id": "reused-decorative-id", "label": "Second"}],
-    })
-    primary["data"]["items"][0]["pills"] = [{"id": "reused-decorative-id", "label": "First"}]
-
-    authored, record = await author_report_visuals(storyboard, config={"mode": "off"})
-
-    assert record == {"schema": 1, "mode": "off", "status": "disabled", "applied": False}
-    assert authored["visual_author"] == record
-
-
-@pytest.mark.asyncio
-async def test_default_visual_author_records_the_deterministic_desktop_baseline():
-    config = visual_author_config({})
-    assert config == {"mode": "off", "baseline": "deterministic_desktop_editorial"}
-
-    authored, record = await author_report_visuals(_storyboard(), config=config)
-
-    assert record["mode"] == "off"
-    assert record["status"] == "disabled"
-    assert record["baseline"] == "deterministic_desktop_editorial"
-    assert record["source"] == "renderer"
-    assert authored["visual_author"] == record
-
-
-@pytest.mark.asyncio
-async def test_visual_author_applies_section_facts_and_all_insight_grids():
-    storyboard = _multi_surface_storyboard()
-    response = {
-        "schema": 1,
-        "sections": [{
-            "section_id": "renewal_evidence",
-            "surface": "evidence",
-            "pills": [{"fact_id": "cohort-window", "tone": "accent"}],
-            "scan_points": ["renewal-gap"],
-            "annotations": ["renewal-note"],
-        }],
-        "insights": [{
-            "insight_id": "find-mature-customers",
-            "scan_points": ["find-mature-customers-scan-1"],
-        }],
-    }
-
-    authored, record = await author_report_visuals(storyboard, config={"mode": "runtime"}, llm=_JSONLLM(response))
-
-    assert record["status"] == "applied"
-    evidence = next(item for item in authored["section_plan"] if item["layout_role"] == "renewal_evidence")["data"]
-    assert evidence["visual_pills"] == [{"label": "First 90 days", "tone": "accent"}]
-    assert evidence["visual_scan_points"] == ["23-point renewal gap"]
-    assert evidence["visual_annotations"] == ["Observed cohorts only"]
-    secondary = next(item for item in authored["section_plan"] if item["layout_role"] == "secondary_insights")
-    assert secondary["data"]["items"][0]["scan_points"] == ["Higher renewal rate"]
-    html = render_report_from_storyboard(authored)
-    assert "23-point renewal gap" in html
-    assert "Observed cohorts only" in html
-
-
-@pytest.mark.asyncio
-async def test_required_visual_author_returns_auditable_failure_and_runtime_has_output_limit():
-    storyboard = _storyboard()
-    with pytest.raises(VisualAuthorRequiredError) as failed:
-        await author_report_visuals(storyboard, config={"mode": "required"})
-    assert failed.value.record["status"] == "failed"
-    assert failed.value.storyboard["visual_author"]["reason"].startswith("No LLM provider")
-
-    authored, record = await author_report_visuals(
-        storyboard,
-        config={"mode": "runtime", "max_output_chars": 512},
-        llm=_JSONLLM({"schema": 1, "sections": [], "insights": [], "padding": "x" * 600}),
-    )
-    assert record["status"] == "fallback"
-    assert "max_output_chars" in record["reason"]
-    assert authored["visual_author"] == record
-
-
-@pytest.mark.asyncio
-async def test_report_design_persists_required_visual_author_failure_audit(cfg, tmp_path, monkeypatch):
+async def test_report_design_persists_creative_visual_author_failure_audit(cfg, tmp_path, monkeypatch):
     import dataclaw.config.paths as paths
 
     monkeypatch.setattr(paths, "DATACLAW_HOME", tmp_path)
+    # A ledger-backed finding reaches the creative author, but no LLM is
+    # available, so authoring fails closed and an audit record is persisted.
     with pytest.raises(ValueError, match="Failure audit"):
         await report_design_report(
             cfg=cfg,
             report_goal="Decide whether an intervention is needed.",
-            title="Required visual author",
+            title="Creative visual author",
             report_path="reports/required.html",
             storyboard_path="reports/required.storyboard.json",
             quality_gate="off",
-            insights=[{"title": "A completed insight", "detail": "The evidence is ready."}],
-            visual_author={"mode": "required"},
+            insights=[{
+                "finding_id": "finding-complete",
+                "title": "A completed insight",
+                "detail": "The evidence is ready.",
+            }],
         )
 
     audit = tmp_path / "workspaces" / "default" / "reports" / "required.storyboard.visual-author-failure.json"
     payload = json.loads(audit.read_text(encoding="utf-8"))
     assert payload["status"] == "failed"
-    assert payload["visual_author"]["mode"] == "required"
-
-
-@pytest.mark.asyncio
-async def test_report_design_report_runs_runtime_visual_author_with_explicit_facts(cfg, tmp_path, monkeypatch):
-    import dataclaw.config.paths as paths
-
-    monkeypatch.setattr(paths, "DATACLAW_HOME", tmp_path)
-    response = {
-        "schema": 1,
-        "theme": "forest",
-        "sections": [{
-            "section_id": "primary_insights",
-            "surface": "quiet",
-            "layout": "editorial_list",
-            "evidence_presentation": "linked",
-        }],
-        "insights": [{
-            "insight_id": "find-activation",
-            "pills": [{"fact_id": "activation-rate", "tone": "warn"}],
-            "scan_points": ["activation-action"],
-        }],
-    }
-    result = await report_design_report(
-        cfg=cfg,
-        llm=_JSONLLM(response),
-        report_goal="Decide whether to improve onboarding activation.",
-        title="Activation health",
-        report_path="reports/activation.html",
-        storyboard_path="reports/activation.storyboard.json",
-        quality_gate="warn",
-        insights=[{
-            "finding_id": "find-activation",
-            "title": "Activation drops in the first week",
-            "detail": "Observed activation is below the target in the first seven days.",
-        }],
-        visual_author={
-            "mode": "runtime",
-            "facts": [
-                {"fact_id": "activation-rate", "insight_id": "find-activation", "text": "42% activated", "uses": ["pill"]},
-                {"fact_id": "activation-action", "insight_id": "find-activation", "text": "Prioritize the first-week checklist", "uses": ["scan_point"]},
-            ],
-        },
-    )
-
-    assert result["visual_author"]["status"] == "applied"
-    html = Path(result["html_path"]).read_text(encoding="utf-8")
-    assert "--dc-accent: #166534" in html
-    assert "42% activated" in html
-    assert "Prioritize the first-week checklist" in html
-
-
-@pytest.mark.asyncio
-async def test_default_handcrafted_report_uses_available_llm_as_bounded_visual_author(cfg, tmp_path, monkeypatch):
-    import dataclaw.config.paths as paths
-
-    monkeypatch.setattr(paths, "DATACLAW_HOME", tmp_path)
-    result = await report_design_report(
-        cfg=cfg,
-        llm=_JSONLLM({
-            "schema": 1,
-            "theme": "plum",
-            "sections": [{"section_id": "opening_context", "surface": "strong"}],
-            "insights": [],
-        }),
-        report_goal="Explain the completed finding.",
-        report_path="reports/default-authored.html",
-        storyboard_path="reports/default-authored.storyboard.json",
-        quality_gate="warn",
-        insights=[{"title": "Finding complete", "detail": "The supplied finding is ready."}],
-    )
-
-    assert result["presentation_mode"] == "handcrafted"
-    assert result["visual_author"]["mode"] == "runtime"
-    assert result["visual_author"]["status"] == "applied"
-    assert "--dc-accent: #6d28d9" in Path(result["html_path"]).read_text(encoding="utf-8")
+    assert payload["visual_author"]["mode"] == "creative"
 
 
 @pytest.mark.asyncio
@@ -834,7 +534,7 @@ async def test_full_document_authored_report_survives_publication_revalidation(c
     )
 
     assert published["publication_status"] == "published"
-    assert published["quality"]["rubric_version"] == 12
+    assert published["quality"]["rubric_version"] == 14
     assert published["quality"]["status"] in {"pass", "warn"}
     receipt = json.loads(Path(published["receipt_path"]).read_text(encoding="utf-8"))
     assert designed["html_sha256"] == receipt["html_sha256"]

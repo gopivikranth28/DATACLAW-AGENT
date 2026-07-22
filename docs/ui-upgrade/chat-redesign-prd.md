@@ -23,10 +23,11 @@ Every chart, table, and metric carries its provenance: which cell produced it, w
 and the source one click away.
 
 Reports use the same console as a first-class review surface. The Reports rail shows
-the progression from approved analysis package to storyboard, visually reviewed HTML,
-and published receipt. Desktop and mobile captures render as images beside structured
-review findings; paths and raw JSON are never the only evidence. Publication is
-available only for an approved `ReportBuild` and returns the final shareable link in
+the progression from approved analysis package to storyboard, authored HTML, and
+published receipt. When visual approval is explicitly requested, desktop captures
+render as images beside structured review findings; paths and raw JSON are never the
+only evidence. Publication is available for a validated `ReportBuild`, with any
+explicit visual-review requirement satisfied, and returns the final shareable link in
 one step.
 
 **Session boundary:** a chat is one session in one of two contexts: **independent**
@@ -46,7 +47,7 @@ name the current context and never mix both session lists in one global sidebar.
   the pill pointing at the running one. No nested scroll regions inside the thread.
 - **Report acceptance check:** replay a report fixture containing an approved
   `AnalysisPackage`, a storyboard with one explicit omission, a `ReportBuild`, desktop
-  and mobile captures, browser findings, and a visual-review decision. The Reports
+  captures, browser findings, and a visual-review decision. The Reports
   surface must render the captures as images, expose the package/story/build hashes,
   show the omission and review findings, and publish through `publish_report` to a
   shareable link. Changing the HTML hash must invalidate the captures and disable
@@ -109,9 +110,9 @@ is a minority of the pixels. Full critique with code references:
 - **G8** - Keep session context legible: Independent chats are browsed from Chats;
   project-scoped chats are browsed inside their project. The header names which context
   is active, and Scope distinguishes project defaults from session-only overrides.
-- **G9** - Make report quality inspectable: show analysis/story coverage, desktop and
-  mobile captures, validation findings, visual review, exact build identity, and the
-  publication receipt in the primary product surface.
+- **G9** - Make report quality inspectable: show analysis/story coverage, optional
+  desktop captures and visual review, validation findings, exact build identity, and
+  the publication receipt in the primary product surface.
 
 ## 3. Non-goals
 
@@ -144,8 +145,8 @@ is a minority of the pixels. Full critique with code references:
 | U10 | "Start a chat without choosing a project" | Chats creates an independent session immediately, with no project defaults |
 | U11 | "Return to a chat inside a project" | The project lists only its own sessions; the chat header, Files, and Scope name the project context |
 | U12 | "Why is this report missing the strongest finding?" | Reports shows the approved findings, storyboard coverage, and explicit omissions before the visual report |
-| U13 | "Did anyone actually inspect this report?" | Desktop/mobile captures and hash-bound browser and visual-review findings render directly in the Reports surface |
-| U14 | "Publish the reviewed report" | One action publishes the exact approved HTML bytes and returns a receipt-backed shareable link |
+| U13 | "Did anyone actually inspect this report?" | When visual review was requested, desktop captures and hash-bound browser and review findings render directly in the Reports surface |
+| U14 | "Publish the validated report" | One action publishes the exact validated HTML bytes and returns a receipt-backed shareable link |
 
 ## 5. Functional Requirements
 
@@ -218,16 +219,17 @@ is a minority of the pixels. Full critique with code references:
   primary finding coverage, explicit omissions, evidence gaps, and storyboard beats
   without requiring the user to open raw JSON.
 - **FR-20** `report_capture_visuals` and `report_review_visuals` results have a
-  dedicated renderer. Desktop/mobile and key-section captures load as first-class
+  dedicated renderer. Desktop full-page and key-section captures load as first-class
   images with viewport and SHA-256 metadata, full-size inspection, loading/error
   states, and keyboard-accessible navigation. A path or hash string alone does not
   count as rendered review evidence.
 - **FR-21** Browser validation and visual-review findings render beside the captures,
   with pass/reject status and ownership. Analytical gaps link back to analysis,
   editorial defects to storyboard, and presentation defects to visual authoring.
-- **FR-22** Publish is enabled only for an approved, non-stale `ReportBuild`.
-  `publish_report` stores the exact reviewed HTML and returns `PublishReceipt` plus a
-  shareable link. The UI never chains `publish_artifact` after report publication.
+- **FR-22** Publish is enabled for a validated, non-stale `ReportBuild`; a named
+  approval is additionally required only when visual review was explicitly requested.
+  `publish_report` stores the exact HTML and returns `PublishReceipt` plus a shareable
+  link. The UI never chains `publish_artifact` after report publication.
 - **FR-23** New analysis invalidates storyboard/build/review state; a storyboard
   change invalidates the build; and an HTML-byte change invalidates captures and
   review. The surface must show the stale dependency and the required repair stage.

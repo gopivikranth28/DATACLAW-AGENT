@@ -19,7 +19,12 @@ REVIEW_TOOLS = {
     "get_review_gate",
 }
 
-PUBLISH_TOOLS = {"publish_artifact", "dataclaw_publish_artifact"}
+PUBLISH_TOOLS = {
+    "publish_artifact",
+    "dataclaw_publish_artifact",
+    "report_publish",
+    "dataclaw_report_publish",
+}
 
 
 async def review_context_hook(state: AgentState) -> AgentState:
@@ -119,8 +124,10 @@ async def surface_unreviewed_publish_hook(state: AgentState) -> AgentState:
         if tool_result.get("is_error") or str(tool_result.get("tool_name") or "") not in PUBLISH_TOOLS:
             continue
         result = _parse_payload(tool_result.get("result", tool_result.get("content")))
-        artifact_id = str(result.get("artifact_id") or "")
-        if not artifact_id or result.get("success") is False:
+        # publish_artifact identifies the publish by artifact_id; report_publish
+        # (workspace) identifies it by the published report path.
+        published_ref = str(result.get("artifact_id") or result.get("report_path") or "")
+        if not published_ref or result.get("success") is False or result.get("published") is False:
             continue
         blockers = _unaccepted_required_findings(session_id)
         if not blockers:
@@ -140,7 +147,7 @@ async def surface_unreviewed_publish_hook(state: AgentState) -> AgentState:
                     "session_id": session_id,
                     "payload": {
                         "md": (
-                            f"**Unresolved review risk:** artifact `{artifact_id}` was published with "
+                            f"**Unresolved review risk:** publish `{published_ref}` completed with "
                             f"{len(finding_ids)} open required review finding(s): {listed}. "
                             "Resolve them or accept the risk explicitly via the review tools."
                         )

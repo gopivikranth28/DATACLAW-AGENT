@@ -14,15 +14,11 @@
 # promotion to `fail`, except a versioned criterion that closes a material
 # publish-gate bypass. rubric_version bumps on any criteria/threshold change.
 
-rubric_version: 12
+rubric_version: 14
 
 # Gate thresholds — every value matches the live gate (analyze_report_quality).
 thresholds:
   max_payload_bytes: 1_500_000        # measured after stripping the Plotly runtime
-  max_consecutive_plain_charts: 2     # a 3rd consecutive plain chart fails
-  plain_chart_dump_min: 4             # >=4 plain charts arms chart_dump / plain_chart_overuse
-  explorer_required_min_sections: 6   # >=6 sections ...
-  explorer_required_min_charts: 3     # ... with >=3 chart-like sections must include an explorer
   insight_required_min_sections: 4    # >=4 sections must include a story/insight layer
 
 # Generation & loop knobs — NOT gate values; no criterion asserts them.
@@ -66,14 +62,14 @@ criteria:
 
   - id: missing_methodology
     axis: rigor
-    severity: fail
+    severity: warn
     status: live
     since_version: 7
     scope: report
     applies_to: [methodology_block]
     signal: A methodology_block states grain, denominator, and validation.
     remediable: partial
-    on_fail: block
+    on_fail: warn
     remediation: draft_from_intake    # enforced only when requirements.rigor declares it
     rationale: A data-scientist reader needs the model, denominator, and validation shown.
 
@@ -139,59 +135,13 @@ criteria:
     remediable: true
     on_fail: warn
     remediation: attach_storyboard
-    rationale: Reproducibility is part of the deliverable (L7).
+    rationale: A rebuild recipe is useful audit context, but the evidence ledger and exact published hashes are the release contract.
 
   # ── Narrative axis ─────────────────────────────────────────────────────────
-  - id: consecutive_plain_charts
-    axis: narrative
-    severity: fail
-    status: live
-    scope: report
-    applies_to: [chart]
-    signal: No more than max_consecutive_plain_charts plain charts in a row.
-    remediable: true
-    on_fail: block
-    remediation: convert_to_chart_interpretation_or_explorer
-    rationale: Consecutive bare charts separate evidence from meaning.
-
-  - id: chart_dump
-    axis: narrative
-    severity: fail
-    status: live
-    scope: report
-    applies_to: [chart]
-    signal: Report is not dominated by plain charts without interpretation or explorer.
-    remediable: true
-    on_fail: block
-    remediation: replan_via_designer
-    rationale: A chart dump is the signature regression this rubric exists to prevent.
-
-  - id: plain_chart_overuse
-    axis: narrative
-    severity: fail
-    status: live
-    scope: report
-    applies_to: [chart]
-    signal: Plain charts <= interactive + interpreted charts.
-    remediable: true
-    on_fail: block
-    remediation: upgrade_supporting_charts
-    rationale: Supporting charts should carry interpretation or interaction.
-
-  - id: missing_interactive_explorer
-    axis: narrative
-    severity: fail
-    status: live
-    scope: report
-    applies_to: [chart, advanced_visual, filterable_chart, chart_table_explorer, interactive_table, selector_panel]
-    signal: >-
-      >= explorer_required_min_sections sections with >= explorer_required_min_charts
-      chart-like sections include at least one explorer/selector/filterable/table.
-    remediable: true
-    on_fail: block
-    remediation: add_explorer_over_aggregate_payload
-    rationale: An analytical report should let the reader slice and verify.
-
+  # Chart interpretation is required (a chart must state what it shows); the
+  # number of charts, their plainness, and whether they are interactive is the
+  # author's call. Interactivity is introduced when it helps the reader, never
+  # forced by a quota.
   - id: chart_missing_conclusion
     axis: narrative
     severity: warn                    # v3 evaluator launch; promotes per A.10
@@ -267,7 +217,7 @@ criteria:
 
   - id: missing_primary_insights
     axis: narrative
-    severity: fail
+    severity: warn
     status: live
     scope: report
     applies_to: [findings, insight_grid, advanced_visual]
@@ -276,13 +226,13 @@ criteria:
       findings/insight-grid section with completed insight items, or a source-bound
       advanced interpretation that is already adjacent to its evidence.
     remediable: partial
-    on_fail: block
+    on_fail: warn
     remediation: promote_intake_insights_into_insight_grid   # block only if intake has none (§5.5)
     rationale: Findings are first-class content, not an afterthought.
 
   - id: missing_insight_sections
     axis: narrative
-    severity: fail
+    severity: warn
     status: live
     scope: report
     applies_to: [findings, insight_grid, narrative_band, methodology_block, hypothesis_ledger, evidence_trace, evidence_rail]
@@ -290,7 +240,7 @@ criteria:
       Reports with >= insight_required_min_sections sections include at least one
       story layer (findings/insight-grid/narrative/methodology/evidence/explorer).
     remediable: partial
-    on_fail: block
+    on_fail: warn
     remediation: build_story_layer_from_intake   # block only if intake has none (§5.5)
     rationale: A report without a story layer is a chart appendix.
 
@@ -306,45 +256,6 @@ criteria:
     on_fail: warn
     remediation: rerun_pairing_or_flag_evidence_orphaned
     rationale: Insight–evidence anchors are the readable form of the evidence graph.
-
-  - id: handcrafted_story_arc_incomplete
-    axis: narrative
-    severity: fail
-    status: live
-    since_version: 8
-    scope: report
-    applies_to: [advanced_visual, section]
-    signal: Handcrafted reports declare reader-question story arcs and group every analytical section or document a narrow exemption.
-    remediable: true
-    on_fail: block
-    remediation: assign_story_arcs
-    rationale: Grouped analysis is the report's reader path, not optional decoration.
-
-  - id: handcrafted_advanced_visual_missing
-    axis: narrative
-    severity: fail
-    status: deferred
-    since_version: 8
-    scope: report
-    applies_to: [advanced_visual]
-    signal: Handcrafted mode includes at least one governed advanced visual over validated aggregate records.
-    remediable: true
-    on_fail: block
-    remediation: add_advanced_visual
-    rationale: Advanced visuals can improve a report, but they are not a valid quota for adaptive editorial composition.
-
-  - id: handcrafted_conventional_chart_unapproved
-    axis: narrative
-    severity: fail
-    status: deferred
-    since_version: 8
-    scope: section
-    applies_to: [chart, chart_interpretation, filterable_chart, chart_table_explorer]
-    signal: Conventional charts in handcrafted mode carry a narrow, auditable exception rationale.
-    remediable: true
-    on_fail: block
-    remediation: replace_or_document_exception
-    rationale: A familiar chart can be the clearest faithful form; component choice should follow the supplied relationship rather than a handcrafted-mode ban.
 
   - id: advanced_visual_semantics
     axis: integrity
@@ -434,21 +345,6 @@ criteria:
     remediation: revise_rendered_visual_semantics
     rationale: Screenshot existence proves capture, not that the rendered composition preserves reader-facing meaning.
 
-  - id: visual_author_fallback
-    axis: integrity
-    severity: warn
-    status: live
-    since_version: 4
-    scope: report
-    applies_to: [report]
-    signal: >-
-      A requested runtime visual-author run either records a validated visual plan
-      or explicitly records that deterministic fallback was used.
-    remediable: true
-    on_fail: warn
-    remediation: inspect_runtime_author_or_use_provided_spec
-    rationale: A safe fallback protects content integrity but is not evidence that the requested runtime composition ran.
-
   - id: creative_evidence_ledger_missing
     axis: integrity
     severity: fail
@@ -487,22 +383,6 @@ criteria:
     on_fail: block
     remediation: repair_authored_claims_or_visuals
     rationale: Ledger presence establishes provenance; an entailment review checks that the final wording and visual encoding use it faithfully.
-
-  - id: visual_plan_budget
-    axis: narrative
-    severity: warn
-    status: live
-    since_version: 4
-    scope: report
-    applies_to: [report]
-    signal: >-
-      The validated visual plan has no unresolved advisory observations about
-      repeated strong surfaces, unclear parent-child nesting, repeated framing
-      of narrative material, or card grids without peer comparison.
-    remediable: true
-    on_fail: warn
-    remediation: revise_visual_plan_or_accept_contextual_density
-    rationale: Surface budgets are composition guidance, not a rigid card quota.
 
   - id: display_fact_coverage
     axis: narrative

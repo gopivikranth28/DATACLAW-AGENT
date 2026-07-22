@@ -196,9 +196,9 @@ section order unless the user or analytical contract requires them. Then call
 the user requested Word output. Inspect its returned `quality`, `runtime_smoke`,
 and receipt path before calling the report published. Supply
 `requirements.evidence_registry.targets` for notebook cells, artifacts, or
-other non-external evidence references. If `build_report` returns
-`preserved_low_confidence` for legacy HTML, rebuild from typed EDA assets rather
-than publishing the preserved source.
+other non-external evidence references. This ledger is required and authoring is
+fail-closed. To redesign legacy report HTML, re-author from the typed EDA assets
+and evidence ledger rather than normalizing raw HTML.
 
 For notebook analysis—not final report composition—choose visuals that expose
 the relevant distribution, relationship, missingness, change, or uncertainty.

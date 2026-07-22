@@ -11,10 +11,9 @@ Use this skill for analysis-time visualization and evidence preparation. Let
 interactions, and HTML.
 
 Do not pre-compose the report. Do not prescribe a chart count, KPI count,
-dashboard archetype, component library, page order, or final visual style. Do
-not use `report_add_section` to assemble a polished report. A final report may
-use a familiar chart, an interactive explorer, or a bespoke HTML/SVG/Canvas
-visual; the report author decides from the supplied evidence.
+dashboard archetype, component library, page order, or final visual style. A
+final report may use a familiar chart, an interactive explorer, or a bespoke
+HTML/SVG/Canvas visual; the report author decides from the supplied evidence.
 
 ## Analysis-time workflow
 
@@ -54,6 +53,14 @@ For each useful analysis, include what is available from:
 - comparison baseline, time window, filters, and aggregation method;
 - validated interpretation, material caveat, and uncertainty;
 - stable `finding_id`/`claim_source_id` and typed evidence references.
+- optional `required_visual: true` only when that exact analysis must appear as
+  a reader-facing figure/SVG/canvas; otherwise let the report author decide
+  whether the aggregate is best shown visually or as a table/narrative.
+- optional free-text `visual_direction` (with optional `medium` of `"svg"`,
+  `"canvas"`, or `"html"`) when you want a custom visual beyond the familiar
+  charts and governed advanced forms, e.g. "Build an annotated radial tournament
+  path in SVG". Do not invent a `visual.type`; the author realizes the direction
+  from the bounded aggregate under the usual evidence rules.
 
 Example:
 
@@ -74,12 +81,14 @@ change_asset = {
     "caveat": "Simulation outputs are descriptive scenarios, not causal effects.",
     "claim_source_id": "find-draw-change",
     "evidence": [{"kind": "notebook_cell", "cell_id": "cell-draw-change"}],
+    "required_visual": True,
 }
 ```
 
 Describe the relationship; do not add a `chart` or `visual` mapping merely to
 force a familiar form. Supply an exact mapping only when it is analytically
-essential or when using the governed deterministic fallback.
+essential, when the existing notebook figure itself must be preserved, or when
+pinning a governed advanced-visual form.
 
 ## Visual integrity
 
@@ -103,6 +112,6 @@ findings, author-ready assets, methodology, limitations, and
 and visual direction are optional constraints; omit them when the author should
 decide freely.
 
-After `report_design_report`, follow its visual-review and `report_publish`
-flow, then fetch `artifacts` to publish or revise the result. Do not edit the
-generated report HTML as the source of truth.
+After `report_design_report`, use visual review only when explicitly requested,
+then follow its `report_publish` flow and fetch `artifacts` to publish or revise
+the result. Do not edit the generated report HTML as the source of truth.

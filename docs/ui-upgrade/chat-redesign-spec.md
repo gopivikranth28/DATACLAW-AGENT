@@ -104,7 +104,7 @@ success states in the transcript wear no color at all.
 | display_* | not a step line — reader-facing evidence (see §4) |
 | finalize_analysis_package | `Finalized analysis package — {n} findings · review {status}` |
 | create_report_storyboard | `Built report story — {n} beats · {k} explicit omissions` |
-| author_visual_report | `Authored visual report — {desktop/mobile capture status}` |
+| author_visual_report | `Authored visual report — {desktop capture status, when requested}` |
 | review_visual_report | `Reviewed visual report — {approved|rejected|blocked}` |
 | publish_report | `Published report {title} · v{version}` only when a valid `PublishReceipt` is returned; otherwise show the concrete blocker |
 | report_add_section | Conversational report mutation inside `Worked`: `Set the report opening: {title} — {subtitle}`, `Added the headline metrics — {labels}`, or `Added an interpreted chart: {title} — {caption}`. Adjacent identical mutations collapse to one line with a consolidation note. |
@@ -259,8 +259,8 @@ The wide review view has four compact tabs with shared identity header:
    review decision.
 2. **Story** — thesis, ordered beats, finding coverage, explicit omissions, evidence
    gaps, and editorial review decision.
-3. **Visual review** — report preview, desktop/mobile/key-section captures,
-   deterministic browser findings, visual-review findings, and repair ownership.
+3. **Visual review** — report preview plus optional desktop full-page/key-section
+   captures, deterministic browser findings, visual-review findings, and repair ownership.
 4. **Publication** — exact HTML hash, capture hashes, receipt, version, and shareable
    link.
 

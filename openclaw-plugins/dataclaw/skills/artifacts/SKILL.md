@@ -56,7 +56,7 @@ source and report that artifact publication is unavailable. Do not claim an
    `report_publish(report_path=..., storyboard_path=...)` and inspect its
    receipt, quality, and runtime-smoke result. Then check for remote assets,
    iframe/object/embed/base tags, raw datasets, fetch/XHR/WebSocket calls, inline
-   event handlers, `report_add_section` CDN fallbacks, and oversized
+   event handlers, and oversized
    published/exported payloads. Fix obvious issues before calling the tool.
 3. **Publish.** Call:
    `publish_artifact(title, description?, source_path?, html?, report_receipt_path?, artifact_id?, label?, base_version?)`
@@ -68,9 +68,9 @@ source and report that artifact publication is unavailable. Do not claim an
 4. **Confirm the result.** Expect `{artifact_id, version, session_id, url}`.
    Mention the artifact title and version briefly; the UI renders the same
    version inline and in the Artifact Library.
-5. **Self-check.** When `dataclaw-browser` is available and the task is a report
-   or dashboard, screenshot the artifact in light and dark mode before closing
-   the plan step.
+5. **Optional visual review.** Capture and approve desktop screenshots only when
+   the user or report requirements explicitly request visual review. Routine
+   artifact publication does not require mobile, light/dark, or screenshot gates.
 
 ## Revision workflow
 When the user asks for a change to an existing artifact:

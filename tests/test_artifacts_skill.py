@@ -68,21 +68,21 @@ def test_report_design_skill_is_bundled_and_parseable():
     assert "quality_gate=\"fail\"" in body
     assert "sole final-report composition layer" in body
     assert "Existing reports and revisions" in body
-    assert "build_report" in body
-    assert "preserved_low_confidence" in body
     assert "requirements.evidence_registry.targets" in body
     assert "export_docx=False" in body
-    assert "`report_add_section` is a compatibility and draft helper" in body
-    assert "presentation_mode=\"handcrafted\"" in body
     assert "`advanced_visual`" in body
     assert "requirements.story_arcs" in body
-    assert "fallback tools, not quotas" in body
+    assert "not quotas" in body
     assert "*.author-dossier.md" in body
     assert "data-dc-author-script" in body
     assert "independent evidence pass" in body
     assert "claim_source_id" in body
     assert "publication.require_visual_review=true" in body
-    assert "build_report(presentation_mode=\"handcrafted\")" in body
+    assert "Visual review is otherwise off" in body
+    assert "required_visual: true" in body
+    assert "visual_direction" in body
+    assert "Bespoke per-asset visuals" in body
+    assert "fail-closed with no fallback to a non-authored report" in body
     assert "Skill freshness warnings are advisory context" in body
     assert "Do not pre-compose a final page from component names" in body
     assert "Do not fetch a separate dashboard-layout skill" in body
@@ -105,7 +105,7 @@ def test_visual_output_skills_have_one_final_report_owner():
     assert "grain, population/scope, units, denominator" in visualization
     assert "Do not pre-compose the report" in visualization
     assert "do not add a `chart` or `visual` mapping merely" in visualization
-    assert _has(visualization, "Do not use `report_add_section` to assemble a polished report")
+    assert "visual_direction" in visualization
     assert "`dashboarding`" not in visualization
     assert "`dashboarding`" not in report_design
     assert "`dashboarding`" not in dataclaw
