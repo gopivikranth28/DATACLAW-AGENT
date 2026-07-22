@@ -787,6 +787,45 @@ async def test_creative_author_runs_one_evidence_repair_pass():
 
 
 @pytest.mark.asyncio
+async def test_creative_author_stops_when_a_repair_makes_no_progress():
+    """A repair that leaves the finding set unchanged aborts the remaining passes.
+
+    With ``max_repair_passes=2`` an unfixable review would otherwise burn a second
+    full-document regeneration (and its wall-clock). The non-progress guard breaks
+    after the first repair once the findings repeat, so only one repair runs.
+    """
+    storyboard = _ledger_backed_storyboard()
+    original_html = _authored_html(claim="The evidence proves onboarding caused the renewal gap.")
+    repaired_html = _authored_html(claim="Onboarding still reads as the cause of the renewal gap.")
+    unfixable_finding = {
+        "status": "attention_required",
+        "findings": [{
+            "anchor": "claim-1",
+            "evidence_aliases": ["ev-1"],
+            "issue": "The descriptive finding was rewritten as a causal claim.",
+            "recommendation": "Remove the causal attribution.",
+        }],
+    }
+    llm = _JSONLLM((
+        original_html,
+        unfixable_finding,   # review #1 -> repair #1
+        repaired_html,
+        unfixable_finding,   # review #2 -> identical findings -> guard breaks
+    ))
+
+    authored, record = await author_report_visuals(
+        storyboard,
+        config={"mode": "creative", "max_repair_passes": 2},
+        llm=llm,
+    )
+
+    # One repair, then the guard stops it: no second repair, no third review.
+    assert record["repair_count"] == 1
+    assert record["evidence_review"]["status"] == "attention_required"
+    assert llm.calls == 4
+
+
+@pytest.mark.asyncio
 async def test_visual_author_rejects_non_creative_modes():
     for mode in ("runtime", "provided", "off", "required"):
         with pytest.raises(ValueError, match="must be 'creative'"):

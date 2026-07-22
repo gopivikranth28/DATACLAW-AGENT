@@ -1639,6 +1639,62 @@ async def report_publish(
     return result
 
 
+def _present_notebook_cell_ids(workspace_id: str) -> set[str]:
+    """Cell ids that actually exist in the workspace notebooks.
+
+    A ``notebook_cell:<id>`` citation is only registered as evidence when the
+    cell is present here, so a reference to a fabricated or deleted cell still
+    reads as unresolved. This confirms provenance; it never invents it.
+    """
+    ids: set[str] = set()
+    base = _base_dir(workspace_id)
+    for nb_path in base.rglob("*.ipynb"):
+        if ".ipynb_checkpoints" in nb_path.parts:
+            continue
+        try:
+            nb = json.loads(nb_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for cell in nb.get("cells", []) if isinstance(nb, dict) else []:
+            if isinstance(cell, dict):
+                cid = str(cell.get("id") or "").strip()
+                if cid:
+                    ids.add(cid)
+    return ids
+
+
+def _cited_notebook_cell_ids(sources: list[Any]) -> set[str]:
+    """Bare cell ids cited via ``notebook_cell:<id>`` evidence refs.
+
+    Accepts both the string form (``"notebook_cell:0189d9de"``) and the dict form
+    (``{"kind": "notebook_cell", "ref": "0189d9de"}``) that insights and analyses
+    use for evidence provenance.
+    """
+    prefix = "notebook_cell:"
+    cited: set[str] = set()
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        refs = source.get("evidence_refs")
+        if refs is None:
+            refs = source.get("evidence")
+        if not isinstance(refs, list):
+            refs = [refs] if refs else []
+        for ref in refs:
+            if isinstance(ref, dict):
+                kind = str(ref.get("kind") or ref.get("type") or "").strip()
+                value = str(ref.get("ref") or ref.get("cell_id") or "").strip()
+                if not value:
+                    continue
+                if value.startswith(prefix):
+                    cited.add(value[len(prefix):])
+                elif kind == "notebook_cell":
+                    cited.add(value)
+            elif isinstance(ref, str) and ref.strip().startswith(prefix):
+                cited.add(ref.strip()[len(prefix):])
+    return cited
+
+
 async def report_design_report(
     *,
     cfg: WorkspaceConfig,
@@ -1692,6 +1748,36 @@ async def report_design_report(
     presentation = dict(resolved_requirements.get("presentation") or {})
     presentation["mode"] = "handcrafted"
     resolved_requirements["presentation"] = presentation
+
+    # Register the notebook cells that confirmed insights cite and that are
+    # actually present in the workspace notebooks. Without this, a legitimate
+    # `notebook_cell:<id>` citation never resolves to a registered target, so the
+    # report degrades to a permanent unresolved-evidence warning and the
+    # authoring repair loop spends passes it can never satisfy. Presence is
+    # verified against the notebooks, so a citation to a missing cell still stays
+    # unresolved and the evidence check keeps its teeth.
+    cited_cells = _cited_notebook_cell_ids([*insights, *(analyses or [])])
+    if cited_cells:
+        verified = sorted(cited_cells & _present_notebook_cell_ids(workspace_id))
+        if verified:
+            registry_req = dict(resolved_requirements.get("evidence_registry") or {})
+            targets = list(registry_req.get("targets") or [])
+            registered_ids = {
+                str(t.get("id") or t.get("ref") or "").strip()
+                for t in targets
+                if isinstance(t, dict)
+            }
+            for cell_id in verified:
+                if cell_id in registered_ids:
+                    continue
+                targets.append({
+                    "id": cell_id,
+                    "kind": "notebook_cell",
+                    "present": True,
+                    "source": "workspace_notebook",
+                })
+            registry_req["targets"] = targets
+            resolved_requirements["evidence_registry"] = registry_req
 
     storyboard = _design_report_storyboard(
         report_goal=report_goal,
