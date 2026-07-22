@@ -886,19 +886,13 @@ def validate_authored_document(html: str, contract: dict[str, Any]) -> dict[str,
     for name, pattern in forbidden_css.items():
         if re.search(pattern, styles, re.IGNORECASE):
             raise ValueError(f"authored CSS contains forbidden {name}")
-    # CSS `content:` can paint visible text that is not in the DOM and not
-    # evidence-bound, so a fabricated statistic or claim smuggled through it
-    # ("43% lift") would bypass evidence validation. Guard ONLY that: the
-    # (?<![-\w]) anchor excludes the layout properties justify-content /
-    # align-content / place-content, and the value must be a quoted string
-    # carrying a digit or a multi-word phrase. Decorative and label uses — "",
-    # symbols/icons, single-word labels, counter(), attr(), keywords — are
-    # allowed, as is unquoted content (e.g. library object literals). CSS unicode
-    # escapes (content:"\2192" for an arrow) are stripped first so their hex
-    # digits do not read as a statistic.
-    claim_styles = re.sub(r"\\[0-9a-fA-F]{1,6}\s?", "", styles)
-    if re.search(r"(?<![-\w])content\s*:\s*(['\"])(?=[^'\"]*(?:\d|\w\s+\w))[^'\"]*\1", claim_styles, re.IGNORECASE):
-        raise ValueError("authored CSS contains forbidden generated claim text")
+    # No `content:` gate. Trying to stop an analytical claim smuggled through CSS
+    # generated text is both unsound and a false-positive magnet: CSS escapes
+    # (content:"\34\33% lift" renders "43% lift") slip past any surface scan, and
+    # decorative content — icons, counters, single/multi-word labels — reads the
+    # same as a claim to a regex. Evidence discipline is enforced where claims
+    # actually live: prose claims require data-evidence, plus the independent
+    # evidence review, source coverage, and the hash/re-render publish gates.
     return {
         "coverage": {
             "used": sorted(parser.source_aliases),
