@@ -36,6 +36,17 @@ def artifact_csp(nonce: str | None = None) -> str:
 ARTIFACT_CSP = artifact_csp()
 
 
+# CSP baked into a stored authored report so the file is safe when opened
+# directly (file://), before it is served through the nonce-based host shell
+# above. Static files cannot carry a per-response nonce, so inline scripts use
+# 'unsafe-inline'; the serve-time artifact_csp() replaces this with a nonce.
+STORED_ARTIFACT_CSP = (
+    "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
+    "img-src data:; font-src data:; connect-src 'none'; object-src 'none'; "
+    "base-uri 'none'; form-action 'none'"
+)
+
+
 TOKEN_STYLE = """
 <style>
 :root {

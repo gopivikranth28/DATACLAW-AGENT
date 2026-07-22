@@ -46,6 +46,56 @@ _BACKEND_SLOTS: dict[str, dict[str, Any]] = {
 }
 
 
+def _schema_dicts(provider_type: Any) -> list[dict[str, Any]]:
+    """Serialize a provider type's UI schema without constructing it."""
+    try:
+        schema = provider_type.config_schema()
+    except Exception:
+        return []
+    return [field.to_dict() if hasattr(field, "to_dict") else field for field in schema]
+
+
+def _all_backend_schemas(slot: str) -> dict[str, list[dict[str, Any]]]:
+    """Return schemas for every selectable backend in a provider slot.
+
+    The settings UI edits a local draft and must be able to preview dependent
+    fields before anything is persisted.  Previously it PATCHed a backend
+    choice immediately just to make this endpoint expose the new schema.
+    """
+    if slot == "compaction":
+        from dataclaw.providers.compaction.implementations.drop_old import DropOldCompactor
+        from dataclaw.providers.compaction.implementations.llm_summarizer import LLMSummarizingCompactor
+
+        return {
+            "noop": [],
+            "drop_old": _schema_dicts(DropOldCompactor),
+            "llm_summarizer": _schema_dicts(LLMSummarizingCompactor),
+        }
+
+    if slot == "memory":
+        from dataclaw.providers.memory.implementations.keyword import KeywordMemoryProvider
+        from dataclaw.providers.memory.implementations.rag import RAGMemoryProvider
+
+        schemas = {
+            "noop": [],
+            "keyword": _schema_dicts(KeywordMemoryProvider),
+            "rag": _schema_dicts(RAGMemoryProvider),
+            "gbrain": [],
+        }
+        try:
+            from dataclaw_gbrain.provider import GbrainMemoryProvider
+
+            schemas["gbrain"] = _schema_dicts(GbrainMemoryProvider)
+        except ImportError:
+            # The option remains visible because an existing config may refer
+            # to it, but environments without the optional plugin have no
+            # provider-specific fields to render.
+            pass
+        return schemas
+
+    return {}
+
+
 @router.get("")
 async def list_providers(request: Request) -> list[dict[str, Any]]:
     """List all registered providers with their config schemas."""
@@ -96,6 +146,8 @@ async def list_providers(request: Request) -> list[dict[str, Any]]:
                 "config_key": backend_meta["config_key"],
                 "current": current_backend if current_backend is not None else default_key,
                 "options": backend_meta["options"],
+                "config_paths": backend_meta["config_paths"],
+                "schemas": _all_backend_schemas(slot),
             }
             entry["config_path"] = config_path
 

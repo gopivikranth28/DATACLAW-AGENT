@@ -99,7 +99,7 @@ def test_report_tool_manifest_requires_the_governed_publish_parameters() -> None
         {"name": "publish_artifact", "parameters": {"type": "object", "properties": {}}},
     ])
 
-    assert "report_design_report missing properties: design_passes, visual_author" in issues
+    assert "report_design_report missing properties: visual_author" in issues
     assert "report_publish missing properties: require_visual_review" in issues
     assert "publish_artifact missing properties: report_receipt_path" in issues
     assert "report_publish is present but report_review_visuals is unavailable" in issues
@@ -107,7 +107,7 @@ def test_report_tool_manifest_requires_the_governed_publish_parameters() -> None
 
 def test_report_tool_manifest_accepts_a_complete_governed_publish_flow() -> None:
     tools = [
-        {"name": "report_design_report", "parameters": {"properties": {"design_passes": {}, "visual_author": {}}}},
+        {"name": "report_design_report", "parameters": {"properties": {"visual_author": {}}}},
         {"name": "report_review_visuals", "parameters": {"properties": {}}},
         {"name": "report_publish", "parameters": {"properties": {"require_visual_review": {}}}},
         {"name": "publish_artifact", "parameters": {"properties": {"report_receipt_path": {}}}},
@@ -439,7 +439,7 @@ async def test_install_plugin_atomic_happy_path(tmp_path: Path) -> None:
                     "description": "Design cohesive analytical reports",
                     "parameters": {
                         "type": "object",
-                        "properties": {"design_passes": {}, "visual_author": {}},
+                        "properties": {"visual_author": {}},
                     },
                 },
             ],

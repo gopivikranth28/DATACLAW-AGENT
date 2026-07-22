@@ -62,7 +62,7 @@ This chain improves traceability from a published claim back to its evidence and
 
 ### Skill library additions
 
-- Added: `analysis_review`, `artifacts`, `dashboarding`, `insight_validation`, `report_design`, `structured_eda`, and `visualization`.
+- Added: `analysis_review`, `artifacts`, `insight_validation`, `report_design`, `structured_eda`, and `visualization`.
 - Updated: `dataclaw_data_science` now routes governed EDA, review, report, and artifact work; `data_profiling` remains the compact profiling path.
 - Skills are installed from `skill-library/`. OpenClaw tool-manifest installation and skill synchronization are separate operations.
 
@@ -195,7 +195,7 @@ Navigate to **Projects** in the sidebar and create a new project. Each project g
 
 ### 4. Install the analysis and reporting skills you need
 
-Open **Skills** to browse the bundled Skill Library. For the governed Release 3 path, install `structured_eda`, `insight_validation`, and `analysis_review`; add `visualization`, `dashboarding`, `report_design`, and `artifacts` when the session will publish a report or dashboard.
+Open **Skills** to browse the bundled Skill Library. For the governed Release 3 path, install `structured_eda`, `insight_validation`, and `analysis_review`; add `report_design` and `artifacts` when the session will publish a report or report-like dashboard, and add `visualization` when notebook charting or visual-evidence preparation is needed.
 
 Installed skills become available to direct LLM sessions, subject to the project or session Scope selection. When OpenClaw is active, the Skills page also offers to synchronize each installed skill to the Dataclaw OpenClaw extension. Skill synchronization is separate from reinstalling the OpenClaw tool manifest.
 

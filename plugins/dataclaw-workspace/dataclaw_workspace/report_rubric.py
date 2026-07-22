@@ -5,8 +5,6 @@ dataclaw report is: gate thresholds, criteria severities, and which criteria are
 live versus deferred. The quality gate, the storyboard designer, and (eventually)
 the self-critique loop all read the same file so the standard cannot drift
 between how a report is written, critiqued, and judged.
-
-See docs/report-builder-architecture.md, Appendix A, for the full specification.
 """
 from __future__ import annotations
 

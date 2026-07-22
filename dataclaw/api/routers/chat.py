@@ -33,6 +33,7 @@ from dataclaw.providers.llm.provider import PendingToolCall, TextDeltaEvent, Too
 from dataclaw.providers.tool.llm_redact import redact_for_llm
 from dataclaw.schema import Message
 from dataclaw.storage import sessions
+from dataclaw.tool_progress import tool_progress_context
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,18 @@ router = APIRouter()
 agent_router = APIRouter()
 
 APP_CELL_OUTPUT_TOOLS = {"execute_cell", "display_cell_output", "execute_code"}
-APP_REPORT_TOOLS = {"build_report", "report_design_report", "report_add_section", "report_publish"}
+# report_design_report and report_publish are the active report tools; build_report
+# and report_add_section were removed but are kept here so reports produced by those
+# tools in older sessions still resolve to a report artifact on reload.
+APP_REPORT_TOOLS = {"report_design_report", "report_publish", "build_report", "report_add_section"}
+
+
+def _max_turns_notice(max_turns: int) -> str:
+    return (
+        f"The configured limit of {max_turns} agent turns was reached before the task "
+        "finished. Your progress has been saved. Send \"Continue from where you "
+        "stopped\" to resume."
+    )
 
 
 def _stable_app_payload_key(payload: Any) -> str:
@@ -236,40 +248,52 @@ async def _run_agent_loop(
             state = await hooks.run("preCompactionHook", state)
             compacted = await providers.compaction.compact(current_messages, **compact_kwargs)
 
-            # Extract the summary from the compacted result (first system message)
-            summary_text = ""
-            if compacted and compacted[0].role == "system":
-                summary_text = compacted[0].text() if hasattr(compacted[0], "text") else str(compacted[0].content)
+            # A compactor can decline or fail safely and return the original
+            # list. Do not persist an empty/misleading divider in that case.
+            if compacted is current_messages:
+                compacted = current_messages
+            else:
+                # Extract the summary from the compacted result (first system message)
+                summary_text = ""
+                if compacted and compacted[0].role == "system":
+                    summary_text = compacted[0].text() if hasattr(compacted[0], "text") else str(compacted[0].content)
 
-            # Count how many messages were compacted vs kept
-            keep_recent = compact_kwargs["keep_recent"]
-            compacted_count = max(0, len(sorted_msgs) - keep_recent)
-            kept_count = min(keep_recent, len(sorted_msgs))
+                recent_messages = compacted[1:] if compacted and compacted[0].role == "system" else compacted
+                kept_turns = sum(1 for message in recent_messages if message.role == "user")
+                split_idx, compacted_count, kept_count = _stored_compaction_span(
+                    sorted_msgs, kept_turns
+                )
 
-            # Insert the marker at the split point: right before the kept messages
-            # so the UI shows <old history> <compaction divider> <recent messages>
-            marker_id = f"compaction-{uuid.uuid4()}"
-            insert_idx = compacted_count  # position after old messages, before recent
-            await sessions.insert_message_at(thread_id, insert_idx, {
-                "role": "compaction",
-                "content": summary_text,
-                "messageId": marker_id,
-                "compactedCount": compacted_count,
-                "keptCount": kept_count,
-            })
+                # ``sorted_msgs`` and ``stored_msgs`` contain the same dict
+                # objects in different orders. Insert into the persisted/raw
+                # order immediately before the chronological split target.
+                split_target = sorted_msgs[split_idx] if split_idx < len(sorted_msgs) else None
+                insert_idx = next(
+                    (idx for idx, message in enumerate(stored_msgs) if message is split_target),
+                    len(stored_msgs),
+                )
 
-            # Emit SSE event so frontend shows the compaction in real-time.
-            # Send the full summary — the divider is collapsible, so a long
-            # summary doesn't crowd the chat by default but can be expanded.
-            emit(emitter.custom("compaction", {
-                "messageId": marker_id,
-                "summary": summary_text,
-                "compactedCount": compacted_count,
-                "keptCount": kept_count,
-            }))
+                marker_id = f"compaction-{uuid.uuid4()}"
+                marker = _build_compaction_marker(
+                    marker_id=marker_id,
+                    summary_text=summary_text,
+                    compacted_count=compacted_count,
+                    kept_count=kept_count,
+                    split_target=split_target,
+                )
+                await sessions.insert_message_at(thread_id, insert_idx, marker)
 
-            state["messages"] = compacted
-            state = await hooks.run("postCompactionHook", state)
+                # Send the full summary — the divider is collapsible, so a
+                # long summary does not crowd the chat until expanded.
+                emit(emitter.custom("compaction", {
+                    "messageId": marker_id,
+                    "summary": summary_text,
+                    "compactedCount": compacted_count,
+                    "keptCount": kept_count,
+                }))
+
+                state["messages"] = compacted
+                state = await hooks.run("postCompactionHook", state)
 
         # Memory (before system prompt so memories can be injected into it)
         memories = await providers.memory.retrieve_memories(state)
@@ -564,8 +588,34 @@ async def _run_agent_loop(
                             "result": result_json, "status": "error", **tool_timing(tc.call_id),
                         })
                         continue
+                    tracker.start_tool(thread_id, tc.call_id, tc.tool_name)
+                    tool_started = asyncio.get_running_loop().time()
+                    tool_execution_started_at = datetime.now(timezone.utc).isoformat()
+
+                    def report_progress(
+                        progress: dict[str, Any],
+                        *,
+                        call_id: str = tc.call_id,
+                        tool_name: str = tc.tool_name,
+                        started: float = tool_started,
+                    ) -> None:
+                        payload = {
+                            "toolCallId": call_id,
+                            "toolName": tool_name,
+                            "startedAt": tool_execution_started_at,
+                            "elapsedMs": round(
+                                (asyncio.get_running_loop().time() - started) * 1000
+                            ),
+                            "emittedAt": datetime.now(timezone.utc).isoformat(),
+                            **progress,
+                        }
+                        tracker.update_tool_progress(thread_id, call_id, payload)
+                        emit(emitter.custom("tool:progress", payload))
+
                     try:
-                        result = await fn(**tc.tool_input)
+                        report_progress({"phase": "starting", "label": f"Starting {tc.tool_name}"})
+                        with tool_progress_context(report_progress):
+                            result = await fn(**tc.tool_input)
                         results_list.append(result)
                         errors_list.append(None)
                         result_json = json.dumps(result, default=str)
@@ -605,6 +655,8 @@ async def _run_agent_loop(
                             "args": json.dumps(tc.tool_input, default=str),
                             "result": result_json, "status": "error", **tool_timing(tc.call_id),
                         })
+                    finally:
+                        tracker.finish_tool(thread_id, tc.call_id)
 
                 # Build canonical messages and append to conversation. Use the
                 # redacted view of each result so the live-turn LLM context
@@ -646,7 +698,25 @@ async def _run_agent_loop(
                 if message_started:
                     emit(emitter.text_message_end(msg_id))
 
-        # Max turns reached
+        # Max turns reached. Persist a non-LLM notice so the reason remains
+        # visible after a refresh, then stream the same notice to live clients.
+        # This is an execution limit, not an API failure, so the run still ends
+        # with RUN_FINISHED rather than RUN_ERROR.
+        notice_id = f"run-notice-{run_id}"
+        notice_message = _max_turns_notice(max_turns)
+        await sessions.append_message(thread_id, {
+            "role": "run_notice",
+            "reason": "max_turns",
+            "content": notice_message,
+            "messageId": notice_id,
+            "maxTurns": max_turns,
+        })
+        emit(emitter.custom("agent:max_turns_reached", {
+            "messageId": notice_id,
+            "reason": "max_turns",
+            "message": notice_message,
+            "maxTurns": max_turns,
+        }))
         emit(emitter.run_finished())
         tracker.finish_run(thread_id)
 
@@ -667,6 +737,79 @@ async def _run_agent_loop(
 
 
 # ── Session → LLM Message Conversion ──────────────────────────────────────
+
+
+def _stored_split_for_kept_turns(
+    stored_messages: list[dict[str, Any]],
+    kept_turns: int,
+) -> int:
+    """Locate the chronological storage boundary for retained user turns.
+
+    ``stored_messages`` must be timestamp-sorted. Only turns after the latest
+    existing compaction marker participate, matching
+    ``_stored_messages_to_llm``. The fallback keeps the final stored entry so
+    malformed/legacy histories still receive a valid divider position.
+    """
+    return _stored_compaction_span(stored_messages, kept_turns)[0]
+
+
+def _build_compaction_marker(
+    *,
+    marker_id: str,
+    summary_text: str,
+    compacted_count: int,
+    kept_count: int,
+    split_target: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Build a marker that remains at its logical boundary after timestamp sort.
+
+    Session insertion assigns a current timestamp when one is absent. That would
+    move a marker inserted before retained history to the end on the next reload,
+    causing the retained messages to be treated as already summarized. Sharing
+    the split target's timestamp preserves the insertion order because Python's
+    sort is stable. An empty legacy timestamp is preserved for the same reason.
+    """
+    marker: dict[str, Any] = {
+        "role": "compaction",
+        "content": summary_text,
+        "messageId": marker_id,
+        "compactedCount": compacted_count,
+        "keptCount": kept_count,
+    }
+    if split_target is not None:
+        marker["timestamp"] = split_target.get("timestamp") or ""
+    return marker
+
+
+def _stored_compaction_span(
+    stored_messages: list[dict[str, Any]],
+    kept_turns: int,
+) -> tuple[int, int, int]:
+    """Return split index plus per-pass compacted and retained message counts.
+
+    Counts are relative to the segment after the latest existing marker. Older
+    history and prior divider records are already represented by that marker's
+    summary and must not inflate the next divider's metadata.
+    """
+    segment_start = 0
+    for idx, message in enumerate(stored_messages):
+        if message.get("role") == "compaction":
+            segment_start = idx + 1
+
+    user_indices = [
+        idx
+        for idx in range(segment_start, len(stored_messages))
+        if stored_messages[idx].get("role") == "user"
+    ]
+    if kept_turns > 0 and len(user_indices) >= kept_turns:
+        split_idx = user_indices[-kept_turns]
+    else:
+        split_idx = max(segment_start, len(stored_messages) - 1)
+    return (
+        split_idx,
+        max(0, split_idx - segment_start),
+        max(0, len(stored_messages) - split_idx),
+    )
 
 
 def _stored_messages_to_llm(stored_messages: list[dict[str, Any]]) -> list[Message]:
@@ -813,6 +956,28 @@ def _session_messages_to_agui(raw_messages: list[dict[str, Any]]) -> list[dict[s
                 "id": m.get("messageId", str(uuid.uuid4())),
                 "role": "system",
                 "content": f"[COMPACTION:{count}:{kept}]\n{summary}",
+            })
+        elif role == "run_notice":
+            # A max-turn notice can follow tool calls without an assistant
+            # message. Flush those calls first so replay preserves the live
+            # transcript order: tool activity, then the stop explanation.
+            if pending_tool_calls:
+                agui.append({
+                    "id": str(uuid.uuid4()),
+                    "role": "assistant",
+                    "content": "",
+                    "toolCalls": pending_tool_calls,
+                })
+                agui.extend(pending_tool_results)
+                pending_tool_calls.clear()
+                pending_tool_results.clear()
+            reason = m.get("reason", "unknown")
+            max_turns = m.get("maxTurns", 0)
+            content = m.get("content", "")
+            agui.append({
+                "id": m.get("messageId", str(uuid.uuid4())),
+                "role": "system",
+                "content": f"[RUN_NOTICE:{reason}:{max_turns}]\n{content}",
             })
         # Skip other roles (system, etc.)
 
@@ -963,11 +1128,29 @@ async def agent_status(thread_id: str) -> dict[str, Any]:
     run = get_run_tracker().get_run(thread_id)
     if run is None:
         raise HTTPException(404, "No active run")
+    if run.task is None:
+        task_status = "unknown"
+    elif run.task.cancelled():
+        task_status = "cancelled"
+    elif run.task.done():
+        task_status = "done"
+    else:
+        task_status = "running"
     return {
         "running": run.status == "running",
         "status": run.status,
         "run_id": run.run_id,
         "cursor": run.cursor,
+        "healthy": run.status == "running" and task_status == "running",
+        "task_status": task_status,
+        "started_at": run.started_at,
+        "last_event_at": run.last_event_at,
+        "last_progress_at": run.last_progress_at,
+        "last_output_at": (
+            run.active_tool.get("lastOutputAt") if run.active_tool else None
+        ),
+        "active_tool": run.active_tool,
+        "server_time": datetime.now(timezone.utc).isoformat(),
     }
 
 

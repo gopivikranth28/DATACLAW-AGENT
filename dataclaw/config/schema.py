@@ -40,6 +40,8 @@ class LLMConfig(BaseModel):
 class CompactionConfig(BaseModel):
     backend: str = "noop"  # noop | drop_old | llm_summarizer
     enabled: bool = False  # deprecated, kept for compat
+    # Legacy key names are retained for config-file compatibility. The UI and
+    # providers interpret both values as complete user conversation turns.
     max_messages: int = 30
     # `keep_recent` accepts None (treated as "use the default" downstream) so
     # an existing config file with `"keep_recent": null` still parses cleanly.

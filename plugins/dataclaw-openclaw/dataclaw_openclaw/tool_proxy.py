@@ -6,9 +6,11 @@ No bridge needed — tools are executed inline and results returned immediately.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -17,6 +19,7 @@ from pydantic import BaseModel, Field
 from dataclaw.api.run_tracker import get_run_tracker
 from dataclaw.events.emitter import AgentEventEmitter
 from dataclaw.storage import sessions
+from dataclaw.tool_progress import tool_progress_context
 
 logger = logging.getLogger(__name__)
 
@@ -182,8 +185,31 @@ async def tool_call_proxy(tool_name: str, body: ToolCallBody, request: Request) 
         tracker.append_event(session_id, emitter.tool_call_end(call_id))
 
     # Execute tool
+    tool_started = asyncio.get_running_loop().time()
+    tool_started_at = datetime.now(timezone.utc).isoformat()
+
+    def report_progress(progress: dict[str, Any]) -> None:
+        if emitter is None:
+            return
+        payload = {
+            "toolCallId": call_id,
+            "toolName": tool_name,
+            "startedAt": tool_started_at,
+            "elapsedMs": round(
+                (asyncio.get_running_loop().time() - tool_started) * 1000
+            ),
+            "emittedAt": datetime.now(timezone.utc).isoformat(),
+            **progress,
+        }
+        tracker.update_tool_progress(session_id, call_id, payload)
+        tracker.append_event(session_id, emitter.custom("tool:progress", payload))
+
+    if emitter:
+        tracker.start_tool(session_id, call_id, tool_name)
+        report_progress({"phase": "starting", "label": f"Starting {tool_name}"})
     try:
-        result = await fn(**clean_params)
+        with tool_progress_context(report_progress):
+            result = await fn(**clean_params)
         result_json = json.dumps(result, default=str)
         status = "complete"
     except Exception as e:
@@ -191,6 +217,9 @@ async def tool_call_proxy(tool_name: str, body: ToolCallBody, request: Request) 
         result = {"error": str(e)}
         result_json = json.dumps(result)
         status = "error"
+    finally:
+        if emitter:
+            tracker.finish_tool(session_id, call_id)
 
     # Emit result event to tracker
     if emitter:

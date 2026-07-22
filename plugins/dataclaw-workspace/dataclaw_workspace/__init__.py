@@ -23,11 +23,9 @@ from dataclaw_workspace.tools import (
     ws_update_file,
     ws_exec,
     display_image,
-    build_report,
     report_design_report,
     report_review_visuals,
     report_publish,
-    report_add_section,
     set_project_dir,
 )
 from dataclaw_workspace.config import WorkspaceConfig, load_config
@@ -156,30 +154,14 @@ class WorkspacePlugin:
         ))
 
         ctx.tool_registry.register_tool(PythonTool(
-            name="build_report",
-            description="Normalize raw HTML into a typed, storyboard-backed report while preserving the source HTML beside it. The output includes a storyboard, critique record, and quality result; provide either raw HTML or a workspace HTML path.",
-            fn=lambda **kw: build_report(cfg=cfg, **kw),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "html": {"type": "string", "description": "Raw HTML string for the report"},
-                    "html_path": {"type": "string", "description": "Path to an HTML file in workspace"},
-                    "output_path": {"type": "string", "description": "Output filename (relative to workspace)", "default": "report.html"},
-                    "storyboard_path": {"type": "string", "description": "Output storyboard JSON path (defaults beside the report)"},
-                    "report_goal": {"type": "string", "description": "Decision question to preserve while rebuilding the source"},
-                    "title": {"type": "string", "description": "Optional report title override"},
-                    "audience": {"type": "string", "description": "Target reader/audience"},
-                    "quality_gate": {"type": "string", "description": "Report-quality behavior after normalization", "enum": ["warn", "fail", "off"], "default": "warn"},
-                },
-            },
-        ))
-
-        ctx.tool_registry.register_tool(PythonTool(
             name="report_design_report",
             description=(
-                "Design a cohesive analytical HTML report from completed notebook insights and analysis assets. "
-                "Use after EDA/modeling has produced findings: this tool storyboards the report, chooses section "
-                "layouts and interactive controls, writes a storyboard JSON, and renders the final HTML in one pass."
+                "Author a cohesive analytical HTML report from completed notebook insights and analysis assets. "
+                "Use after EDA/modeling has produced findings. Every report is written end to end by the ledger-backed "
+                "creative author: it builds an evidence-and-requirements dossier from the supplied findings and assets, "
+                "then the configured LLM writes the complete single-file HTML — original prose, story, layout, CSS, and "
+                "bespoke SVG/Canvas visuals — and the host validates source coverage, evidence fidelity, and artifact "
+                "safety. A non-empty evidence ledger is required; there is no deterministic or bounded mode."
             ),
             fn=lambda **kw: report_design_report(cfg=cfg, llm=ctx.providers.llm, **kw),
             parameters={
@@ -187,15 +169,14 @@ class WorkspacePlugin:
                 "properties": {
                     "report_goal": {"type": "string", "description": "Decision question or objective the report must answer"},
                     "insights": {"type": "array", "description": "Completed findings/insights with title, summary/detail, evidence, caveat, metrics, ids", "items": {"type": "object"}},
-                    "analyses": {"type": "array", "description": "Analysis assets such as Plotly figures, aggregate records+chart specs, tables, cards, methods, or evidence. For editorial control, an asset may declare editorial_role='hero', story_priority (lower is earlier), and diagnostic_group/comparison_group for a deliberate paired comparison.", "items": {"type": "object"}, "default": []},
+                    "analyses": {"type": "array", "description": "Analysis assets such as Plotly figures, aggregate records, chart specs, tables, cards, metrics, findings, hypotheses, process steps, methods, or evidence. The author may choose the best report treatment. Set required_visual=true only when this exact asset must appear as a reader-facing figure; then supply its existing Plotly figure, a familiar chart mapping (bar/line/scatter/heatmap), or a supported aggregate visual mapping. semantic_role can declare kpi/scorecard, conclusions, hypotheses, process/mechanism, comparison/tradeoffs, lookup/catalog, methodology, data_quality, uncertainty, provenance, timeline, or status. For editorial control, an asset may declare editorial_role='hero', story_priority (lower is earlier), and diagnostic_group/comparison_group for a deliberate paired comparison.", "items": {"type": "object"}, "default": []},
                     "audience": {"type": "string", "description": "Target reader/audience", "default": ""},
-                    "requirements": {"type": "object", "description": "Optional report requirements: metrics, filters, methodology, hypotheses, checks, titles, evidence_registry, analysis_review, and editorial_archetype. Use editorial_archetype='taxonomy_explorer' for category cards → evidence → explorer, or 'guided_explorer' for the same paced evidence/explorer flow without taxonomy cards. For forecasts, analysis_review can declare mode, baseline, uncertainty, sensitivity, decision_path, outcome_distribution, assumptions, and export_runtime; critique returns durable findings for anything missing.", "default": {}},
+                    "requirements": {"type": "object", "description": "Optional report requirements: metrics, filters, methodology, hypotheses, checks, titles, evidence_registry, analysis_review, editorial_archetype, and story_arcs. Explicit story_arcs control the narrative; otherwise the handcrafted compiler groups existing analyses around the supplied report goal without inventing findings. Use editorial_archetype='taxonomy_explorer' for category cards → evidence → explorer, or 'guided_explorer' for the same paced evidence/explorer flow without taxonomy cards. For forecasts, analysis_review can declare mode, baseline, uncertainty, sensitivity, decision_path, outcome_distribution, assumptions, and export_runtime; critique returns durable findings for anything missing.", "default": {}},
                     "report_path": {"type": "string", "description": "Output report HTML path", "default": "report.html"},
                     "storyboard_path": {"type": "string", "description": "Output storyboard JSON path", "default": "report_storyboard.json"},
                     "title": {"type": "string", "description": "Report title", "default": "Analysis Report"},
                     "quality_gate": {"type": "string", "description": "Report-quality behavior: warn and write, fail on required quality regressions, or off", "enum": ["warn", "fail", "off"], "default": "fail"},
-                    "design_passes": {"type": "integer", "description": "Bounded storyboard refinement passes (1-5); default 5 preserves supplied context while improving the desktop composition, adjacent evidence, and chart interpretation without adding generic report copy", "minimum": 1, "maximum": 5, "default": 5},
-                    "visual_author": {"type": "object", "description": "Optional runtime visual-author contract. Set mode='runtime' to let the configured LLM choose a named theme, section surfaces, and selections of only supplied typed fact IDs. Facts may belong to an insight (insight_id/finding_id) or any supported section (section_id/layout_role), with text and uses (pill, scan_point, example, annotation); the model cannot create report copy or HTML. Set allow_story_reorder=true only with declared visual_author_story_zone/block source fields, so it may reorder whole blocks within a zone. Runtime output is bounded and fallback is recorded; mode='provided' uses a reproducible validated spec, while mode='required' stops and writes a failure audit."},
+                    "visual_author": {"type": "object", "description": "Optional creative-author tuning. Every report is authored by the ledger-backed creative author from a persisted dossier of completed findings, caveats, ledger entries, and bounded aggregate values; source coverage, evidence review, bounded repair passes, CSP, and artifact safety are enforced, and a non-empty evidence ledger is required. This object only tunes timeout_seconds (default 600, max 900 — a per-call ceiling, raise for very large reports), max_output_chars (default/max 600000), max_dossier_chars (default 300000, max 600000), max_repair_passes (default 2, max 3), and max_repair_prompt_chars (default 700000; lower it to match a smaller provider context window). There is no deterministic or bounded mode."},
                 },
                 "required": ["report_goal", "insights"],
             },
@@ -204,8 +185,8 @@ class WorkspacePlugin:
         ctx.tool_registry.register_tool(PythonTool(
             name="report_review_visuals",
             description=(
-                "Capture full-page and key-section browser screenshots for a structured report, then record a named human or vision-review decision "
-                "bound to the exact HTML hash. Use before publishing reports that require visual review."
+                "Optionally capture desktop full-page and key-section browser screenshots for a structured report, then record a named human or vision-review decision "
+                "bound to the exact HTML hash. Use only when a report explicitly requires visual approval."
             ),
             fn=lambda **kw: report_review_visuals(cfg=cfg, **kw),
             parameters={
@@ -225,11 +206,10 @@ class WorkspacePlugin:
             name="report_publish",
             description=(
                 "Publish a storyboard-backed report after re-running the current report rubric at "
-                "fail severity. Writes a durable publish receipt and records the DOCX export result. "
+                "fail severity. Writes a durable publish receipt; DOCX export is optional. "
                 "The receipt binds the exact rendered HTML and analytical-review contract for artifact publication. "
                 "When visual review is required, an approved report_review_visuals record for the exact HTML is also required. "
-                "Use after report_design_report or a structured build_report result; "
-                "low-confidence preserved source must be redesigned before publishing."
+                "Use after report_design_report."
             ),
             fn=lambda **kw: report_publish(cfg=cfg, **kw),
             parameters={
@@ -238,71 +218,10 @@ class WorkspacePlugin:
                     "report_path": {"type": "string", "description": "Structured report HTML path"},
                     "storyboard_path": {"type": "string", "description": "Storyboard JSON created for the report"},
                     "receipt_path": {"type": "string", "description": "Publish receipt JSON path (defaults beside the report)"},
-                    "export_docx": {"type": "boolean", "description": "Attempt DOCX export and record its outcome", "default": True},
-                    "require_visual_review": {"type": "boolean", "description": "Require a named approved report_review_visuals record, bound to passed Playwright desktop/webview full-page and key-section screenshot artifacts, for this final release. When omitted, uses requirements.publication.require_visual_review."},
+                    "export_docx": {"type": "boolean", "description": "Attempt DOCX export and record its outcome. Disabled by default; reports with advanced visuals return unsupported until validated static snapshots exist because DOCX conversion cannot execute inline SVG JavaScript.", "default": False},
+                    "require_visual_review": {"type": "boolean", "description": "Optional explicit opt-in to a named approved report_review_visuals record, bound to passed Playwright desktop full-page and key-section screenshot artifacts. When omitted, uses requirements.publication.require_visual_review, which also defaults off."},
                 },
                 "required": ["report_path", "storyboard_path"],
-            },
-        ))
-
-        ctx.tool_registry.register_tool(PythonTool(
-            name="report_add_section",
-            description=(
-                "Append a low-level designed section to a live HTML report. Prefer report_design_report "
-                "for final cohesive reports after insights are complete. Supported sections: header, "
-                "metric_row, insight_grid, "
-                "explanation, comparison, checklist, narrative_band, methodology_block, "
-                "evidence_rail, ledger_timeline, chart_interpretation, hypothesis_ledger, "
-                "evidence_trace, filterable_chart, interactive_table, selector_panel, "
-                "chart_table_explorer, entity_card_grid, chart, table, findings, callout, or text."
-            ),
-            fn=lambda **kw: report_add_section(cfg=cfg, **kw),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "section_type": {
-                        "type": "string",
-                        "description": "Section type",
-                        "enum": [
-                            "header",
-                            "metric_row",
-                            "insight_grid",
-                            "explanation",
-                            "comparison",
-                            "checklist",
-                            "narrative_band",
-                            "methodology_block",
-                            "evidence_rail",
-                            "ledger_timeline",
-                            "chart_interpretation",
-                            "hypothesis_ledger",
-                            "evidence_trace",
-                            "filterable_chart",
-                            "interactive_table",
-                            "selector_panel",
-                            "chart_table_explorer",
-                            "entity_card_grid",
-                            "chart",
-                            "findings",
-                            "callout",
-                            "text",
-                            "table",
-                        ],
-                    },
-                    "data": {
-                        "type": "object",
-                        "description": (
-                            "Section data payload. For narrative_band, use title (or heading) plus body/text/summary; "
-                            "basic <b>, <i>, and <code> emphasis is supported. For interactive_table, provide columns "
-                            "and rows as objects keyed by those columns, or rows as value arrays in the same column order. "
-                            "This low-level tool returns a draft; use report_design_report then report_publish for a final report."
-                        ),
-                    },
-                    "report_path": {"type": "string", "description": "Output report path", "default": "report.html"},
-                    "title": {"type": "string", "description": "Report title, used when creating a new report", "default": "Analysis Report"},
-                    "quality_gate": {"type": "string", "description": "Report-quality behavior: warn and write, fail on required quality regressions, or off", "enum": ["warn", "fail", "off"], "default": "warn"},
-                },
-                "required": ["section_type", "data"],
             },
         ))
 

@@ -375,9 +375,6 @@ def report_payload() -> dict[str, Any]:
     requirements = {
         "editorial_archetype": "path_dependent_forecast",
         "presentation": {
-            "insight_layout": "editorial_list",
-            "insight_evidence": "linked",
-            "evidence_trace": "disclosure",
             "require_display_facts": True,
         },
         "publication": {"require_visual_review": True},
@@ -447,8 +444,7 @@ async def build(
         report_path="docs/wc26_knockout_forecast.html",
         storyboard_path="docs/wc26_knockout_forecast.storyboard.json",
         quality_gate="fail",
-        design_passes=5,
-        visual_author=visual_author or ({"mode": "runtime"} if llm is not None else {"mode": "off"}),
+        visual_author=visual_author,
         llm=llm,
         **payload,
     )

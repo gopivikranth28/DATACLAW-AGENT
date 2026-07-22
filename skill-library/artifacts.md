@@ -1,7 +1,7 @@
 ---
 name: artifacts
 description: Publish, revise, inspect, export, and troubleshoot DataClaw artifacts. Use when a report, dashboard, chart, profile, model card, or living-report note should become a secure, versioned, shareable artifact through dataclaw-artifacts.
-tags: [artifacts, reporting, dashboarding, visualization, publishing]
+tags: [artifacts, reporting, dashboards, visualization, publishing]
 ---
 
 ## When to use
@@ -10,13 +10,12 @@ DataClaw artifact: reports, dashboards, chart pages, data profile reports,
 model cards, stakeholder exports, and living-report notes.
 
 This skill owns artifact lifecycle behavior. For content and layout, also fetch:
-- `dashboarding` for dashboard/story composition
-- `report_design` for final report storyboards, interaction plans, and quality gates
-- `visualization` for chart/KPI/table grammar
+- `report_design` for final report authorship, evidence review, and quality gates
+- `visualization` only when analysis-time charting or evidence preparation is needed
 - `structured_eda`, `sql_analyst`, or `modeling` when the artifact is evidence from those workflows
 
 ## Core rule
-The notebook computes, skills decide, and artifacts publish. Do not leave the
+The notebook computes, `report_design` authors, and artifacts publish. Do not leave the
 final deliverable as a loose workspace HTML file, App-panel state, long chat
 answer, or raw chart collection.
 
@@ -24,11 +23,9 @@ The durable UI surface is the inline published-artifact card plus the right
 panel Artifact Library/living report. Treat `/app/:sessionId` as a legacy
 compatibility scratch view for loose visual outputs, not as a final handoff.
 
-Within one session or project, reports and dashboards should feel like one
-family. Reuse the DataClaw artifact tokens (`--dc-*`), standard report classes
-such as `.r-page`, `.r-section`, `.r-metric`, `.r-chart-target`, and stable
-spacing/radius choices. Do not choose a new palette or decorative system for
-each artifact unless the user explicitly asks for a themed one-off.
+The handcrafted report author may create a report-specific visual system. Do
+not retrofit its output to a fixed component library. Preserve the required host
+contrast tokens, evidence metadata, CSP, safety constraints, and receipt.
 
 Use `publish_artifact` for a standalone report, dashboard, chart page, profile,
 or model card. Use `report_note` for interpretation, decisions, rationale, and
@@ -53,13 +50,13 @@ source and report that artifact publication is unavailable. Do not claim an
 
 ## Publish workflow
 1. **Prepare the source.** Prefer a workspace `source_path` over inline `html`.
-   The source should be self-contained HTML assembled from typed report sections
-   or artifact-compliant HTML.
+   The source should be self-contained authored or typed report HTML that has
+   passed the appropriate report flow.
 2. **Validate before publish.** For a report-builder HTML source, first call
    `report_publish(report_path=..., storyboard_path=...)` and inspect its
    receipt, quality, and runtime-smoke result. Then check for remote assets,
    iframe/object/embed/base tags, raw datasets, fetch/XHR/WebSocket calls, inline
-   event handlers, `report_add_section` CDN fallbacks, and oversized
+   event handlers, and oversized
    published/exported payloads. Fix obvious issues before calling the tool.
 3. **Publish.** Call:
    `publish_artifact(title, description?, source_path?, html?, report_receipt_path?, artifact_id?, label?, base_version?)`
@@ -71,18 +68,21 @@ source and report that artifact publication is unavailable. Do not claim an
 4. **Confirm the result.** Expect `{artifact_id, version, session_id, url}`.
    Mention the artifact title and version briefly; the UI renders the same
    version inline and in the Artifact Library.
-5. **Self-check.** When `dataclaw-browser` is available and the task is a report
-   or dashboard, screenshot the artifact in light and dark mode before closing
-   the plan step.
+5. **Optional visual review.** Capture and approve desktop screenshots only when
+   the user or report requirements explicitly request visual review. Routine
+   artifact publication does not require mobile, light/dark, or screenshot gates.
 
 ## Revision workflow
 When the user asks for a change to an existing artifact:
 
 1. Call `read_artifact(artifact_id, version?)`.
-2. Make the smallest source edit that satisfies the request.
-3. Re-run notebook/query/model computations only if the underlying evidence
-   changed.
-4. Call `publish_artifact` with the same `artifact_id` and the `base_version`
+2. For a structured or creative report, update its findings, aggregate inputs,
+   requirements, or design brief and re-run `report_design_report`; do not edit
+   generated HTML as the source of truth. For a generic non-report artifact,
+   make the smallest safe source edit.
+3. Re-run notebook/query/model computations when the underlying evidence changed.
+4. Re-run `report_publish` for report-builder HTML, then call
+   `publish_artifact` with the same `artifact_id` and the `base_version`
    you edited from.
 5. If the tool returns a conflict, read the latest version and re-apply the
    change intentionally. Never last-writer-wins by guessing.
@@ -110,7 +110,8 @@ Artifacts are hostile-content-safe by default. Follow these rules:
 - No inline event handlers such as `onclick`; use `addEventListener`.
 - No JavaScript-driven navigation such as `window.open`, `location = ...`,
   `location.assign(...)`, or `location.replace(...)`.
-- Use DataClaw theme tokens (`--dc-*`) instead of one-off visual systems.
+- Preserve the host-required contrast tokens and metadata, but allow the
+  report author to choose a distinctive inline visual system.
 - Ordinary external `<a href>` links may exist, but artifact runtime must escape
   them through the parent/open-in-tab affordance; do not attach custom link
   handlers.

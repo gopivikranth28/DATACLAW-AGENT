@@ -36,10 +36,10 @@ class CompactionProvider(Protocol):
         """Return a (possibly shortened) message list.
 
         Compaction triggers when either:
-        - len(messages) > max_messages, or
+        - complete user conversation turns > max_messages, or
         - estimated token count > max_tokens (0 disables token check)
 
         When triggered, older messages are summarised and the most recent
-        keep_recent messages are kept verbatim.
+        keep_recent complete user turns are kept verbatim.
         """
         ...
