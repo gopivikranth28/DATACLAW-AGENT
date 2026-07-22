@@ -315,6 +315,67 @@ def test_lean_storyboard_shape_and_enriched_dossier():
         assert token in dossier, f"dossier missing {token}"
 
 
+def test_data_decoration_is_not_inherited_and_cannot_cloak_a_data_visual():
+    from dataclaw_workspace.visual_author import _AuthoredDocumentParser
+
+    def unbound(html: str):
+        parser = _AuthoredDocumentParser()
+        parser.feed(html)
+        parser.close()
+        return parser.visuals_without_evidence
+
+    # An ancestor data-decoration must NOT exempt a descendant visual.
+    assert unbound('<div data-decoration="true"><figure><svg></svg></figure></div>') == ["figure"]
+    # A genuinely decorative figure (own marker) is exempt; its inner svg is content.
+    assert unbound('<figure data-decoration="true"><svg></svg></figure>') == []
+    # A figure with its own evidence is bound.
+    assert unbound('<figure data-evidence="ev-1"><svg></svg></figure>') == []
+    # A decoration visual cannot also carry data-source (data-bound => not decorative).
+    parser = _AuthoredDocumentParser()
+    with pytest.raises(ValueError, match="cannot also carry data-source"):
+        parser.feed('<figure data-decoration="true" data-source="src-1"><svg></svg></figure>')
+
+
+def test_bespoke_visual_without_records_renders_instead_of_aborting():
+    storyboard = design_report_storyboard(
+        report_goal="Explain the bracket.",
+        title="Bracket",
+        requirements={"evidence_registry": {"targets": [{"id": "ev-1", "kind": "notebook_cell"}]}},
+        insights=[{"finding_id": "f1", "title": "Seed A favored", "detail": "Bracket favors seed A.",
+                   "evidence": [{"kind": "notebook_cell", "ref": "ev-1"}]}],
+        analyses=[{  # explicit advanced_visual, unsupported type, NO records
+            "section_type": "advanced_visual", "title": "Bracket map", "caption": "c",
+            "interpretation": "The bracket structure favors the top seed.",
+            "visual": {"type": "radial_tournament"},
+            "evidence": [{"kind": "notebook_cell", "ref": "ev-1"}],
+        }],
+    )
+    kinds = [s["section_type"] for s in storyboard["section_plan"]]
+    assert "chart_interpretation" in kinds  # rendered, not aborted
+
+
+def test_publish_integrity_helpers_block_authored_tampering():
+    from dataclaw_workspace.tools import _scan_authored_extra_js, _require_authored_publish_integrity
+
+    authored = '<html data-dc-authored-document="true"><body>{}</body></html>'
+    # Authored-extra JS in an executable script is rejected; prose/JSON is not.
+    with pytest.raises(ValueError, match="forbidden"):
+        _scan_authored_extra_js(authored.format('<script>document.cookie="x"</script>'))
+    _scan_authored_extra_js(authored.format('<p>We import data.</p><script type="application/json">{"k":"eval"}</script>'))
+    # Missing embedded ledger / failed evidence review are blocked at publish.
+    with pytest.raises(ValueError, match="evidence-ledger targets"):
+        _require_authored_publish_integrity(authored.format("<h1>r</h1>"))
+    full = authored.format(
+        '<script type="application/json" data-dc-evidence-registry>{"targets":[{"id":"ev-1"}]}</script>'
+        '<script type="application/json" data-dc-author-coverage>{"coverage_schema":1,"used":["s"],"omitted":[]}</script>'
+        '<script type="application/json" data-dc-evidence-review>{"schema":1,"status":"%s"}</script>'
+    )
+    with pytest.raises(ValueError, match="evidence review did not pass"):
+        _require_authored_publish_integrity(full % "attention_required")
+    _require_authored_publish_integrity(full % "pass")  # valid authored doc passes
+    _require_authored_publish_integrity("<html><body>x</body></html>")  # non-authored: skipped
+
+
 def test_repair_prompt_is_bounded_to_the_context_budget():
     from dataclaw_workspace.visual_author import _bounded_repair_prompt
 

@@ -19,6 +19,7 @@ from typing import Any
 from dataclaw.config.paths import workspaces_dir
 from dataclaw.storage.skill_library import stale_installed_library_skills
 from dataclaw_artifacts.validator import (
+    AUTHORED_EXTRA_FORBIDDEN_JS,
     ArtifactValidationError,
     strip_dataclaw_runtime_scripts,
     validate_and_prepare_html,
@@ -553,6 +554,72 @@ def _require_display_fact_coverage(authoring_review: dict[str, Any], *, required
         "Report publish authoring gate failed: required display_facts coverage is incomplete "
         f"({finding_ids or 'unknown'}). Add typed source facts or remove the explicit requirement before publication."
     )
+
+
+_AUTHORED_MARKER_RE = re.compile(r'<html\b[^>]*\bdata-dc-authored-document="true"', re.IGNORECASE)
+
+
+def _extract_doc_json(doc: str, attr: str) -> Any:
+    match = re.search(rf"<script[^>]*\b{re.escape(attr)}\b[^>]*>(.*?)</script>", doc, re.IGNORECASE | re.DOTALL)
+    if not match:
+        return None
+    try:
+        return json.loads(match.group(1))
+    except Exception:
+        return None
+
+
+def _scan_authored_extra_js(doc: str) -> None:
+    """Reject the authored-only forbidden-JS patterns in executable scripts.
+
+    The base validate_and_prepare_html only checks the network-API list; authored
+    documents are additionally held to the extra list (eval, storage, cookies,
+    workers, ...). Only non-JSON script bodies are scanned, so prose and inert
+    metadata never false-positive.
+    """
+    for match in re.finditer(r"<script\b([^>]*)>(.*?)</script>", doc, re.IGNORECASE | re.DOTALL):
+        attrs, body = match.group(1), match.group(2)
+        if re.search(r"""type\s*=\s*['"]application/json['"]""", attrs, re.IGNORECASE):
+            continue
+        for pattern, name in AUTHORED_EXTRA_FORBIDDEN_JS:
+            if pattern.search(body):
+                raise ValueError(
+                    f"Report publish artifact-safety gate failed: authored script contains forbidden {name}."
+                )
+
+
+def _require_authored_publish_integrity(doc: str) -> None:
+    """Re-derive the creative-evidence gates from the hash-bound HTML at publish.
+
+    The published bytes carry, tamper-evident under the receipt hash, the authored
+    marker, the evidence ledger, the source-coverage manifest, and the independent
+    evidence-review verdict. Enforcing them here (rather than trusting the mutable
+    storyboard visual_author record) closes the hand-edited-storyboard bypass.
+    """
+    if not _AUTHORED_MARKER_RE.search(doc):
+        return
+    registry = _extract_doc_json(doc, "data-dc-evidence-registry")
+    targets = registry.get("targets") if isinstance(registry, dict) else None
+    if not isinstance(targets, list) or not targets:
+        raise ValueError(
+            "Report publish evidence gate failed: the authored report has no embedded evidence-ledger targets."
+        )
+    coverage = _extract_doc_json(doc, "data-dc-author-coverage")
+    if (
+        not isinstance(coverage, dict)
+        or coverage.get("coverage_schema") != 1
+        or not isinstance(coverage.get("used"), list)
+        or not isinstance(coverage.get("omitted"), list)
+    ):
+        raise ValueError(
+            "Report publish evidence gate failed: the authored report has no valid source-coverage manifest."
+        )
+    review = _extract_doc_json(doc, "data-dc-evidence-review")
+    status = str((review or {}).get("status") or "").strip().lower() if isinstance(review, dict) else ""
+    if status != "pass":
+        raise ValueError(
+            "Report publish evidence gate failed: the independent evidence review did not pass for this authored report."
+        )
 
 
 def _require_completed_visual_review(runtime_smoke: dict[str, Any]) -> None:
@@ -1332,15 +1399,20 @@ async def report_publish(
         raise ValueError(
             "Report publish integrity gate failed: the HTML does not match the storyboard's rendered output; redesign or rebuild the report before publishing."
         )
-    # Re-run artifact-safety validation under the current policy. A report authored
-    # under an older policy, or a hand-edited report/storyboard pair, must not
-    # receive a publish receipt for HTML the current validator would reject.
+    # Re-run artifact-safety validation on the EXACT published bytes under the
+    # current policy. Do not strip runtime scripts first: an authored report has
+    # no legitimate embedded runtime, so stripping a spoofed data-dc-runtime
+    # script would hide forbidden JS from validation while leaving it in the
+    # receipt-bound HTML. Also apply the authored-only forbidden-JS list, and
+    # re-derive the creative-evidence gates from the hash-bound HTML.
     try:
-        validate_and_prepare_html(strip_dataclaw_runtime_scripts(doc), session_id=workspace_id)
+        validate_and_prepare_html(doc, session_id=workspace_id)
     except ArtifactValidationError as exc:
         raise ValueError(
             f"Report publish artifact-safety gate failed: {exc.code}: {exc}"
         ) from exc
+    _scan_authored_extra_js(doc)
+    _require_authored_publish_integrity(doc)
     expected_contract_hash = str(storyboard.get("analysis_contract_sha256") or "").strip().lower()
     actual_contract_hash = _stable_json_sha256(storyboard.get("analysis_contract", {}))
     if not expected_contract_hash:

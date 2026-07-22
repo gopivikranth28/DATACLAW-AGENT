@@ -153,17 +153,25 @@ def _bounded_aggregate_rows(value: Any, fields: Any = None) -> dict[str, Any]:
     advanced visuals already do by projecting only their mapped fields.
     """
     rows = value if isinstance(value, list) else []
-    allow = [_clean(field) for field in fields if _clean(field)] if isinstance(fields, list) else []
+    # An explicit `fields` list (even empty) is an allowlist and fail-closed: only
+    # listed columns are copied, so a bespoke visual that declares no resolvable
+    # fields exposes NO raw columns. `fields is None` means no allowlist was
+    # requested (a plain records/table asset), so the bounded first-N columns are
+    # copied. An empty allowlist must never mean "use every column".
+    use_allowlist = isinstance(fields, list)
+    allow = [_clean(field) for field in fields if _clean(field)] if use_allowlist else []
     projected: list[dict[str, Any]] = []
     columns: list[str] = []
+    seen_columns = False
     for row in rows[:_CREATIVE_MAX_ROWS_PER_ASSET]:
         if not isinstance(row, dict):
             continue
-        if not columns:
-            if allow:
+        if not seen_columns:
+            if use_allowlist:
                 columns = [key for key in allow if key in row][:_CREATIVE_MAX_COLUMNS_PER_ASSET]
             else:
                 columns = [_clean(key) for key in list(row)[:_CREATIVE_MAX_COLUMNS_PER_ASSET] if _clean(key)]
+            seen_columns = True
         projected.append({key: _prompt_value(row.get(key)) for key in columns})
     return {
         "row_count": len(rows),
@@ -187,7 +195,9 @@ def _plotly_payload(value: Any) -> dict[str, Any]:
         if not isinstance(trace, dict):
             continue
         included: dict[str, Any] = {}
-        for key in ("type", "name", "orientation", "x", "y", "z", "labels", "values", "ids", "text"):
+        # `ids` (per-element identifiers) are omitted: they are an identifier
+        # vector, not needed to reconstruct a static visual.
+        for key in ("type", "name", "orientation", "x", "y", "z", "labels", "values", "text"):
             child = trace.get(key)
             if isinstance(child, (list, tuple)):
                 included[key] = [_prompt_value(item) for item in list(child)[:_CREATIVE_MAX_ROWS_PER_ASSET]]
@@ -361,7 +371,10 @@ def build_creative_author_dossier(
             "visual_mapping": _prompt_value(visual),
             "aggregate_data": _bounded_aggregate_rows(
                 rows_value,
-                material.get("fields") or material.get("field_bindings"),
+                # Preserve an explicit (even empty) allowlist; only fall back to
+                # field_bindings when no `fields` list was set at all. An empty
+                # list must stay an empty allowlist (fail-closed), not become None.
+                material.get("fields") if isinstance(material.get("fields"), list) else material.get("field_bindings"),
             ) if rows_value else {},
             "plotly_summary": _plotly_payload(material.get("figure_json") or material.get("figure")),
             "required_visual": bool(material.get("required_visual", False)),
@@ -509,6 +522,7 @@ class _AuthoredDocumentParser(HTMLParser):
         "data-dc-report-contract",
         "data-dc-regeneration-recipe",
         "data-dc-section-meta",
+        "data-dc-evidence-review",
     }
 
     def __init__(self) -> None:
@@ -563,19 +577,33 @@ class _AuthoredDocumentParser(HTMLParser):
                 raise ValueError(f"authored HTML cannot use active {name} URLs")
         inherited_evidence = set(self._stack[-1]["evidence"]) if self._stack else set()
         inherited_source = set(self._stack[-1]["source"]) if self._stack else set()
-        inherited_decoration = bool(self._stack[-1]["decoration"]) if self._stack else False
+        own_source = self._aliases(attr.get("data-source", ""))
         evidence = inherited_evidence | self._aliases(attr.get("data-evidence", ""))
-        source = inherited_source | self._aliases(attr.get("data-source", ""))
-        decoration = inherited_decoration or attr.get("data-decoration", "").lower() == "true"
+        source = inherited_source | own_source
+        # Decoration is NOT inherited: a decorative exemption must be declared on
+        # the element itself, so a single ancestor data-decoration cannot exempt
+        # every descendant visual from evidence binding.
+        own_decoration = attr.get("data-decoration", "").lower() == "true"
+        decoration = own_decoration
         self.evidence_aliases.update(self._aliases(attr.get("data-evidence", "")))
-        self.source_aliases.update(self._aliases(attr.get("data-source", "")))
-        if tag in self._VISUAL_TAGS and not evidence and not decoration:
-            self.visuals_without_evidence.append(tag)
+        self.source_aliases.update(own_source)
         if tag in self._VISUAL_TAGS:
+            if own_decoration and own_source:
+                raise ValueError(
+                    "a data-decoration visual cannot also carry data-source; a data-bound visual is not decorative"
+                )
             # Required analytical visuals need an explicit binding on the
             # figure/SVG/canvas itself. Otherwise a broad source marker on the
             # page shell could falsely make every visual cover every asset.
-            self.visual_source_aliases.update(self._aliases(attr.get("data-source", "")))
+            self.visual_source_aliases.update(own_source)
+            # Evaluate the evidence/decoration requirement only on the OUTERMOST
+            # visual — a nested <svg>/<canvas> is content of its <figure>, not a
+            # separate visual. Combined with non-inherited decoration, this stops
+            # an ancestor data-decoration from exempting the whole subtree while
+            # not falsely flagging a decorative figure's own inner markup.
+            nested_visual = any(entry["tag"] in self._VISUAL_TAGS for entry in self._stack)
+            if not nested_visual and not evidence and not own_decoration:
+                self.visuals_without_evidence.append(tag)
         entry = {"tag": tag, "evidence": evidence, "source": source, "decoration": decoration}
         if tag not in self._VOID_TAGS:
             self._stack.append(entry)

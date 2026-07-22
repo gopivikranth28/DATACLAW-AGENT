@@ -1640,6 +1640,7 @@ def _render_authored_document(storyboard: dict[str, Any], *, title: str | None =
     reserved_patterns = (
         r"<script[^>]*data-dc-author-coverage[^>]*>.*?</script>",
         r"<script[^>]*data-dc-author-evidence-map[^>]*>.*?</script>",
+        r"<script[^>]*data-dc-evidence-review[^>]*>.*?</script>",
         r"<script[^>]*data-dc-evidence-registry[^>]*>.*?</script>",
         rf"<script[^>]*{re.escape(REPORT_CONTRACT_ATTR)}[^>]*>.*?</script>",
         rf"<script[^>]*{re.escape(REGENERATION_RECIPE_ATTR)}[^>]*>.*?</script>",
@@ -1677,9 +1678,15 @@ def _render_authored_document(storyboard: dict[str, Any], *, title: str | None =
             "authored": True,
         },
     }
+    # Bind the independent evidence-review verdict into the hash-covered HTML so
+    # the publish boundary can trust it without re-reading the mutable storyboard
+    # visual_author record.
+    authored_evidence_review = authored.get("evidence_review") if isinstance(authored.get("evidence_review"), dict) else {}
+    evidence_review_marker = {"schema": 1, "status": clean_text(authored_evidence_review.get("status") or "unknown")}
     host_scripts = "\n".join((
         f'<script type="application/json" data-dc-author-coverage>{_json_for_script(canonical_coverage)}</script>',
         f'<script type="application/json" data-dc-author-evidence-map>{_json_for_script(evidence_map)}</script>',
+        f'<script type="application/json" data-dc-evidence-review>{_json_for_script(evidence_review_marker)}</script>',
         _evidence_registry_script(registry),
         _report_contract_script(report_contract),
         _regeneration_recipe_script(recipe),
@@ -2044,8 +2051,11 @@ def _fold_visual_into_direction(data: dict[str, Any], visual: dict[str, Any]) ->
         if isinstance(value, str) and clean_text(value) in columns
     ]
     allow = list(dict.fromkeys([f for f in (declared + mapped) if f in columns]))
-    if allow:
-        data["fields"] = allow
+    # Always set an explicit allowlist for a folded bespoke visual — even when it
+    # resolves to nothing. Downstream data minimization then fails closed (no raw
+    # columns) rather than falling back to copying every column. A caller that
+    # needs specific fields in a bespoke visual must name them in `fields`.
+    data["fields"] = allow
 
 
 def _promote_inferred_advanced_visuals(analyses: list[dict[str, Any]]) -> None:
@@ -2372,6 +2382,18 @@ def _storyboard_section_from_analysis(analysis: dict[str, Any], index: int) -> d
             "section_type": "text",
             "layout_role": f"analysis_{index + 1}_text",
             "rationale": "Prose-only analysis renders as a narrative text section.",
+            "data": data,
+        }
+
+    # A bespoke visual described by visual_direction (or an interpretation-only
+    # asset) is renderable: the creative author builds it from the dossier. It
+    # need not carry tabular records — an illustrative custom SVG/Canvas is exactly
+    # what visual_direction is for — so it must not abort the whole design.
+    if clean_text(data.get("visual_direction") or data.get("visual_intent") or data.get("interpretation") or ""):
+        return {
+            "section_type": "chart_interpretation",
+            "layout_role": f"analysis_{index + 1}_chart_interpretation",
+            "rationale": "A bespoke or illustrative visual the creative author renders from its visual_direction and interpretation.",
             "data": data,
         }
 
