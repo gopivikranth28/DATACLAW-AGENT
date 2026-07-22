@@ -116,11 +116,19 @@ function chartEvidenceKey(call: ToolCallState) {
   if (!Array.isArray(data?.outputs)) return ''
   const figures = data.outputs
     .filter((output: any) => output?.type === 'plotly' && output?.figure)
-    .map((output: any) => output.figure.data)
+    .map((output: any) => ({
+      data: output.figure.data ?? [],
+      layout: output.figure.layout ?? {},
+      config: output.figure.config ?? {},
+    }))
   if (figures.length === 0) return ''
   const args = parse(call.args) || {}
   const cell = data.cell_index ?? args.cell_index ?? ''
-  return `${cell}|${JSON.stringify(figures)}`
+  // Key on the full semantic figure (data + layout + config) so charts that
+  // differ only in annotations, axis ranges, titles, barmode, or subplot layout
+  // are not collapsed. Exclude only transient identifiers that change per render.
+  const transient = new Set(['uid', 'uirevision', 'revision', 'datarevision'])
+  return `${cell}|${JSON.stringify(figures, (key, value) => (transient.has(key) ? undefined : value))}`
 }
 
 export function TurnActivity({ group, sessionId, onFileClick }: {

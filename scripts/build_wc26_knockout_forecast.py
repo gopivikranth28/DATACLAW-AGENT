@@ -447,8 +447,7 @@ async def build(
         report_path="docs/wc26_knockout_forecast.html",
         storyboard_path="docs/wc26_knockout_forecast.storyboard.json",
         quality_gate="fail",
-        design_passes=5,
-        visual_author=visual_author or ({"mode": "runtime"} if llm is not None else {"mode": "off"}),
+        visual_author=visual_author,
         llm=llm,
         **payload,
     )

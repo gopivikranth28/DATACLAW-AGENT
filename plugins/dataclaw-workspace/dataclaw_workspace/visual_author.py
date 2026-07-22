@@ -908,12 +908,14 @@ def _bounded_repair_prompt(
     findings_block = "\n\n# Required evidence repairs\n\n" + json.dumps(findings, ensure_ascii=False, indent=2)
     instruction = "\n\nRevise the complete document below. Return the complete corrected HTML only.\n\n"
     required = findings_block + instruction + html
+    marker = "\n\n[dossier trimmed to fit the repair context]"
     dossier_budget = max_chars - len(required)
     if dossier_budget <= 0:
         return None
     if len(dossier) <= dossier_budget:
         return dossier + required
-    trimmed = dossier[:dossier_budget].rstrip() + "\n\n[dossier trimmed to fit the repair context]"
+    # Reserve room for the trim marker so the total never exceeds max_chars.
+    trimmed = dossier[: max(0, dossier_budget - len(marker))].rstrip() + marker
     return trimmed + required
 
 

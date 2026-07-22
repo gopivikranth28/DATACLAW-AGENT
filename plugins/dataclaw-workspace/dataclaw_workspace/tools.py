@@ -1628,7 +1628,6 @@ async def report_design_report(
     storyboard_path: str = "report_storyboard.json",
     title: str = "Analysis Report",
     quality_gate: str = "fail",
-    design_passes: int = 5,
     visual_author: dict[str, Any] | None = None,
     llm: Any = None,
     workspace_id: str = "default",
@@ -1657,8 +1656,6 @@ async def report_design_report(
         raise ValueError("visual_author must be a dictionary when supplied")
     if quality_gate not in {"warn", "fail", "off"}:
         raise ValueError("quality_gate must be one of: warn, fail, off")
-    if not isinstance(design_passes, int) or not 1 <= design_passes <= 5:
-        raise ValueError("design_passes must be an integer from 1 to 5")
 
     if not report_path.endswith(".html"):
         report_path = report_path.rsplit(".", 1)[0] + ".html"
@@ -1678,7 +1675,6 @@ async def report_design_report(
         audience=audience,
         title=title,
         requirements=resolved_requirements,
-        max_design_passes=design_passes,
     )
     # Finish deterministic structure and evidence critique before the creative
     # author sees the page. The model then composes the final, validated
@@ -1818,7 +1814,6 @@ async def report_design_report(
         "recipe_path": str(recipe_path),
         "title": title,
         "section_count": len(storyboard.get("section_plan", [])),
-        "interaction_count": len(storyboard.get("interaction_plan", [])),
         "visual_author": visual_author_result,
         "presentation_mode": "handcrafted",
         "artifact_safety": artifact_safety,

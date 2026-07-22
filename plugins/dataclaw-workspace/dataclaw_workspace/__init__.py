@@ -156,10 +156,12 @@ class WorkspacePlugin:
         ctx.tool_registry.register_tool(PythonTool(
             name="report_design_report",
             description=(
-                "Design a cohesive analytical HTML report from completed notebook insights and analysis assets. "
-                "Use after EDA/modeling has produced findings: this tool storyboards the report, chooses section "
-                "layouts and interactive controls, writes a storyboard JSON, and renders the final HTML in one pass. "
-                "Handcrafted editorial composition is the default. With an evidence ledger, the configured LLM receives a rich dossier with bounded aggregate values and may write the complete single-file HTML, original prose, CSS, SVG/Canvas visuals, and constrained inline interactions; the host then validates source coverage, evidence fidelity, and artifact safety."
+                "Author a cohesive analytical HTML report from completed notebook insights and analysis assets. "
+                "Use after EDA/modeling has produced findings. Every report is written end to end by the ledger-backed "
+                "creative author: it builds an evidence-and-requirements dossier from the supplied findings and assets, "
+                "then the configured LLM writes the complete single-file HTML — original prose, story, layout, CSS, and "
+                "bespoke SVG/Canvas visuals — and the host validates source coverage, evidence fidelity, and artifact "
+                "safety. A non-empty evidence ledger is required; there is no deterministic or bounded mode."
             ),
             fn=lambda **kw: report_design_report(cfg=cfg, llm=ctx.providers.llm, **kw),
             parameters={
@@ -174,8 +176,7 @@ class WorkspacePlugin:
                     "storyboard_path": {"type": "string", "description": "Output storyboard JSON path", "default": "report_storyboard.json"},
                     "title": {"type": "string", "description": "Report title", "default": "Analysis Report"},
                     "quality_gate": {"type": "string", "description": "Report-quality behavior: warn and write, fail on required quality regressions, or off", "enum": ["warn", "fail", "off"], "default": "fail"},
-                    "design_passes": {"type": "integer", "description": "Bounded storyboard refinement passes (1-5); default 5 preserves supplied context while improving the desktop composition, adjacent evidence, and chart interpretation without adding generic report copy", "minimum": 1, "maximum": 5, "default": 5},
-                    "visual_author": {"type": "object", "description": "Optional creative-author tuning. Every report is authored by the ledger-backed creative author: from a persisted dossier of completed findings, caveats, ledger entries, and bounded aggregate values, the model writes a complete single-file report — original supported prose, story structure, CSS, SVG/Canvas visuals, and constrained DOM-local JavaScript. Source coverage, evidence review, one repair pass, CSP, and artifact safety are enforced; a non-empty evidence ledger is required. This object only tunes timeout_seconds, max_output_chars, and max_repair_passes; there is no deterministic or bounded mode."},
+                    "visual_author": {"type": "object", "description": "Optional creative-author tuning. Every report is authored by the ledger-backed creative author from a persisted dossier of completed findings, caveats, ledger entries, and bounded aggregate values; source coverage, evidence review, one repair pass, CSP, and artifact safety are enforced, and a non-empty evidence ledger is required. This object only tunes timeout_seconds (default 240, max 900), max_output_chars (default/max 600000), max_dossier_chars (default 300000, max 600000), and max_repair_prompt_chars (default 700000; lower it to match a smaller provider context window). There is no deterministic or bounded mode."},
                 },
                 "required": ["report_goal", "insights"],
             },

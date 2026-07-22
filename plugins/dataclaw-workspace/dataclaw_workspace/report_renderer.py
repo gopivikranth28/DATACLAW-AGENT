@@ -1354,14 +1354,12 @@ def design_report_storyboard(
     audience: str = "",
     title: str = "Analysis Report",
     requirements: dict[str, Any] | None = None,
-    max_design_passes: int = 5,
 ) -> dict[str, Any]:
-    """Create a cohesive report plan from completed insights and analysis assets.
+    """Build the lean evidence-and-requirements storyboard for a report.
 
-    The initial plan preserves every supplied insight and analysis object. A
-    bounded design-refinement pass then improves adjacency, local data notes,
-    and chart interpretation using only supplied material; it never invents a
-    conclusion, caveat, or analytical result.
+    Preserves every supplied insight and analysis object as a source contract for
+    the creative author's dossier; it never invents a conclusion, caveat, or
+    analytical result. The author owns the final story, layout, and visuals.
     """
     requirements = copy.deepcopy(requirements or {})
     presentation = _presentation_options(requirements)

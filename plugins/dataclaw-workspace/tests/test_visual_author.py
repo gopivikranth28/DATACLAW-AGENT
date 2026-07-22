@@ -253,7 +253,6 @@ def test_bespoke_visual_intent_reaches_dossier_without_governed_vocabulary():
             },
         ],
         requirements=requirements,
-        max_design_passes=1,
     )
     storyboard["evidence_registry"] = build_evidence_registry(storyboard)
 
@@ -725,7 +724,7 @@ def test_bespoke_fold_minimizes_unmapped_columns_and_handles_explicit_advanced_v
 
     def dossier_for(analysis):
         sb = design_report_storyboard(report_goal="G", insights=insights, analyses=[analysis],
-                                      title="R", requirements=reqs, max_design_passes=1)
+                                      title="R", requirements=reqs)
         sb["evidence_registry"] = build_evidence_registry(sb)
         text, _ = build_creative_author_dossier(sb, {"mode": "creative"})
         return text
