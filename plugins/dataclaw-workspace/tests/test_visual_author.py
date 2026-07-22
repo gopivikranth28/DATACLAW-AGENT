@@ -362,6 +362,17 @@ def test_structural_validation_allows_extra_headings_but_requires_at_least_one()
     with pytest.raises(ValueError, match="at least one title, and at least one h1"):
         validate_authored_document(none, contract)
 
+    # An accessible <svg><title> chart label must NOT count as a document title
+    # (it used to inflate the count and fail the gate). The single <head> title
+    # plus an SVG title still validates cleanly.
+    with_svg_title = _authored_html().replace(
+        "<svg viewBox=\"0 0 400 120\" role=\"img\" aria-label=\"Evidence emphasis\">",
+        "<svg viewBox=\"0 0 400 120\" role=\"img\"><title>Evidence emphasis</title>",
+        1,
+    )
+    assert with_svg_title.count("<title>") == 2  # one head, one svg
+    validate_authored_document(with_svg_title, contract)  # does not raise
+
 
 def test_visual_author_config_clamps_out_of_range_tuning_instead_of_failing():
     from dataclaw_workspace.visual_author import visual_author_config
@@ -528,6 +539,26 @@ def test_full_document_validator_enforces_source_coverage_evidence_and_safe_java
         '<script data-dc-author-script>fetch("https://example.test/data")</script></body>',
     )
     with pytest.raises(ValueError, match="artifact safety failed: live_data_call"):
+        validate_authored_document(unsafe, contract)
+
+
+def test_safe_modern_css_is_not_flagged_as_executable_but_legacy_vectors_are():
+    dossier, contract = build_creative_author_dossier(_ledger_backed_storyboard())
+
+    # scroll-behavior / overscroll-behavior are safe modern properties that used
+    # to trip the "behavior:" executable-CSS pattern and fail whole reports.
+    safe = _authored_html().replace(
+        "body{margin:0",
+        "html{scroll-behavior:smooth}body{overscroll-behavior:contain;margin:0",
+        1,
+    )
+    assert validate_authored_document(safe, contract)["coverage"]["used"] == ["src-finding-1"]
+
+    # A genuine executable-CSS vector (IE expression()) is still rejected.
+    unsafe = _authored_html().replace(
+        "margin:0", "width:expression(alert(1));margin:0", 1
+    )
+    with pytest.raises(ValueError, match="forbidden executable CSS"):
         validate_authored_document(unsafe, contract)
 
 

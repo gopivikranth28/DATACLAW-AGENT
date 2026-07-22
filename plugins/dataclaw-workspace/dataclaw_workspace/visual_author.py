@@ -662,7 +662,13 @@ class _AuthoredDocumentParser(HTMLParser):
         elif tag == "h1":
             self.h1_count += 1
         elif tag == "title":
-            self.title_count += 1
+            # Count only the document <title> (in <head>), never an accessible
+            # <svg><title> chart label. Conflating the two made accessible SVGs
+            # inflate the count and fail the structural gate — the recurring
+            # "exactly one title" failure. The count now means "a real document
+            # title," and accessible SVG titles are encouraged, not penalized.
+            if not any(entry["tag"] == "svg" for entry in self._stack):
+                self.title_count += 1
         elif tag == "script":
             if attr.get("src"):
                 raise ValueError("authored HTML cannot use external scripts")
@@ -864,7 +870,14 @@ def validate_authored_document(html: str, contract: dict[str, Any]) -> dict[str,
     styles = "\n".join(re.findall(r"<style\b[^>]*>(.*?)</style>", html, re.IGNORECASE | re.DOTALL))
     forbidden_css = {
         "stylesheet imports": r"@import\b|@namespace\b",
-        "executable CSS": r"expression\s*\(|javascript\s*:|behavior\s*:|-moz-binding\s*:",
+        # Legacy executable-CSS vectors. Each token is anchored with a
+        # (?<![\w-]) guard so it only matches the standalone property/function,
+        # never a safe modern property that merely ends in the same word:
+        # `scroll-behavior`/`overscroll-behavior` must NOT read as IE `behavior:`,
+        # and a custom identifier ending in `expression` must not read as the IE
+        # `expression(` function. These false positives were failing otherwise
+        # valid reports that used `scroll-behavior: smooth`.
+        "executable CSS": r"(?<![\w-])expression\s*\(|javascript\s*:|(?<![\w-])behavior\s*:|-moz-binding\s*:",
         "generated claim text": r"\bcontent\s*:",
     }
     for name, pattern in forbidden_css.items():
