@@ -248,40 +248,51 @@ async def _run_agent_loop(
             state = await hooks.run("preCompactionHook", state)
             compacted = await providers.compaction.compact(current_messages, **compact_kwargs)
 
-            # Extract the summary from the compacted result (first system message)
-            summary_text = ""
-            if compacted and compacted[0].role == "system":
-                summary_text = compacted[0].text() if hasattr(compacted[0], "text") else str(compacted[0].content)
+            # A compactor can decline or fail safely and return the original
+            # list. Do not persist an empty/misleading divider in that case.
+            if compacted is current_messages:
+                compacted = current_messages
+            else:
+                # Extract the summary from the compacted result (first system message)
+                summary_text = ""
+                if compacted and compacted[0].role == "system":
+                    summary_text = compacted[0].text() if hasattr(compacted[0], "text") else str(compacted[0].content)
 
-            # Count how many messages were compacted vs kept
-            keep_recent = compact_kwargs["keep_recent"]
-            compacted_count = max(0, len(sorted_msgs) - keep_recent)
-            kept_count = min(keep_recent, len(sorted_msgs))
+                recent_messages = compacted[1:] if compacted and compacted[0].role == "system" else compacted
+                kept_turns = sum(1 for message in recent_messages if message.role == "user")
+                split_idx = _stored_split_for_kept_turns(sorted_msgs, kept_turns)
+                compacted_count = split_idx
+                kept_count = len(sorted_msgs) - split_idx
 
-            # Insert the marker at the split point: right before the kept messages
-            # so the UI shows <old history> <compaction divider> <recent messages>
-            marker_id = f"compaction-{uuid.uuid4()}"
-            insert_idx = compacted_count  # position after old messages, before recent
-            await sessions.insert_message_at(thread_id, insert_idx, {
-                "role": "compaction",
-                "content": summary_text,
-                "messageId": marker_id,
-                "compactedCount": compacted_count,
-                "keptCount": kept_count,
-            })
+                # ``sorted_msgs`` and ``stored_msgs`` contain the same dict
+                # objects in different orders. Insert into the persisted/raw
+                # order immediately before the chronological split target.
+                split_target = sorted_msgs[split_idx] if split_idx < len(sorted_msgs) else None
+                insert_idx = next(
+                    (idx for idx, message in enumerate(stored_msgs) if message is split_target),
+                    len(stored_msgs),
+                )
 
-            # Emit SSE event so frontend shows the compaction in real-time.
-            # Send the full summary — the divider is collapsible, so a long
-            # summary doesn't crowd the chat by default but can be expanded.
-            emit(emitter.custom("compaction", {
-                "messageId": marker_id,
-                "summary": summary_text,
-                "compactedCount": compacted_count,
-                "keptCount": kept_count,
-            }))
+                marker_id = f"compaction-{uuid.uuid4()}"
+                await sessions.insert_message_at(thread_id, insert_idx, {
+                    "role": "compaction",
+                    "content": summary_text,
+                    "messageId": marker_id,
+                    "compactedCount": compacted_count,
+                    "keptCount": kept_count,
+                })
 
-            state["messages"] = compacted
-            state = await hooks.run("postCompactionHook", state)
+                # Send the full summary — the divider is collapsible, so a
+                # long summary does not crowd the chat until expanded.
+                emit(emitter.custom("compaction", {
+                    "messageId": marker_id,
+                    "summary": summary_text,
+                    "compactedCount": compacted_count,
+                    "keptCount": kept_count,
+                }))
+
+                state["messages"] = compacted
+                state = await hooks.run("postCompactionHook", state)
 
         # Memory (before system prompt so memories can be injected into it)
         memories = await providers.memory.retrieve_memories(state)
@@ -725,6 +736,32 @@ async def _run_agent_loop(
 
 
 # ── Session → LLM Message Conversion ──────────────────────────────────────
+
+
+def _stored_split_for_kept_turns(
+    stored_messages: list[dict[str, Any]],
+    kept_turns: int,
+) -> int:
+    """Locate the chronological storage boundary for retained user turns.
+
+    ``stored_messages`` must be timestamp-sorted. Only turns after the latest
+    existing compaction marker participate, matching
+    ``_stored_messages_to_llm``. The fallback keeps the final stored entry so
+    malformed/legacy histories still receive a valid divider position.
+    """
+    segment_start = 0
+    for idx, message in enumerate(stored_messages):
+        if message.get("role") == "compaction":
+            segment_start = idx + 1
+
+    user_indices = [
+        idx
+        for idx in range(segment_start, len(stored_messages))
+        if stored_messages[idx].get("role") == "user"
+    ]
+    if kept_turns > 0 and len(user_indices) >= kept_turns:
+        return user_indices[-kept_turns]
+    return max(segment_start, len(stored_messages) - 1)
 
 
 def _stored_messages_to_llm(stored_messages: list[dict[str, Any]]) -> list[Message]:

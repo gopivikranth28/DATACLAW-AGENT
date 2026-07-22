@@ -9,6 +9,7 @@ import pytest
 from dataclaw.providers.compaction.implementations.drop_old import DropOldCompactor
 from dataclaw.providers.compaction.implementations.llm_summarizer import (
     LLMSummarizingCompactor,
+    _count_conversation_turns,
     _estimate_tokens,
     _format_message_content,
     _looks_like_scratchpad,
@@ -120,6 +121,80 @@ async def test_compaction_triggers_over_message_limit():
     assert result[1].content == "msg 7"
     assert result[2].content == "msg 8"
     assert result[3].content == "msg 9"
+
+
+def test_tool_heavy_new_session_counts_logical_turns_not_protocol_blocks():
+    """A fresh three-turn session must not compact merely because tools fan out.
+
+    This mirrors session b1f1f69b: 10 tool calls in the first request, 4 in
+    the HTML-report follow-up, then plan approval.  The old block-counting
+    implementation reported 33 and split the final four outputs away from
+    their calls.
+    """
+    messages = [
+        Message.user("analyse driver and team trends"),
+        Message.tool_call([
+            {"type": "tool_call", "id": f"first-{i}", "name": "inspect", "input": {}}
+            for i in range(10)
+        ]),
+        Message.tool_result([
+            {"type": "tool_result", "call_id": f"first-{i}", "content": "ok", "is_error": False}
+            for i in range(10)
+        ]),
+        Message.assistant("Plan ready"),
+        Message.user("I also expect an html report"),
+        Message.tool_call([
+            {"type": "tool_call", "id": f"report-{i}", "name": "fetch_skill", "input": {}}
+            for i in range(4)
+        ]),
+        Message.tool_result([
+            {"type": "tool_result", "call_id": f"report-{i}", "content": "ok", "is_error": False}
+            for i in range(4)
+        ]),
+        Message.assistant("Plan updated"),
+        Message.user("Plan approved"),
+    ]
+
+    assert _count_conversation_turns(messages) == 3
+    compactor = LLMSummarizingCompactor(MockLLMProvider(response_text="summary"))
+    assert not compactor.will_compact(messages, max_messages=30, max_tokens=100_000)
+
+
+@pytest.mark.asyncio
+async def test_token_compaction_never_splits_tool_calls_from_results():
+    llm = MockLLMProvider(response_text="Summary of the first request.")
+    compactor = LLMSummarizingCompactor(llm)
+    messages = [
+        Message.user("first request"),
+        Message.assistant("first answer"),
+        Message.user("add an HTML report"),
+        Message.tool_call([
+            {"type": "tool_call", "id": f"report-{i}", "name": "fetch_skill", "input": {}}
+            for i in range(4)
+        ]),
+        Message.tool_result([
+            {
+                "type": "tool_result",
+                "call_id": f"report-{i}",
+                "content": "x" * 100,
+                "is_error": False,
+            }
+            for i in range(4)
+        ]),
+        Message.assistant("updated plan"),
+        Message.user("approved"),
+    ]
+
+    result = await compactor.compact(
+        messages, max_messages=30, keep_recent=2, max_tokens=1
+    )
+
+    assert [msg.role for msg in result] == [
+        "system", "user", "tool_call", "tool_result", "assistant", "user"
+    ]
+    call_ids = {block["id"] for block in result[2].content}
+    result_ids = {block["call_id"] for block in result[3].content}
+    assert result_ids == call_ids
 
 
 @pytest.mark.asyncio
@@ -291,7 +366,27 @@ def test_append_messages_replace():
 
 # ── Compaction marker handling in _stored_messages_to_llm ────────────────
 
-from dataclaw.api.routers.chat import _stored_messages_to_llm
+from dataclaw.api.routers.chat import (
+    _stored_messages_to_llm,
+    _stored_split_for_kept_turns,
+)
+
+
+def test_compaction_marker_uses_the_same_logical_turn_boundary():
+    stored = [
+        {"role": "user", "content": "first", "timestamp": "1"},
+        {"role": "tool_call", "toolCallId": "a", "timestamp": "2"},
+        {"role": "assistant", "content": "done", "timestamp": "3"},
+        {"role": "user", "content": "second", "timestamp": "4"},
+        {"role": "tool_call", "toolCallId": "b", "timestamp": "5"},
+        {"role": "assistant", "content": "done", "timestamp": "6"},
+        {"role": "user", "content": "third", "timestamp": "7"},
+    ]
+
+    split_idx = _stored_split_for_kept_turns(stored, kept_turns=2)
+
+    assert split_idx == 3
+    assert stored[split_idx]["content"] == "second"
 
 
 def test_stored_messages_no_marker():

@@ -1,8 +1,8 @@
 """LLM-based message compaction.
 
-When the conversation exceeds max_messages or the estimated token count
-exceeds max_tokens, older messages are summarized into a single system
-message while recent messages are kept verbatim.
+When the conversation exceeds max_messages logical user turns or the
+estimated token count exceeds max_tokens, older turns are summarized into a
+single system message while recent turns are kept verbatim.
 """
 
 from __future__ import annotations
@@ -50,23 +50,66 @@ def _estimate_tokens(messages: list[Message]) -> int:
     return total_chars // _CHARS_PER_TOKEN
 
 
-def _count_blocks(messages: list[Message]) -> int:
-    """Count content blocks across all messages.
+def _count_conversation_turns(messages: list[Message]) -> int:
+    """Count user-initiated conversation turns.
 
-    A `Message.tool_call` with N tool_call blocks becomes N OpenAI
-    function_call input items (and similarly for tool_result). So the
-    block count — not the message count — bounds the size of the LLM
-    request. ``_stored_messages_to_llm`` batches consecutive session
-    tool_call entries into a single Message, which means message count
-    can be tiny while block count is huge.
+    Tool-heavy agents can expand one user request into dozens of protocol
+    blocks.  Those blocks are implementation detail, not separate
+    conversation turns, and counting them made fresh sessions compact almost
+    immediately.  A user message is the stable boundary shared by every LLM
+    provider, so it is the unit used by the user-facing history limits.
+
+    The fallback preserves useful behavior for synthetic/provider tests that
+    contain no user messages at all.
     """
-    total = 0
-    for msg in messages:
-        if isinstance(msg.content, list):
-            total += max(1, len(msg.content))
-        else:
-            total += 1
-    return total
+    user_turns = sum(1 for msg in messages if msg.role == "user")
+    return user_turns if user_turns else len(messages)
+
+
+def _recent_turn_split(
+    messages: list[Message],
+    keep_recent: int,
+    *,
+    leave_old_turn: bool = True,
+) -> int | None:
+    """Return a safe split index that keeps recent logical turns intact.
+
+    The returned suffix always begins at a user boundary when user messages
+    exist.  Consequently, an assistant ``tool_call`` message and its following
+    ``tool_result`` message can never land on opposite sides of compaction.
+    At least one older turn must remain available to compact.
+    """
+    if keep_recent <= 0 or len(messages) <= 1:
+        return None
+
+    user_indices = [idx for idx, msg in enumerate(messages) if msg.role == "user"]
+    if user_indices:
+        if len(user_indices) <= 1 or (
+            not leave_old_turn and keep_recent >= len(user_indices)
+        ):
+            return None
+        max_keep = len(user_indices) - 1 if leave_old_turn else len(user_indices)
+        keep_turns = min(keep_recent, max_keep)
+        if keep_turns <= 0:
+            return None
+        return user_indices[-keep_turns]
+
+    # Defensive fallback for histories without user messages. Keep top-level
+    # messages, but do not split a canonical tool-call/result pair.
+    if not leave_old_turn and keep_recent >= len(messages):
+        return None
+    max_keep = len(messages) - 1 if leave_old_turn else len(messages)
+    keep_messages = min(keep_recent, max_keep)
+    if keep_messages <= 0:
+        return None
+    split_idx = len(messages) - keep_messages
+    if (
+        split_idx > 0
+        and messages[split_idx].role == "tool_result"
+        and messages[split_idx - 1].role == "tool_call"
+    ):
+        split_idx -= 1
+    return split_idx if split_idx > 0 else None
 
 
 class LLMSummarizingCompactor:
@@ -76,11 +119,11 @@ class LLMSummarizingCompactor:
     def config_schema(cls) -> list:
         from dataclaw.providers.config_field import ConfigField
         return [
-            ConfigField(name="max_messages", field_type="int", label="Max Messages",
-                        description="Compact when conversation exceeds this many messages", default=30),
-            ConfigField(name="keep_recent", field_type="int", label="Keep Recent",
-                        description="Number of recent messages to preserve", default=8),
-            ConfigField(name="max_tokens", field_type="int", label="Max Tokens",
+            ConfigField(name="max_messages", field_type="int", label="Start After",
+                        description="Compact when conversation exceeds this many complete user turns", default=30),
+            ConfigField(name="keep_recent", field_type="int", label="Keep Unchanged",
+                        description="Number of recent complete user turns to preserve", default=8),
+            ConfigField(name="max_tokens", field_type="int", label="Token Threshold",
                         description="Estimated token budget (0 disables token-based trigger)", default=100000),
         ]
 
@@ -88,10 +131,7 @@ class LLMSummarizingCompactor:
         self._llm = llm
 
     def will_compact(self, messages: list[Message], *, max_messages: int = 30, max_tokens: int = 0) -> bool:
-        # Count blocks rather than messages: a single `Message.tool_call`
-        # with 250 blocks expands into 250 OpenAI input items, so message
-        # count alone is a poor proxy for request size.
-        if max_messages > 0 and _count_blocks(messages) > max_messages:
+        if max_messages > 0 and _count_conversation_turns(messages) > max_messages:
             return True
         if max_tokens > 0 and _estimate_tokens(messages) > max_tokens:
             return True
@@ -106,12 +146,9 @@ class LLMSummarizingCompactor:
         max_tokens: int = 0,
     ) -> list[Message]:
         msg_count = len(messages)
-        block_count = _count_blocks(messages)
+        turn_count = _count_conversation_turns(messages)
 
-        # Threshold check is on block count, not message count: a single
-        # batched tool_call message can carry hundreds of blocks and
-        # would otherwise sneak past message-count thresholds.
-        over_message_limit = max_messages > 0 and block_count > max_messages
+        over_message_limit = max_messages > 0 and turn_count > max_messages
 
         # Check token threshold (0 disables)
         estimated_tokens = _estimate_tokens(messages) if max_tokens > 0 else 0
@@ -120,41 +157,16 @@ class LLMSummarizingCompactor:
         if not over_message_limit and not over_token_limit:
             return messages
 
-        # Guard: keep_recent must leave room for compaction
-        keep_recent = min(keep_recent, msg_count - 1) if msg_count > 1 else 0
-        if keep_recent <= 0:
+        split_idx = _recent_turn_split(messages, keep_recent)
+        if split_idx is None:
             return messages
-
-        # Walk backwards by block count so a mega-message (e.g. a single
-        # tool_call message holding 250 blocks) doesn't sneak past the
-        # threshold by counting as 1.
-        split_idx = msg_count
-        block_budget = keep_recent
-        for idx in range(msg_count - 1, -1, -1):
-            msg_blocks = (
-                max(1, len(messages[idx].content))
-                if isinstance(messages[idx].content, list)
-                else 1
-            )
-            if block_budget - msg_blocks < 0 and split_idx < msg_count:
-                # Stop before exceeding the budget, but only after we've
-                # kept at least one message.
-                break
-            block_budget -= msg_blocks
-            split_idx = idx
-            if block_budget <= 0:
-                break
-
-        # Make sure we still have something to compact (at least 1 old msg).
-        if split_idx <= 0:
-            split_idx = 1
 
         old = messages[:split_idx]
         recent = messages[split_idx:]
 
         trigger = []
         if over_message_limit:
-            trigger.append(f"blocks={block_count}/{max_messages}")
+            trigger.append(f"turns={turn_count}/{max_messages}")
         if over_token_limit:
             trigger.append(f"tokens~{estimated_tokens}/{max_tokens}")
 
