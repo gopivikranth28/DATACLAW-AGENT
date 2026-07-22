@@ -260,9 +260,9 @@ async def _run_agent_loop(
 
                 recent_messages = compacted[1:] if compacted and compacted[0].role == "system" else compacted
                 kept_turns = sum(1 for message in recent_messages if message.role == "user")
-                split_idx = _stored_split_for_kept_turns(sorted_msgs, kept_turns)
-                compacted_count = split_idx
-                kept_count = len(sorted_msgs) - split_idx
+                split_idx, compacted_count, kept_count = _stored_compaction_span(
+                    sorted_msgs, kept_turns
+                )
 
                 # ``sorted_msgs`` and ``stored_msgs`` contain the same dict
                 # objects in different orders. Insert into the persisted/raw
@@ -274,13 +274,14 @@ async def _run_agent_loop(
                 )
 
                 marker_id = f"compaction-{uuid.uuid4()}"
-                await sessions.insert_message_at(thread_id, insert_idx, {
-                    "role": "compaction",
-                    "content": summary_text,
-                    "messageId": marker_id,
-                    "compactedCount": compacted_count,
-                    "keptCount": kept_count,
-                })
+                marker = _build_compaction_marker(
+                    marker_id=marker_id,
+                    summary_text=summary_text,
+                    compacted_count=compacted_count,
+                    kept_count=kept_count,
+                    split_target=split_target,
+                )
+                await sessions.insert_message_at(thread_id, insert_idx, marker)
 
                 # Send the full summary — the divider is collapsible, so a
                 # long summary does not crowd the chat until expanded.
@@ -749,6 +750,47 @@ def _stored_split_for_kept_turns(
     ``_stored_messages_to_llm``. The fallback keeps the final stored entry so
     malformed/legacy histories still receive a valid divider position.
     """
+    return _stored_compaction_span(stored_messages, kept_turns)[0]
+
+
+def _build_compaction_marker(
+    *,
+    marker_id: str,
+    summary_text: str,
+    compacted_count: int,
+    kept_count: int,
+    split_target: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Build a marker that remains at its logical boundary after timestamp sort.
+
+    Session insertion assigns a current timestamp when one is absent. That would
+    move a marker inserted before retained history to the end on the next reload,
+    causing the retained messages to be treated as already summarized. Sharing
+    the split target's timestamp preserves the insertion order because Python's
+    sort is stable. An empty legacy timestamp is preserved for the same reason.
+    """
+    marker: dict[str, Any] = {
+        "role": "compaction",
+        "content": summary_text,
+        "messageId": marker_id,
+        "compactedCount": compacted_count,
+        "keptCount": kept_count,
+    }
+    if split_target is not None:
+        marker["timestamp"] = split_target.get("timestamp") or ""
+    return marker
+
+
+def _stored_compaction_span(
+    stored_messages: list[dict[str, Any]],
+    kept_turns: int,
+) -> tuple[int, int, int]:
+    """Return split index plus per-pass compacted and retained message counts.
+
+    Counts are relative to the segment after the latest existing marker. Older
+    history and prior divider records are already represented by that marker's
+    summary and must not inflate the next divider's metadata.
+    """
     segment_start = 0
     for idx, message in enumerate(stored_messages):
         if message.get("role") == "compaction":
@@ -760,8 +802,14 @@ def _stored_split_for_kept_turns(
         if stored_messages[idx].get("role") == "user"
     ]
     if kept_turns > 0 and len(user_indices) >= kept_turns:
-        return user_indices[-kept_turns]
-    return max(segment_start, len(stored_messages) - 1)
+        split_idx = user_indices[-kept_turns]
+    else:
+        split_idx = max(segment_start, len(stored_messages) - 1)
+    return (
+        split_idx,
+        max(0, split_idx - segment_start),
+        max(0, len(stored_messages) - split_idx),
+    )
 
 
 def _stored_messages_to_llm(stored_messages: list[dict[str, Any]]) -> list[Message]:

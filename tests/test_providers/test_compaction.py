@@ -367,6 +367,8 @@ def test_append_messages_replace():
 # ── Compaction marker handling in _stored_messages_to_llm ────────────────
 
 from dataclaw.api.routers.chat import (
+    _build_compaction_marker,
+    _stored_compaction_span,
     _stored_messages_to_llm,
     _stored_split_for_kept_turns,
 )
@@ -387,6 +389,61 @@ def test_compaction_marker_uses_the_same_logical_turn_boundary():
 
     assert split_idx == 3
     assert stored[split_idx]["content"] == "second"
+
+
+def test_repeated_compaction_counts_only_the_post_marker_segment():
+    stored = [
+        {"role": "user", "content": "old", "timestamp": "1"},
+        {"role": "assistant", "content": "old reply", "timestamp": "2"},
+        {
+            "role": "compaction",
+            "content": "Earlier summary",
+            "messageId": "compaction-1",
+            "timestamp": "3",
+        },
+        {"role": "user", "content": "middle", "timestamp": "4"},
+        {"role": "assistant", "content": "middle reply", "timestamp": "5"},
+        {"role": "user", "content": "latest", "timestamp": "6"},
+        {"role": "assistant", "content": "latest reply", "timestamp": "7"},
+    ]
+
+    split_idx, compacted_count, kept_count = _stored_compaction_span(stored, kept_turns=1)
+
+    assert split_idx == 5
+    assert compacted_count == 2  # middle turn only; old history/marker are excluded
+    assert kept_count == 2
+
+
+def test_persisted_compaction_marker_sorts_before_retained_messages():
+    old = [
+        {"role": "user", "content": "old", "timestamp": "1"},
+        {"role": "assistant", "content": "old reply", "timestamp": "2"},
+    ]
+    retained = [
+        {"role": "user", "content": "keep", "timestamp": "3"},
+        {"role": "assistant", "content": "keep reply", "timestamp": "4"},
+    ]
+    marker = _build_compaction_marker(
+        marker_id="compaction-1",
+        summary_text="summary",
+        compacted_count=2,
+        kept_count=2,
+        split_target=retained[0],
+    )
+
+    # Storage inserts at the logical boundary, then reload paths sort by
+    # timestamp. Equal timestamps must preserve marker-before-target order.
+    stored = [*old, marker, *retained]
+    reloaded = sorted(stored, key=lambda message: message.get("timestamp", ""))
+    assert [message["role"] for message in reloaded] == [
+        "user", "assistant", "compaction", "user", "assistant",
+    ]
+    llm_messages = _stored_messages_to_llm(reloaded)
+    assert [(message.role, message.text()) for message in llm_messages] == [
+        ("system", "summary"),
+        ("user", "keep"),
+        ("assistant", "keep reply"),
+    ]
 
 
 def test_stored_messages_no_marker():

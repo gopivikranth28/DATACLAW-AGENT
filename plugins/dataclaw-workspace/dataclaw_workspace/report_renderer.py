@@ -707,23 +707,30 @@ def _unresolved_evidence_refs(
     # same evidence match — otherwise every kind-qualified citation reads as
     # unresolved even though the cell is registered, and a redesign loop cannot
     # ever clear it.
-    resolver: dict[str, dict[str, Any]] = {}
-    for target_id, target in registry.items():
-        resolver.setdefault(target_id, target)
-        target_kind = clean_text(target.get("kind") or target.get("type") or "")
-        if target_kind:
-            resolver.setdefault(f"{target_kind}:{target_id}", target)
     for reference in references:
-        ref_id = reference["ref"]
-        target = resolver.get(ref_id)
+        ref_id = clean_text(reference.get("ref") or "")
+        reference_kind = clean_text(reference.get("kind") or "unknown")
+        qualified_kind = ""
+        # Prefer an exact registered id. A colon may be part of an opaque id
+        # (including URL-like external ids), not necessarily a kind separator.
+        target = registry.get(ref_id)
         if target is None and ":" in ref_id:
-            # A kind-qualified reference whose target is registered bare.
-            target = resolver.get(ref_id.split(":", 1)[1])
+            qualified_kind, bare_ref_id = ref_id.split(":", 1)
+            # A qualified reference may resolve to a bare registry id only when
+            # the namespace agrees. Never discard an arbitrary prefix: doing so
+            # would let ``artifact:<id>`` satisfy a ``notebook_cell`` target.
+            candidate = registry.get(bare_ref_id)
+            candidate_kind = (
+                clean_text(candidate.get("kind") or candidate.get("type") or "")
+                if candidate else ""
+            )
+            if candidate_kind == qualified_kind:
+                target = candidate
         target_kind = clean_text(target.get("kind") or target.get("type") or "") if target else ""
-        is_external = bool(target and clean_text(target.get("external_url") or target.get("url") or ""))
         is_present = bool(target and target.get("present", True))
-        kind_matches = not target_kind or target_kind == reference["kind"] or reference["kind"] == "unknown"
-        if not target or not is_present or (not is_external and not kind_matches):
+        qualifier_matches = not qualified_kind or target_kind == qualified_kind
+        kind_matches = not target_kind or target_kind == reference_kind or reference_kind == "unknown"
+        if not target or not is_present or not qualifier_matches or not kind_matches:
             unresolved.append(dict(reference))
     return unresolved
 
@@ -1979,6 +1986,45 @@ def _chart_mapped_fields(chart: dict[str, Any], columns: list[str]) -> list[str]
     return list(dict.fromkeys(mapped))
 
 
+def _apply_chart_field_allowlist(data: dict[str, Any], chart: dict[str, Any]) -> list[str]:
+    """Attach the bounded record-column contract shared by every chart path."""
+    records = data.get("records") if isinstance(data.get("records"), list) else data.get("rows")
+    columns = _columns_from_records(records) if isinstance(records, list) else []
+    declared = (
+        [clean_text(field) for field in data.get("fields", []) if clean_text(field)]
+        if isinstance(data.get("fields"), list) else []
+    )
+    mapped = _chart_mapped_fields(chart, columns)
+    allow = list(dict.fromkeys(field for field in (declared + mapped) if field in columns))
+    # Always write the list, including an empty one, so the author dossier fails
+    # closed instead of reverting to its bounded-but-unfiltered column fallback.
+    data["fields"] = allow
+    allow_set = set(allow)
+    if isinstance(data.get("columns"), list):
+        data["columns"] = [
+            column for column in data["columns"]
+            if _column_binding(column) in allow_set
+        ]
+    # Source-context analyses feed the author dossier directly, before the
+    # planned section's defensive filtering. Constrain both spellings here so
+    # excluded field names/labels cannot survive in filter metadata either.
+    for key in ("filters", "controls"):
+        if isinstance(data.get(key), list):
+            data[key] = [
+                item for item in data[key]
+                if isinstance(item, dict)
+                and clean_text(item.get("key") or item.get("field") or "") in allow_set
+            ]
+    return allow
+
+
+def _column_binding(column: Any) -> str:
+    """Return the record field named by a table-column declaration."""
+    if isinstance(column, dict):
+        return clean_text(column.get("key") or column.get("field") or column.get("name") or "")
+    return clean_text(column)
+
+
 def _fold_visual_into_direction(data: dict[str, Any], visual: dict[str, Any]) -> None:
     """Turn an unsupported visual mapping into free-text bespoke visual intent.
 
@@ -2033,11 +2079,26 @@ def _promote_inferred_advanced_visuals(analyses: list[dict[str, Any]]) -> None:
     """Normalize familiar charts and promote unambiguous bespoke visuals."""
     for index, analysis in enumerate(analyses):
         explicit = clean_text(analysis.get("section_type") or analysis.get("kind") or "")
+        data = analysis.get("data") if isinstance(analysis.get("data"), dict) else analysis
+        direct_chart = data.get("chart")
+        direct_records = (
+            data.get("records") if isinstance(data.get("records"), list)
+            else data.get("rows")
+        )
+        if (
+            isinstance(direct_chart, dict)
+            and isinstance(direct_records, list)
+            and (not explicit or explicit in CHART_SECTION_KINDS)
+        ):
+            # Direct chart specs bypass visual promotion, including when an
+            # explicit chart section type is supplied. Establish the same field
+            # boundary before any early return so those paths cannot copy every
+            # record column into the creative-author dossier.
+            _apply_chart_field_allowlist(data, direct_chart)
         # Untyped assets and assets explicitly typed as advanced_visual are both
         # candidates; any other explicit section type is left untouched.
         if explicit and explicit != "advanced_visual":
             continue
-        data = analysis.get("data") if isinstance(analysis.get("data"), dict) else analysis
         visual = data.get("visual", data.get("visual_spec"))
         if isinstance(visual, dict):
             visual_type = clean_text(visual.get("type") or "").lower().replace("-", "_")
@@ -2053,19 +2114,7 @@ def _promote_inferred_advanced_visuals(analyses: list[dict[str, Any]]) -> None:
                 # otherwise fold the chart's mapped columns. Always set an
                 # explicit list so downstream minimization fails closed rather
                 # than copying every column.
-                records = (
-                    data.get("records") if isinstance(data.get("records"), list)
-                    else data.get("rows")
-                )
-                columns = _columns_from_records(records) if isinstance(records, list) else []
-                declared = (
-                    [clean_text(f) for f in data.get("fields", []) if clean_text(f)]
-                    if isinstance(data.get("fields"), list) else []
-                )
-                mapped = _chart_mapped_fields(normalized_chart, columns)
-                data["fields"] = list(
-                    dict.fromkeys(f for f in (declared + mapped) if f in columns)
-                )
+                _apply_chart_field_allowlist(data, normalized_chart)
                 data.pop("visual", None)
                 data.pop("visual_spec", None)
                 continue
@@ -2328,10 +2377,17 @@ def _storyboard_section_from_analysis(analysis: dict[str, Any], index: int) -> d
                 if isinstance(f, dict) and clean_text(f.get("key") or "") in allow_set
             ]
             default_columns = [c for c in _columns_from_records(records) if c in allow_set]
+            if isinstance(data.get("columns"), list):
+                data["columns"] = [
+                    column for column in data["columns"]
+                    if _column_binding(column) in allow_set
+                ]
         else:
             default_columns = _columns_from_records(records)[:8]
         section_type = "chart_table_explorer" if data.get("columns") or filters or len(records) > 6 else "filterable_chart"
-        data.setdefault("filters", filters)
+        # ``filters`` may be a sanitized caller-supplied list, so assign the
+        # normalized value rather than leaving the original list via setdefault.
+        data["filters"] = filters
         data.setdefault("columns", data.get("columns") or default_columns)
         return {
             "section_type": section_type,

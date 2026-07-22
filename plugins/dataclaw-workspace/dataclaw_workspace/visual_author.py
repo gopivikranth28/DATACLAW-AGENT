@@ -389,6 +389,15 @@ def build_creative_author_dossier(
             else []
         )
         visual = material.get("visual") if isinstance(material.get("visual"), dict) else {}
+        section_kind = _clean(material.get("section_type") or material.get("kind")).lower().replace("-", "_")
+        direct_chart_kind = not section_kind or section_kind in {
+            "chart", "chart_interpretation", "filterable_chart", "chart_table_explorer",
+        }
+        if not visual and direct_chart_kind and isinstance(material.get("chart"), dict):
+            # Direct ``{records, chart}`` assets bypass visual promotion. Preserve
+            # their bounded chart type and field mappings so minimization does not
+            # leave the creative author with values but no intended visual form.
+            visual = material["chart"]
         payload = {
             "source_alias": alias,
             "source_id": source_id,

@@ -636,3 +636,29 @@ def test_kind_qualified_evidence_references_resolve_to_bare_id_targets():
     missing = [{"section_id": "s", "kind": "unknown", "ref": "notebook_cell:deadbeef"}]
     unresolved = report_renderer._unresolved_evidence_refs([], registry, missing)
     assert len(unresolved) == 1 and unresolved[0]["ref"] == "notebook_cell:deadbeef"
+
+    # The qualifier is provenance, not decoration. A target with the same bare
+    # id in another namespace must not satisfy the reference.
+    wrong_namespace = [{"section_id": "s", "kind": "unknown", "ref": "artifact:153f2202"}]
+    unresolved = report_renderer._unresolved_evidence_refs([], registry, wrong_namespace)
+    assert len(unresolved) == 1 and unresolved[0]["ref"] == "artifact:153f2202"
+
+    # A separate declared kind must also continue to agree with the target.
+    wrong_declared_kind = [{"section_id": "s", "kind": "artifact", "ref": "notebook_cell:153f2202"}]
+    unresolved = report_renderer._unresolved_evidence_refs([], registry, wrong_declared_kind)
+    assert len(unresolved) == 1 and unresolved[0]["ref"] == "notebook_cell:153f2202"
+
+    # A colon in an exact registered id remains opaque; it is not automatically
+    # interpreted as a namespace separator.
+    external_id = "https://evidence.example/report/1"
+    external_registry = {
+        external_id: {"id": external_id, "kind": "external", "url": external_id, "present": True},
+    }
+    external_ref = [{"section_id": "s", "kind": "unknown", "ref": external_id}]
+    assert report_renderer._unresolved_evidence_refs([], external_registry, external_ref) == []
+
+    # URL-bearing targets are still namespace-checked when the reference makes
+    # an explicit kind claim; external location does not waive provenance.
+    external_wrong_kind = [{"section_id": "s", "kind": "artifact", "ref": external_id}]
+    unresolved = report_renderer._unresolved_evidence_refs([], external_registry, external_wrong_kind)
+    assert len(unresolved) == 1 and unresolved[0]["ref"] == external_id

@@ -1032,3 +1032,77 @@ def test_bespoke_fold_minimizes_unmapped_columns_and_handles_explicit_advanced_v
     assert "waffle" in explicit                        # explicit advanced_visual also folds (no crash)
     assert "secret@example.com" not in explicit
     assert "private_email" not in explicit
+
+
+def test_direct_chart_minimizes_unmapped_columns_for_top_level_and_explicit_nested_assets():
+    """A direct chart receives the same fail-closed field contract as a promoted visual."""
+    from dataclaw_workspace.report_renderer import design_report_storyboard
+
+    reqs = {"evidence_registry": {"targets": [{"id": "ev-1", "kind": "notebook_cell"}]}}
+    insights = [{
+        "finding_id": "f1",
+        "title": "T",
+        "detail": "D",
+        "evidence": [{"kind": "notebook_cell", "ref": "ev-1"}],
+    }]
+    records = [
+        {"segment": "A", "value": 1, "ssn": "111-22-3333"},
+        {"segment": "B", "value": 2, "ssn": "999-88-7777"},
+    ]
+
+    def storyboard_and_dossier(analysis):
+        storyboard = design_report_storyboard(
+            report_goal="G",
+            insights=insights,
+            analyses=[analysis],
+            title="R",
+            requirements=reqs,
+        )
+        storyboard["evidence_registry"] = build_evidence_registry(storyboard)
+        dossier, _ = build_creative_author_dossier(storyboard, {"mode": "creative"})
+        return storyboard, dossier
+
+    storyboard, direct = storyboard_and_dossier({
+        "title": "Direct chart",
+        "records": records,
+        "chart": {"type": "bar", "x": "segment", "y": "value"},
+        "columns": ["segment", "ssn"],
+        "filters": [{"key": "ssn", "label": "SSN"}],
+        "evidence": [{"kind": "notebook_cell", "ref": "ev-1"}],
+    })
+    source = storyboard["source_context"]["analyses"][0]
+    planned = storyboard["section_plan"][1]["data"]
+    assert source["fields"] == ["segment", "value"]
+    assert planned["columns"] == ["segment"]
+    assert planned["filters"] == []
+    assert "111-22-3333" not in direct
+    assert '"ssn"' not in direct
+    assert '"segment"' in direct and '"value"' in direct
+    assert '"type": "bar"' in direct
+
+    _, explicit_nested = storyboard_and_dossier({
+        "section_type": "chart_interpretation",
+        "title": "Explicit chart",
+        "data": {
+            "records": records,
+            "chart": {"type": "bar", "x": "segment", "y": "value"},
+            "evidence": [{"kind": "notebook_cell", "ref": "ev-1"}],
+        },
+    })
+    assert "999-88-7777" not in explicit_nested
+    assert '"ssn"' not in explicit_nested
+    assert '"type": "bar"' in explicit_nested
+
+    # A non-chart section may carry supplemental chart metadata without making
+    # the chart's axes the table's field contract.
+    table_storyboard, table_dossier = storyboard_and_dossier({
+        "section_type": "interactive_table",
+        "records": [{"segment": "A", "value": 1, "detail": "keep me"}],
+        "chart": {"type": "bar", "x": "segment", "y": "value"},
+        "columns": ["segment", "value", "detail"],
+        "filters": [{"key": "detail", "label": "Detail"}],
+    })
+    table_source = table_storyboard["source_context"]["analyses"][0]
+    assert table_source["columns"] == ["segment", "value", "detail"]
+    assert table_source["filters"] == [{"key": "detail", "label": "Detail"}]
+    assert '"type": "bar"' not in table_dossier
