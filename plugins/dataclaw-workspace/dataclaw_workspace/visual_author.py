@@ -505,6 +505,8 @@ For every used source, put its src-* alias in a data-source attribute on the rel
 <script type="application/json" data-dc-author-coverage>{"omitted":[{"source":"src-...","reason":"brief reason"}]}</script>
 Used sources are inferred from data-source attributes, so do not list them in the coverage JSON. Every supplied source must either be used or explicitly omitted.
 
+When the brief lists required_disclosures, write each one into the report and mark the element that carries it with data-dc-disclosure="methodology", "data_quality", or "uncertainty" (space-separated if several). This lets the quality gate credit the disclosure you wrote.
+
 Artifact rules: no external scripts, stylesheets, fonts, images, remote assets, network calls, live data fetching, iframes, forms, storage, cookies, workers, eval, dynamic imports, navigation code, or inline event-handler attributes. Inline JavaScript is optional; when useful, keep it small, deterministic, DOM-local, and place data-dc-author-script on each executable script. Prefer textContent and DOM construction. Do not include libraries. Include a restrictive CSP meta tag. Use accessible landmarks, one h1, coherent heading order, keyboard controls, reduced-motion behavior, figure captions, and interpretation notes near visuals.
 
 Define --dc-ink, --dc-muted, and --dc-surface as six-digit hex colors in :root so contrast can be checked. Do not include DataClaw evidence-registry, report-contract, regeneration-recipe, or section-metadata scripts; the host injects those after validation."""
@@ -533,6 +535,7 @@ class _AuthoredDocumentParser(HTMLParser):
         self.title_count = 0
         self.evidence_aliases: set[str] = set()
         self.source_aliases: set[str] = set()
+        self.disclosures: set[str] = set()
         self.visual_source_aliases: set[str] = set()
         self.visuals_without_evidence: list[str] = []
         self.script_count = 0
@@ -556,10 +559,16 @@ class _AuthoredDocumentParser(HTMLParser):
         unsupported_dc = [
             name for name in attr
             if name.startswith("data-dc-")
-            and name not in {"data-dc-author-coverage", "data-dc-author-script"}
+            and name not in {"data-dc-author-coverage", "data-dc-author-script", "data-dc-disclosure"}
         ]
         if unsupported_dc:
             raise ValueError(f"authored HTML cannot supply host-owned DataClaw attributes: {unsupported_dc}")
+        # Author-declared trust disclosures the quality gate can credit for an
+        # authored document (which has no deterministic disclosure sections).
+        self.disclosures.update(
+            value.lower().replace("-", "_")
+            for value in self._aliases(attr.get("data-dc-disclosure", ""))
+        )
         if tag == "meta" and attr.get("http-equiv", "").lower() == "refresh":
             raise ValueError("authored HTML cannot use meta refresh")
         if tag == "form" or attr.get("action") or attr.get("formaction"):
@@ -785,6 +794,7 @@ def validate_authored_document(html: str, contract: dict[str, Any]) -> dict[str,
             "omitted": omitted,
             "visual_sources": sorted(parser.visual_source_aliases),
         },
+        "disclosures": sorted(parser.disclosures),
         "evidence_aliases": sorted(parser.evidence_aliases),
         "claim_candidates": parser.claims[:250],
         "script_count": parser.script_count,

@@ -168,6 +168,34 @@ def test_gate_rejects_report_without_typed_section_metadata():
     assert "unstructured_report" in {warning["code"] for warning in quality["warnings"]}
 
 
+def test_gate_credits_authored_disclosure_markers():
+    """An authored report marks required disclosures with data-dc-disclosure; the
+    quality gate must credit them instead of always reporting them missing."""
+    import json as _json
+
+    def _doc(disclosures):
+        contract = {"report_contract_schema": 1, "rigor": {"methodology_required": True, "uncertainty_required": True}}
+        meta = {
+            "section_schema": 3, "kind": "narrative_band", "section_id": "authored",
+            "title": "R", "caption": "c",
+            "payload": {"semantic_role": "authored_document", "authored": True, "disclosures": disclosures},
+        }
+        return (
+            '<html data-dc-authored-document="true"><body><h1>R</h1>'
+            f'<script type="application/json" data-dc-report-contract>{_json.dumps(contract)}</script>'
+            f'<script type="application/json" data-dc-section-meta>{_json.dumps(meta)}</script>'
+            "</body></html>"
+        )
+
+    def _codes(doc):
+        return {w["code"] for w in report_renderer.analyze_report_quality(doc)["warnings"]}
+
+    unmarked = _codes(_doc([]))
+    assert "missing_methodology" in unmarked and "missing_uncertainty" in unmarked
+    marked = _codes(_doc(["methodology", "uncertainty"]))
+    assert "missing_methodology" not in marked and "missing_uncertainty" not in marked
+
+
 def test_rigor_contract_materializes_required_disclosures_and_recipe():
     storyboard = report_renderer.design_report_storyboard(
         report_goal="Forecast renewal risk.",

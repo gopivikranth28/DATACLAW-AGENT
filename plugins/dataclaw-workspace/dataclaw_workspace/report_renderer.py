@@ -174,7 +174,18 @@ def analyze_report_quality(
             "Report has no valid embedded regeneration recipe bound to its source context and section plan.",
             details={"required_script": REGENERATION_RECIPE_ATTR},
         )
-    if bool(rigor.get("methodology_required", False)):
+    # An authored document has no deterministic disclosure sections, so the author
+    # marks each required disclosure with data-dc-disclosure="<kind>", which the
+    # host stamps into the hash-bound section metadata. Credit those markers here
+    # so the gate can observe and credit authored methodology/data-quality/
+    # uncertainty rather than always reporting them missing.
+    authored_disclosures: set[str] = set()
+    for section in sections:
+        payload = section.get("payload") if isinstance(section.get("payload"), dict) else {}
+        declared = payload.get("disclosures")
+        if isinstance(declared, list):
+            authored_disclosures.update(clean_text(value).lower().replace("-", "_") for value in declared)
+    if bool(rigor.get("methodology_required", False)) and "methodology" not in authored_disclosures:
         methodology = _methodology_completeness(sections)
         if methodology["missing"]:
             warn(
@@ -182,13 +193,21 @@ def analyze_report_quality(
                 "The declared rigor contract requires methodology for grain, denominator, and validation, but the rendered report does not show all three.",
                 details=methodology,
             )
-    if bool(rigor.get("data_quality_required", False)) and not _has_semantic_role(sections, {"data_quality", "coverage"}):
+    if (
+        bool(rigor.get("data_quality_required", False))
+        and "data_quality" not in authored_disclosures
+        and not _has_semantic_role(sections, {"data_quality", "coverage"})
+    ):
         warn(
             "missing_data_quality",
             "The declared rigor contract requires a visible data-quality or coverage disclosure.",
             details={"accepted_roles": ["data_quality", "coverage"]},
         )
-    if bool(rigor.get("uncertainty_required", False)) and not _has_semantic_role(sections, {"uncertainty", "interval", "confidence"}):
+    if (
+        bool(rigor.get("uncertainty_required", False))
+        and "uncertainty" not in authored_disclosures
+        and not _has_semantic_role(sections, {"uncertainty", "interval", "confidence"})
+    ):
         warn(
             "missing_uncertainty",
             "The declared or predictive rigor contract requires visible uncertainty information in the rendered report.",
@@ -1674,6 +1693,7 @@ def _render_authored_document(storyboard: dict[str, Any], *, title: str | None =
             "source_count": len(contract.get("sources", [])),
             "evidence_target_count": len(contract.get("evidence", [])),
             "authored": True,
+            "disclosures": validation.get("disclosures", []),
         },
     }
     # Bind the independent evidence-review verdict into the hash-covered HTML so
