@@ -57,7 +57,7 @@ def visual_author_config(requirements: dict[str, Any] | None, override: dict[str
 
     Every report is authored by the ledger-backed creative author. There is no
     deterministic, bounded, or provided-spec mode. Callers may still tune the
-    timeout, output budget, and single repair pass.
+    timeout, output budget, and the number of repair passes.
     """
     supplied = override if isinstance(override, dict) else (requirements or {}).get("visual_author")
     if supplied is not None and not isinstance(supplied, dict):
@@ -74,15 +74,22 @@ def visual_author_config(requirements: dict[str, Any] | None, override: dict[str
         # Generous by default: this is a ceiling per model call, not a fixed wait,
         # so a report that finishes early is not penalized, while a large detailed
         # document streaming ~150k tokens has room to complete its first draft.
+        # The floor is a usable minimum, not 1s: because _bounded_int clamps, a
+        # stray tiny value must land on something a real authoring call can meet
+        # rather than a guaranteed instant timeout.
         default=600,
-        minimum=1,
+        minimum=60,
         maximum=900,
         field="visual_author.timeout_seconds",
     )
     config["max_output_chars"] = _bounded_int(
         config.get("max_output_chars"),
+        # A handcrafted single-file report with inline CSS and bespoke SVG easily
+        # runs past 50k characters, so the floor sits there: a mis-set tiny cap
+        # clamps up to a size a real report can fit inside instead of tripping the
+        # output-size guard mid-draft on every run.
         default=_CREATIVE_MAX_OUTPUT_CHARS,
-        minimum=512,
+        minimum=50_000,
         maximum=_CREATIVE_MAX_OUTPUT_CHARS,
         field="visual_author.max_output_chars",
     )
@@ -93,7 +100,7 @@ def visual_author_config(requirements: dict[str, Any] | None, override: dict[str
         maximum=3,
         field="visual_author.max_repair_passes",
     )
-    # Input bound for the one repair pass, which restates the dossier plus the
+    # Input bound for a repair pass, which restates the dossier plus the
     # full authored HTML. Default fits a large-context provider; lower it to match
     # a smaller context window. The dossier is trimmed to fit; if the HTML and
     # findings alone exceed it, the repair is skipped and the unresolved evidence
@@ -508,9 +515,9 @@ For every used source, put its src-* alias in a data-source attribute on the rel
 <script type="application/json" data-dc-author-coverage>{"omitted":[{"source":"src-...","reason":"brief reason"}]}</script>
 Used sources are inferred from data-source attributes, so do not list them in the coverage JSON. Every supplied source must either be used or explicitly omitted.
 
-When the brief lists required_disclosures, write each one into the report and mark the element that carries it with data-dc-disclosure="methodology", "data_quality", or "uncertainty" (space-separated if several). This lets the quality gate credit the disclosure you wrote.
+When the brief lists required_disclosures, write each one into the report and mark the leaf text element that carries it (a paragraph, list item, caption, or figcaption — not a wrapping div/section) with data-dc-disclosure="methodology", "data_quality", or "uncertainty" (space-separated if several). Put the marker on the visible element that actually states the disclosure; a hidden or near-empty marker is not credited. A methodology disclosure must state all three of: the data grain (what one row represents), the denominator (the population or base the rates are computed over), and how the numbers were validated or reconciled. This lets the quality gate credit the disclosure you wrote.
 
-Artifact rules: no external scripts, stylesheets, fonts, images, remote assets, network calls, live data fetching, iframes, forms, storage, cookies, workers, eval, dynamic imports, navigation code, or inline event-handler attributes. Inline JavaScript is optional; when useful, keep it small, deterministic, DOM-local, and place data-dc-author-script on each executable script. Prefer textContent and DOM construction. Do not include libraries. Include a restrictive CSP meta tag. Use accessible landmarks, one h1, coherent heading order, keyboard controls, reduced-motion behavior, figure captions, and interpretation notes near visuals.
+Artifact rules: no external scripts, stylesheets, fonts, images, remote assets, network calls, live data fetching, iframes, forms, storage, cookies, workers, eval, dynamic imports, navigation code, or inline event-handler attributes. Inline JavaScript is optional; when useful, keep it small, deterministic, DOM-local, and place data-dc-author-script on each executable script. Prefer textContent and DOM construction. Do not include libraries. Include a restrictive CSP meta tag. Use accessible landmarks, a single hero h1 with a coherent heading order beneath it, keyboard controls, reduced-motion behavior, figure captions, and interpretation notes near visuals.
 
 Define --dc-ink, --dc-muted, and --dc-surface as six-digit hex colors in :root so contrast can be checked. Do not include DataClaw evidence-registry, report-contract, regeneration-recipe, or section-metadata scripts; the host injects those after validation."""
     return system, dossier
@@ -520,6 +527,13 @@ class _AuthoredDocumentParser(HTMLParser):
     """Collect safety and evidence signals from untrusted authored HTML."""
 
     _TEXT_BLOCKS = {"p", "li", "blockquote", "figcaption"}
+    # A trust disclosure is credited only when its marker sits on one of these
+    # leaf-ish text elements, so the credited text is the element's own prose,
+    # not everything a large wrapper happens to contain.
+    _DISCLOSURE_BLOCKS = {"p", "li", "blockquote", "figcaption", "caption", "dd", "td", "small"}
+    # Minimum visible characters a disclosure must carry to be credited — enough
+    # to reject a marker on a near-empty element that only echoes the label.
+    _MIN_DISCLOSURE_CHARS = 40
     _VISUAL_TAGS = {"figure", "svg", "canvas"}
     _VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
     _RESERVED_ATTRS = {
@@ -566,19 +580,31 @@ class _AuthoredDocumentParser(HTMLParser):
         ]
         if unsupported_dc:
             raise ValueError(f"authored HTML cannot supply host-owned DataClaw attributes: {unsupported_dc}")
-        # Author-declared trust disclosures the quality gate can later credit — but
-        # only when they sit on a visible, text-bearing element (not an inert
-        # <meta>/void tag) and carry the required semantic content. The actual
-        # crediting happens at end-tag time from the element's collected text.
+        # Author-declared trust disclosures the quality gate can later credit.
+        # Crediting is defense-in-depth over a warn-only rigor signal, so an
+        # ineligible marker is silently NOT credited (the honest warning stays)
+        # rather than failing the whole document. A marker is eligible only when
+        # it sits on a leaf-ish text block (so the credited text is the element's
+        # own prose, not a wrapper's aggregated descendants), the element is not
+        # hidden/inert, and it is not nested inside another disclosure element.
+        # The semantic + length checks happen at end-tag time from the collected
+        # text. This closes the game where a hidden, hollow, or wrapper-scoped
+        # marker suppresses the rigor warning without a real disclosure.
         disclosure_kinds = {
             value.lower().replace("-", "_")
             for value in self._aliases(attr.get("data-dc-disclosure", ""))
         }
-        if disclosure_kinds and (
-            tag in self._VOID_TAGS
-            or tag in {"meta", "script", "style", "link", "head", "base", "title"}
-        ):
-            raise ValueError(f"data-dc-disclosure must be on a visible text-bearing element, not <{tag}>")
+        if disclosure_kinds:
+            style = attr.get("style", "").lower()
+            hidden = (
+                "hidden" in attr
+                or "inert" in attr
+                or attr.get("aria-hidden", "").lower() == "true"
+                or bool(re.search(r"display\s*:\s*none|visibility\s*:\s*hidden", style))
+            )
+            nested_disclosure = any("disclosure" in entry for entry in self._stack)
+            if tag not in self._DISCLOSURE_BLOCKS or hidden or nested_disclosure:
+                disclosure_kinds = set()
         if tag == "meta" and attr.get("http-equiv", "").lower() == "refresh":
             raise ValueError("authored HTML cannot use meta refresh")
         if tag == "form" or attr.get("action") or attr.get("formaction"):
@@ -603,7 +629,6 @@ class _AuthoredDocumentParser(HTMLParser):
         # the element itself, so a single ancestor data-decoration cannot exempt
         # every descendant visual from evidence binding.
         own_decoration = attr.get("data-decoration", "").lower() == "true"
-        decoration = own_decoration
         self.evidence_aliases.update(self._aliases(attr.get("data-evidence", "")))
         self.source_aliases.update(own_source)
         if tag in self._VISUAL_TAGS:
@@ -623,7 +648,7 @@ class _AuthoredDocumentParser(HTMLParser):
             nested_visual = any(entry["tag"] in self._VISUAL_TAGS for entry in self._stack)
             if not nested_visual and not evidence and not own_decoration:
                 self.visuals_without_evidence.append(tag)
-        entry = {"tag": tag, "evidence": evidence, "source": source, "decoration": decoration}
+        entry = {"tag": tag, "evidence": evidence, "source": source}
         if disclosure_kinds:
             entry["disclosure"] = disclosure_kinds
             entry["disclosure_text"] = []
@@ -669,16 +694,30 @@ class _AuthoredDocumentParser(HTMLParser):
     def _finalize_disclosures(self, kinds: set[str], raw_text: str) -> None:
         """Credit a disclosure only when its visible text carries the semantics."""
         text = re.sub(r"\s+", " ", raw_text).strip().lower()
-        if not text:
+        # A credited disclosure must carry real prose, not just echo its label.
+        if len(text) < self._MIN_DISCLOSURE_CHARS:
             return
         for kind in kinds:
             if kind == "methodology":
-                # The three-part methodology contract must be visibly present.
-                if (
-                    "grain" in text
-                    and "denominator" in text
-                    and any(term in text for term in ("validat", "reconcil", "verif"))
-                ):
+                # The methodology disclosure must visibly speak to its three
+                # parts — grain, denominator, and validation. Match each part by
+                # concept, not a single literal token: legitimate prose says
+                # "each row is a match" or "per 90 minutes", which the old
+                # exact-word check ("grain" and "denominator" literally present)
+                # rejected as false negatives on real reports.
+                grain = any(
+                    term in text
+                    for term in ("grain", "per row", "each row", "one row per", "record is", "unit of analysis", "observation")
+                )
+                denominator = any(
+                    term in text
+                    for term in ("denominator", " per ", "population", "out of", "base is", "cohort size", "sample of")
+                )
+                validation = any(
+                    term in text
+                    for term in ("validat", "reconcil", "verif", "cross-check", "cross check", "checked against", "audit")
+                )
+                if grain and denominator and validation:
                     self.disclosures.add("methodology")
             elif kind in {"data_quality", "uncertainty"}:
                 self.disclosures.add(kind)
@@ -747,8 +786,16 @@ def validate_authored_document(html: str, contract: dict[str, Any]) -> dict[str,
     except Exception as exc:
         raise ValueError(f"authored HTML could not be parsed: {exc}") from exc
     required_tags = {"html", "head", "body"}
-    if not required_tags.issubset(set(parser.tags)) or parser.title_count != 1 or parser.h1_count != 1:
-        raise ValueError("authored HTML requires html/head/body, exactly one title, and exactly one h1")
+    # Require the document skeleton plus at least one <title> and one <h1>: zero
+    # of either means truncated or structurally broken author output. Do NOT
+    # hard-fail on extras — a second heading is a polish/accessibility nuance, not
+    # a correctness defect, and failing a complete evidence-bound report over it
+    # is the kind of brittle structural gate that wastes a full authoring pass.
+    # "One hero heading, meaningful section headings" is judged semantically at
+    # the rendered-page visual-review layer, which can tell a real hero heading
+    # from an accidental duplicate; a blind tag count cannot.
+    if not required_tags.issubset(set(parser.tags)) or parser.title_count < 1 or parser.h1_count < 1:
+        raise ValueError("authored HTML requires html/head/body, at least one title, and at least one h1")
     if not parser.styles:
         raise ValueError("authored HTML requires original inline CSS")
     if parser.script_count > _CREATIVE_MAX_INLINE_SCRIPTS or parser.script_chars > _CREATIVE_MAX_INLINE_JS_CHARS:
@@ -959,8 +1006,14 @@ def _bounded_repair_prompt(
         return None
     if len(dossier) <= dossier_budget:
         return dossier + required
-    # Reserve room for the trim marker so the total never exceeds max_chars.
-    trimmed = dossier[: max(0, dossier_budget - len(marker))].rstrip() + marker
+    # Not enough room for the full dossier. Reserve room for the trim marker so
+    # the total never exceeds max_chars. If the budget cannot even fit the marker
+    # plus some content, drop the dossier entirely — `required` alone is already
+    # within budget (len(required) == max_chars - dossier_budget < max_chars) —
+    # rather than emitting a bare marker that would overrun max_chars.
+    if dossier_budget <= len(marker):
+        return required
+    trimmed = dossier[: dossier_budget - len(marker)].rstrip() + marker
     return trimmed + required
 
 
@@ -1032,7 +1085,7 @@ async def _author_creative_document(
                         "issue": f"structural validation failed: {exc}",
                         "recommendation": (
                             "Return exactly ONE complete HTML document — one <html>, one <head>, one <body>, "
-                            "one <title>, and one <h1> — with nothing before <!doctype html> or after </html>, "
+                            "at least one <title>, and at least one <h1> — with nothing before <!doctype html> or after </html>, "
                             "and no markdown code fences."
                         ),
                     }],

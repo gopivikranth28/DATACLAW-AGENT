@@ -8,6 +8,7 @@ outside the base directory is prevented.
 from __future__ import annotations
 
 import asyncio
+import copy
 import difflib
 import hashlib
 import json
@@ -1420,6 +1421,29 @@ async def report_publish(
     if expected_contract_hash != actual_contract_hash:
         raise ValueError(
             "Report publish integrity gate failed: the analytical review contract changed after rendering; redesign the report before publishing."
+        )
+    # Final integrity backstop: re-render the authored document from the
+    # storyboard and require it to reproduce the exact published bytes. The
+    # renderer is byte-deterministic, so this re-validates the authored HTML on
+    # its real content (source coverage, per-visual evidence binding, forbidden
+    # JS, active URIs) and detects any hand-edit of the stored HTML or the
+    # storyboard's authored_document that the narrower per-field gates above did
+    # not already reject. The stored hash alone is self-referential — computed
+    # from the file it is stored beside — and cannot detect such a pair.
+    # Residual ceiling of a workspace-local model without external signing: a
+    # fully self-consistent forged pair whose structure validates and whose
+    # evidence-review verdict is forged to "pass"; closing that requires
+    # re-running or externally signing the evidence review.
+    try:
+        reproduced = _render_report_from_storyboard(copy.deepcopy(storyboard))
+    except (ValueError, ArtifactValidationError) as exc:
+        raise ValueError(
+            f"Report publish integrity gate failed: the storyboard no longer reproduces a valid authored report: {exc}"
+        ) from exc
+    if hashlib.sha256(reproduced.encode("utf-8")).hexdigest() != actual_html_hash:
+        raise ValueError(
+            "Report publish integrity gate failed: the published HTML is not the report the storyboard reproduces; "
+            "redesign the report before publishing."
         )
     regeneration_recipe = _inspect_regeneration_recipe(
         resolved_html,

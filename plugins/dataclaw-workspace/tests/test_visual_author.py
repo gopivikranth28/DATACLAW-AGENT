@@ -296,7 +296,7 @@ def test_lean_storyboard_shape_and_enriched_dossier():
     # Lean storyboard: only the evidence/requirements contract, no page furniture.
     assert storyboard["storyboard_schema"] == 2
     assert set(storyboard) == {
-        "storyboard_schema", "title", "report_goal", "audience", "presentation",
+        "storyboard_schema", "title", "report_goal", "audience",
         "source_context", "analysis_contract", "evidence_registry", "quality_plan", "section_plan",
     }
     roles = [s["layout_role"] for s in storyboard["section_plan"]]
@@ -316,9 +316,11 @@ def test_lean_storyboard_shape_and_enriched_dossier():
 
 @pytest.mark.asyncio
 async def test_creative_author_repairs_a_structurally_invalid_first_draft():
-    """A malformed first draft (e.g. two <h1>) is repaired, not fatal."""
+    """A malformed first draft (e.g. no <h1>) is repaired, not fatal."""
     storyboard = _ledger_backed_storyboard()
-    bad = _authored_html().replace("<h1>", "<h1>Stray</h1><h1>", 1)  # two h1 -> structural fail
+    # Strip the hero heading entirely: zero <h1> is a structural failure (a
+    # truncated document), unlike a mere duplicate heading which is now allowed.
+    bad = _authored_html().replace("<h1>", "<p>").replace("</h1>", "</p>")
     good = _authored_html()
     llm = _JSONLLM((bad, good, {"status": "pass", "findings": []}))
 
@@ -334,10 +336,31 @@ async def test_creative_author_repairs_a_structurally_invalid_first_draft():
 @pytest.mark.asyncio
 async def test_creative_author_fails_closed_when_structure_never_recovers():
     storyboard = _ledger_backed_storyboard()
-    bad = _authored_html().replace("<h1>", "<h1>Stray</h1><h1>", 1)
+    bad = _authored_html().replace("<h1>", "<p>").replace("</h1>", "</p>")  # no h1 -> structural fail
     llm = _JSONLLM((bad, bad))  # budget=1 -> one repair, then give up
     with pytest.raises(VisualAuthorRequiredError, match="structural validation"):
         await author_report_visuals(storyboard, config={"mode": "creative", "max_repair_passes": 1}, llm=llm)
+
+
+def test_structural_validation_allows_extra_headings_but_requires_at_least_one():
+    from dataclaw_workspace.visual_author import validate_authored_document, build_creative_author_dossier
+
+    storyboard = _ledger_backed_storyboard()
+    storyboard["evidence_registry"] = build_evidence_registry(storyboard)
+    _, contract = build_creative_author_dossier(storyboard, {"mode": "creative"})
+
+    # A second hero heading and a second <title> are a polish/accessibility
+    # nuance judged at the visual-review layer, not a hard structural failure.
+    two = _authored_html().replace("<h1>", "<h1>Section</h1><h1>", 1).replace(
+        "</head>", "<title>Extra</title></head>", 1
+    )
+    result = validate_authored_document(two, contract)
+    assert result["script_count"] >= 0  # validated without raising
+
+    # But zero <h1> (a truncated document) still fails closed.
+    none = _authored_html().replace("<h1>", "<p>").replace("</h1>", "</p>")
+    with pytest.raises(ValueError, match="at least one title, and at least one h1"):
+        validate_authored_document(none, contract)
 
 
 def test_visual_author_config_clamps_out_of_range_tuning_instead_of_failing():
@@ -348,6 +371,9 @@ def test_visual_author_config_clamps_out_of_range_tuning_instead_of_failing():
     # A non-integer knob falls back to the default.
     assert visual_author_config({}, {"mode": "creative", "max_repair_passes": "lots"})["max_repair_passes"] == 2
     assert visual_author_config({}, {"mode": "creative", "timeout_seconds": 100000})["timeout_seconds"] == 900
+    # Tiny values clamp UP to a usable floor, never a guaranteed-failure setting.
+    assert visual_author_config({}, {"mode": "creative", "timeout_seconds": 1})["timeout_seconds"] == 60
+    assert visual_author_config({}, {"mode": "creative", "max_output_chars": 100})["max_output_chars"] == 50_000
 
 
 def test_disclosure_markers_require_visible_text_and_verified_semantics():
@@ -355,24 +381,44 @@ def test_disclosure_markers_require_visible_text_and_verified_semantics():
 
     def disclosures(html: str):
         parser = _AuthoredDocumentParser()
-        try:
-            parser.feed(html)
-            parser.close()
-        except ValueError as exc:
-            return f"REJECTED: {exc}"
+        parser.feed(html)
+        parser.close()
         return sorted(parser.disclosures)
 
-    # An inert <meta> marker (no visible disclosure) is rejected outright.
-    assert "REJECTED" in disclosures('<meta data-dc-disclosure="methodology data_quality uncertainty">')
-    # Methodology is credited only when its three-part contract is visibly present.
+    # Ineligible markers are silently NOT credited (never fatal) — the honest
+    # rigor warning stays instead. An inert <meta> is not a leaf text block.
+    assert disclosures('<meta data-dc-disclosure="methodology data_quality uncertainty">') == []
+    # A marker on a wrapping <div> is not credited even if the div contains text.
     assert disclosures(
-        '<p data-dc-disclosure="methodology">Grain is customer-month; denominator is eligible '
-        "renewals; validated against invoices.</p>"
+        '<div data-dc-disclosure="data_quality">Coverage excludes churned accounts entirely.</div>'
+    ) == []
+    # A hidden / inert marker is not credited, even on a valid text block.
+    assert disclosures('<p hidden data-dc-disclosure="data_quality">Coverage excludes churned accounts entirely.</p>') == []
+    assert disclosures(
+        '<p style="display:none" data-dc-disclosure="data_quality">Coverage excludes churned accounts entirely.</p>'
+    ) == []
+    # A nested marker inside another disclosure element cannot double-collect text.
+    assert disclosures(
+        '<p data-dc-disclosure="data_quality">Coverage excludes churned accounts entirely.'
+        '<span data-dc-disclosure="uncertainty">and more</span></p>'
+    ) == ["data_quality"]
+    # Methodology is credited only when its three parts are visibly present —
+    # matched by concept, so natural prose ("each row", "per") is accepted.
+    assert disclosures(
+        '<p data-dc-disclosure="methodology">Each row is a customer-month; rates are per '
+        "eligible renewal, and figures were reconciled against invoices.</p>"
     ) == ["methodology"]
-    assert disclosures('<p data-dc-disclosure="methodology">We analyzed the data.</p>') == []
-    # Data-quality / uncertainty need visible text; an empty element is not credited.
-    assert disclosures('<p data-dc-disclosure="data_quality">Coverage excludes churned accounts.</p>') == ["data_quality"]
+    # Prose missing a part (no validation) is not credited as methodology.
+    assert disclosures(
+        '<p data-dc-disclosure="methodology">Each row is a customer-month measured per eligible renewal.</p>'
+    ) == []
+    # Below the minimum length, even a well-formed marker is not credited.
+    assert disclosures('<p data-dc-disclosure="data_quality">Excludes churn.</p>') == []
     assert disclosures('<p data-dc-disclosure="uncertainty"></p>') == []
+    # A substantial data-quality note on a leaf block is credited.
+    assert disclosures(
+        '<p data-dc-disclosure="data_quality">Coverage excludes churned accounts and trial users.</p>'
+    ) == ["data_quality"]
 
 
 def test_data_decoration_is_not_inherited_and_cannot_cloak_a_data_visual():

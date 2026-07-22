@@ -433,7 +433,6 @@ def test_default_handcrafted_mode_promotes_clear_aggregate_relationships():
         }],
     )
 
-    assert storyboard["presentation"]["mode"] == "handcrafted"
     advanced = next(item for item in storyboard["section_plan"] if item["section_type"] == "advanced_visual")
     assert advanced["data"]["visual"]["type"] == "slopegraph"
     assert set(advanced["data"]["records"][0]) == {"name", "before", "after"}

@@ -59,18 +59,6 @@ STANDARD_CHART_TYPE_ALIASES = {
     "heatmap": "heatmap",
 }
 INTERACTIVE_SECTION_KINDS = {"filterable_chart", "interactive_table", "selector_panel", "chart_table_explorer"}
-DESKTOP_COMPOSITIONS = {
-    "opening",
-    "headline_metrics",
-    "reader_readout",
-    "editorial_findings",
-    "guided_visual",
-    "interactive_explorer",
-    "comparison",
-    "trust_close",
-    "story_arc",
-    "supporting",
-}
 STORY_SECTION_KINDS = {
     "findings",
     "insight_grid",
@@ -1016,8 +1004,6 @@ def _review_storyboard_analysis(storyboard: dict[str, Any], registry: dict[str, 
             recommendation="Run the material plausible alternatives and show whether the decision or ranking changes; otherwise label the assumption as unresolved.",
         )
 
-    architecture = storyboard.get("editorial_architecture")
-    architecture = architecture if isinstance(architecture, dict) else {}
     source_context = storyboard.get("source_context")
     source_context = source_context if isinstance(source_context, dict) else {}
     source_requirements = source_context.get("requirements")
@@ -1025,13 +1011,9 @@ def _review_storyboard_analysis(storyboard: dict[str, Any], registry: dict[str, 
     requested_archetype = clean_text(
         source_requirements.get("editorial_archetype") or source_requirements.get("report_archetype") or ""
     ).lower().replace("-", "_").replace(" ", "_")
-    path_dependent_requested = requested_archetype in {
+    is_path_dependent = requested_archetype in {
         "path_dependent_forecast", "scenario_path_forecast", "decision_path_forecast",
     }
-    is_path_dependent = (
-        clean_text(architecture.get("archetype") or "").lower() == "path_dependent_forecast"
-        or path_dependent_requested
-    )
     if is_path_dependent and is_predictive:
         if not _review_item_complete(contract.get("decision_path")) and not _has_review_visual(
             storyboard,
@@ -1303,31 +1285,6 @@ def _item_has_evidence_id(item: dict[str, Any]) -> bool:
     return any(clean_text(item.get(key) or "") for key in ("finding_id", "hypothesis_id", "evidence", "ref", "cell_id", "artifact_id"))
 
 
-def _presentation_options(requirements: dict[str, Any]) -> dict[str, str]:
-    """Resolve the report's presentation mode — the only surviving control.
-
-    Every report is handcrafted and authored end to end, so the former layout,
-    insight-evidence, provenance, and data-note controls are gone: the creative
-    author owns those decisions. Callers no longer supply them.
-    """
-    supplied = requirements.get("presentation")
-    supplied = supplied if isinstance(supplied, dict) else {}
-    mode = clean_text(
-        supplied.get("mode")
-        or requirements.get("presentation_mode")
-        or "handcrafted"
-    ).lower().replace("-", "_")
-    if mode not in {"standard", "handcrafted"}:
-        raise ValueError("presentation.mode must be 'standard' or 'handcrafted'")
-    return {"mode": mode}
-
-
-_SELECTION_LINK_KEYS = (
-    "archetype", "category", "segment", "persona", "cluster", "cohort",
-    "type", "team", "entity", "player", "customer", "scenario",
-)
-
-
 def design_report_storyboard(
     *,
     report_goal: str,
@@ -1344,7 +1301,6 @@ def design_report_storyboard(
     analytical result. The author owns the final story, layout, and visuals.
     """
     requirements = copy.deepcopy(requirements or {})
-    presentation = _presentation_options(requirements)
     analysis_contract = requirements.get("analysis_review", {})
     if not isinstance(analysis_contract, dict):
         raise ValueError("requirements.analysis_review must be a dictionary when supplied")
@@ -1435,7 +1391,6 @@ def design_report_storyboard(
         "title": title,
         "report_goal": clean_goal,
         "audience": clean_audience,
-        "presentation": presentation,
         "source_context": {
             "insights": copy.deepcopy(normalized_insights),
             "analyses": copy.deepcopy(normalized_analyses),
@@ -1451,15 +1406,6 @@ def design_report_storyboard(
         "section_plan": section_plan,
     }
     return storyboard
-
-
-_EDITORIAL_DESIGN_STAGES = (
-    "restore_editorial_sequence",
-    "complete_visual_hierarchy",
-    "anchor_visuals_to_local_context",
-    "recheck_evidence_and_explorer_pacing",
-    "audit_page_architecture",
-)
 
 
 def review_storyboard_design(storyboard: dict[str, Any]) -> dict[str, Any]:
@@ -1990,6 +1936,27 @@ def _inferred_advanced_visual(data: dict[str, Any]) -> dict[str, Any] | None:
     return visual
 
 
+# Chart-spec keys whose values name a record column. Used to derive a field
+# allowlist so a promoted standard chart copies only its mapped axes/encodings
+# into the dossier, never every column of the source records.
+_CHART_COLUMN_KEYS = (
+    "x", "x_key", "y", "y_key", "value", "label",
+    "color", "group", "series", "facet", "size",
+    "start", "end", "low", "high", "source", "target", "time", "detail",
+)
+
+
+def _chart_mapped_fields(chart: dict[str, Any], columns: list[str]) -> list[str]:
+    """Return the record columns a chart spec maps, preserving spec order."""
+    column_set = set(columns)
+    mapped: list[str] = []
+    for key in _CHART_COLUMN_KEYS:
+        candidate = clean_text(chart.get(key) or "")
+        if candidate and candidate in column_set:
+            mapped.append(candidate)
+    return list(dict.fromkeys(mapped))
+
+
 def _fold_visual_into_direction(data: dict[str, Any], visual: dict[str, Any]) -> None:
     """Turn an unsupported visual mapping into free-text bespoke visual intent.
 
@@ -2057,6 +2024,26 @@ def _promote_inferred_advanced_visuals(analyses: list[dict[str, Any]]) -> None:
                 normalized_chart = copy.deepcopy(visual)
                 normalized_chart["type"] = chart_type
                 data["chart"] = normalized_chart
+                # Field-level data minimization: a promoted standard chart must
+                # carry an explicit allowlist of only its mapped axes/encodings,
+                # so unmapped (possibly sensitive) columns are never copied into
+                # the dossier. Honor any fields the caller already declared;
+                # otherwise fold the chart's mapped columns. Always set an
+                # explicit list so downstream minimization fails closed rather
+                # than copying every column.
+                records = (
+                    data.get("records") if isinstance(data.get("records"), list)
+                    else data.get("rows")
+                )
+                columns = _columns_from_records(records) if isinstance(records, list) else []
+                declared = (
+                    [clean_text(f) for f in data.get("fields", []) if clean_text(f)]
+                    if isinstance(data.get("fields"), list) else []
+                )
+                mapped = _chart_mapped_fields(normalized_chart, columns)
+                data["fields"] = list(
+                    dict.fromkeys(f for f in (declared + mapped) if f in columns)
+                )
                 data.pop("visual", None)
                 data.pop("visual_spec", None)
                 continue
@@ -2301,9 +2288,29 @@ def _storyboard_section_from_analysis(analysis: dict[str, Any], index: int) -> d
         filters = data.get("filters", data.get("controls"))
         if not filters:
             filters = _infer_filters(records, chart)
+        # Field-level data minimization. When promotion set a field allowlist
+        # (the chart's explicitly mapped axes/encodings plus any caller-declared
+        # fields), the report surfaces a column only if it was explicitly mapped
+        # or declared — the use-or-omit discipline. Auto-inferred filters are
+        # therefore *intersected* with the allowlist, never allowed to expand it:
+        # inference over small datasets otherwise grabs identifier-like columns
+        # (e.g. an ssn with few rows), leaking them into the filters, the table,
+        # and the dossier's aggregate rows. To filter on a categorical column,
+        # map it (color/group/series/facet) or name it in `fields`. With no
+        # allowlist, behavior is unchanged (first columns shown).
+        allow = data.get("fields") if isinstance(data.get("fields"), list) else None
+        if allow is not None:
+            allow_set = set(allow)
+            filters = [
+                f for f in filters
+                if isinstance(f, dict) and clean_text(f.get("key") or "") in allow_set
+            ]
+            default_columns = [c for c in _columns_from_records(records) if c in allow_set]
+        else:
+            default_columns = _columns_from_records(records)[:8]
         section_type = "chart_table_explorer" if data.get("columns") or filters or len(records) > 6 else "filterable_chart"
         data.setdefault("filters", filters)
-        data.setdefault("columns", data.get("columns") or _columns_from_records(records)[:8])
+        data.setdefault("columns", data.get("columns") or default_columns)
         return {
             "section_type": section_type,
             "layout_role": f"analysis_{index + 1}_{section_type}",
@@ -2456,14 +2463,6 @@ def _is_numberish(value: Any) -> bool:
             return False
         return True
     return False
-
-
-QUIET_SECTION_KINDS = {
-    "narrative_band", "insight_grid", "findings", "callout", "text",
-    "explanation", "comparison", "entity_card_grid", "ledger_timeline",
-}
-TRUST_SECTION_KINDS = {"methodology_block", "hypothesis_ledger", "evidence_trace", "evidence_rail", "checklist"}
-EVIDENCE_SURFACE_KINDS = VISUAL_SECTION_KINDS | INTERACTIVE_SECTION_KINDS | {"table"}
 
 
 def _json_for_script(value: Any) -> str:
