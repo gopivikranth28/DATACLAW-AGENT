@@ -19,6 +19,7 @@ from typing import Any
 
 from dataclaw.config.paths import workspaces_dir
 from dataclaw.storage.skill_library import stale_installed_library_skills
+from dataclaw.tool_progress import emit_tool_progress
 from dataclaw_artifacts.validator import (
     AUTHORED_EXTRA_FORBIDDEN_JS,
     ArtifactValidationError,
@@ -1679,6 +1680,8 @@ async def report_design_report(
     if quality_gate not in {"warn", "fail", "off"}:
         raise ValueError("quality_gate must be one of: warn, fail, off")
 
+    emit_tool_progress("preparing", "Preparing report structure and evidence")
+
     if not report_path.endswith(".html"):
         report_path = report_path.rsplit(".", 1)[0] + ".html"
     if not storyboard_path.endswith(".json"):
@@ -1738,6 +1741,7 @@ async def report_design_report(
             f"Failure audit: {audit_path}"
         ) from exc
 
+    emit_tool_progress("validating", "Running report quality and safety checks")
     _require_required_visual_coverage(storyboard)
 
     authoring_dossier_path: Path | None = None
@@ -1815,6 +1819,7 @@ async def report_design_report(
     _ensure_regeneration_recipe(storyboard)
 
     resolved_html = _resolve_path(workspace_id, report_path)
+    emit_tool_progress("writing", "Writing report and audit files")
     resolved_html.parent.mkdir(parents=True, exist_ok=True)
     resolved_html.write_text(doc, encoding="utf-8")
 
@@ -1851,6 +1856,7 @@ async def report_design_report(
     }
     if authoring_dossier_path is not None:
         result["authoring_dossier_path"] = str(authoring_dossier_path)
+    emit_tool_progress("complete", "Report files are ready")
     return result
 
 

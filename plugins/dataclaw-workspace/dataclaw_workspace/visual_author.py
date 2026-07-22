@@ -15,6 +15,9 @@ import copy
 import hashlib
 import json
 import re
+import time
+from contextlib import suppress
+from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Any
 
@@ -25,6 +28,7 @@ from dataclaw_artifacts.validator import (
 )
 from dataclaw.providers.llm.provider import LLMProvider, TextDeltaEvent
 from dataclaw.schema import Message
+from dataclaw.tool_progress import emit_tool_progress
 
 
 VISUAL_AUTHOR_SCHEMA = 1
@@ -878,11 +882,23 @@ def validate_authored_document(html: str, contract: dict[str, Any]) -> dict[str,
         # `expression(` function. These false positives were failing otherwise
         # valid reports that used `scroll-behavior: smooth`.
         "executable CSS": r"(?<![\w-])expression\s*\(|javascript\s*:|(?<![\w-])behavior\s*:|-moz-binding\s*:",
-        "generated claim text": r"\bcontent\s*:",
     }
     for name, pattern in forbidden_css.items():
         if re.search(pattern, styles, re.IGNORECASE):
             raise ValueError(f"authored CSS contains forbidden {name}")
+    # CSS `content:` can paint visible text that is not in the DOM and not
+    # evidence-bound, so a fabricated statistic or claim smuggled through it
+    # ("43% lift") would bypass evidence validation. Guard ONLY that: the
+    # (?<![-\w]) anchor excludes the layout properties justify-content /
+    # align-content / place-content, and the value must be a quoted string
+    # carrying a digit or a multi-word phrase. Decorative and label uses — "",
+    # symbols/icons, single-word labels, counter(), attr(), keywords — are
+    # allowed, as is unquoted content (e.g. library object literals). CSS unicode
+    # escapes (content:"\2192" for an arrow) are stripped first so their hex
+    # digits do not read as a statistic.
+    claim_styles = re.sub(r"\\[0-9a-fA-F]{1,6}\s?", "", styles)
+    if re.search(r"(?<![-\w])content\s*:\s*(['\"])(?=[^'\"]*(?:\d|\w\s+\w))[^'\"]*\1", claim_styles, re.IGNORECASE):
+        raise ValueError("authored CSS contains forbidden generated claim text")
     return {
         "coverage": {
             "used": sorted(parser.source_aliases),
@@ -916,22 +932,69 @@ async def _stream_text(
     max_output_chars: int,
     reasoning_effort: str,
     text_verbosity: str,
+    progress_phase: str,
+    progress_label: str,
+    attempt: int | None = None,
+    max_attempts: int | None = None,
 ) -> str:
     chunks: list[str] = []
     size = 0
-    async with asyncio.timeout(timeout_seconds):
-        async for event in llm.stream_turn(
-            [Message.user(prompt)],
-            system=system,
-            tools=[],
-            reasoning_effort=reasoning_effort,
-            text_verbosity=text_verbosity,
-        ):
-            if isinstance(event, TextDeltaEvent):
-                chunks.append(event.text)
-                size += len(event.text)
-                if size > max_output_chars:
-                    raise ValueError(f"model output exceeded {max_output_chars} characters")
+    last_output_at: str | None = None
+    last_output_monotonic: float | None = None
+    last_emit_monotonic = 0.0
+
+    def progress(activity: str, *, heartbeat: bool = False) -> None:
+        emit_tool_progress(
+            progress_phase,
+            progress_label,
+            activity=activity,
+            attempt=attempt,
+            maxAttempts=max_attempts,
+            outputChars=size,
+            lastOutputAt=last_output_at,
+            heartbeat=heartbeat,
+            timeoutSeconds=timeout_seconds,
+        )
+
+    async def heartbeat() -> None:
+        while True:
+            await asyncio.sleep(5)
+            idle_for = (
+                time.monotonic() - last_output_monotonic
+                if last_output_monotonic is not None
+                else None
+            )
+            progress(
+                "waiting" if idle_for is None or idle_for >= 10 else "receiving",
+                heartbeat=True,
+            )
+
+    progress("waiting")
+    heartbeat_task = asyncio.create_task(heartbeat())
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            async for event in llm.stream_turn(
+                [Message.user(prompt)],
+                system=system,
+                tools=[],
+                reasoning_effort=reasoning_effort,
+                text_verbosity=text_verbosity,
+            ):
+                if isinstance(event, TextDeltaEvent):
+                    chunks.append(event.text)
+                    size += len(event.text)
+                    last_output_monotonic = time.monotonic()
+                    last_output_at = datetime.now(timezone.utc).isoformat()
+                    if last_output_monotonic - last_emit_monotonic >= 1:
+                        progress("receiving")
+                        last_emit_monotonic = last_output_monotonic
+                    if size > max_output_chars:
+                        raise ValueError(f"model output exceeded {max_output_chars} characters")
+    finally:
+        heartbeat_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await heartbeat_task
+    progress("received")
     return "".join(chunks)
 
 
@@ -962,6 +1025,10 @@ Check authored wording and quantitative visuals against the supplied dossier. Fl
         max_output_chars=_CREATIVE_REVIEW_MAX_OUTPUT_CHARS,
         reasoning_effort="medium",
         text_verbosity="low",
+        progress_phase="reviewing",
+        progress_label="Reviewing report evidence",
+        attempt=1,
+        max_attempts=1,
     )
     candidate = _parse_json_object(response)
     status = _clean(candidate.get("status")).lower()
@@ -1037,6 +1104,7 @@ async def _author_creative_document(
     llm: LLMProvider | None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     original = copy.deepcopy(storyboard)
+    emit_tool_progress("preparing", "Preparing the report evidence dossier")
     try:
         dossier, contract = build_creative_author_dossier(original, cfg)
     except Exception as exc:
@@ -1062,7 +1130,14 @@ async def _author_creative_document(
     max_passes = int(cfg.get("max_repair_passes", 0) or 0)
     max_prompt_chars = cfg["max_repair_prompt_chars"]
 
-    async def _generate(prompt_text: str) -> str:
+    async def _generate(
+        prompt_text: str,
+        *,
+        phase: str,
+        label: str,
+        attempt: int,
+        max_attempts: int,
+    ) -> str:
         return await _stream_text(
             llm,
             system=system,
@@ -1071,15 +1146,32 @@ async def _author_creative_document(
             max_output_chars=cfg["max_output_chars"],
             reasoning_effort="medium",
             text_verbosity="high",
+            progress_phase=phase,
+            progress_label=label,
+            attempt=attempt,
+            max_attempts=max_attempts,
         )
 
     try:
-        current = await _generate(prompt)
+        current = await _generate(
+            prompt,
+            phase="drafting",
+            label="Drafting the report document",
+            attempt=1,
+            max_attempts=max_passes + 1,
+        )
         html: str | None = None
         validation: dict[str, Any] | None = None
         evidence_review: dict[str, Any] | None = None
         repair_count = 0
         while True:
+            emit_tool_progress(
+                "validating",
+                "Validating report structure and evidence markers",
+                attempt=repair_count + 1,
+                maxAttempts=max_passes + 1,
+                outputChars=len(current),
+            )
             # Structural validation (parse + required elements + safety). A
             # malformed document (missing/duplicate html/head/body/title/h1,
             # markdown wrapper, truncated output) gets a bounded repair with the
@@ -1109,7 +1201,13 @@ async def _author_creative_document(
                     raise ValueError(
                         f"authored HTML failed structural validation and is too large to repair: {exc}"
                     ) from exc
-                current = await _generate(repair)
+                current = await _generate(
+                    repair,
+                    phase="repairing",
+                    label="Repairing the report document structure",
+                    attempt=repair_count + 1,
+                    max_attempts=max_passes,
+                )
                 repair_count += 1
                 continue
 
@@ -1127,7 +1225,13 @@ async def _author_creative_document(
             repair = _bounded_repair_prompt(dossier, evidence_review["findings"], html, max_chars=max_prompt_chars)
             if repair is None:
                 break
-            current = await _generate(repair)
+            current = await _generate(
+                repair,
+                phase="repairing",
+                label="Repairing evidence and wording",
+                attempt=repair_count + 1,
+                max_attempts=max_passes,
+            )
             repair_count += 1
     except Exception as exc:
         raise VisualAuthorRequiredError(
@@ -1154,6 +1258,7 @@ async def _author_creative_document(
         "repair_count": repair_count,
         "script_count": validation["script_count"],
     })
+    emit_tool_progress("finalizing", "Finalizing the authored report", outputChars=len(html))
     applied["visual_author"] = record
     return applied, record
 

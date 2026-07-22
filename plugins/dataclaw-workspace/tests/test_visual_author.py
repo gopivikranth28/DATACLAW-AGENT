@@ -562,6 +562,30 @@ def test_safe_modern_css_is_not_flagged_as_executable_but_legacy_vectors_are():
         validate_authored_document(unsafe, contract)
 
 
+def test_generated_claim_text_blocks_smuggled_stats_but_allows_decorative_content():
+    dossier, contract = build_creative_author_dossier(_ledger_backed_storyboard())
+
+    # Decorative content: and the justify-content/align-content layout properties
+    # are allowed — they carry no evidence-bearing text.
+    decorative = _authored_html().replace(
+        "body{margin:0",
+        'body{display:flex;justify-content:space-between;align-content:center;margin:0',
+        1,
+    ).replace(
+        "</style>",
+        '.tick::before{content:"\\25b8"}.q::after{content:""}.n::before{content:"Figure " counter(step)}</style>',
+        1,
+    )
+    validate_authored_document(decorative, contract)  # does not raise
+
+    # A fabricated statistic painted through CSS content: is still forbidden.
+    smuggled = _authored_html().replace(
+        "body{margin:0", 'body{margin:0}.k::after{content:"43% lift vs prior"', 1
+    )
+    with pytest.raises(ValueError, match="forbidden generated claim text"):
+        validate_authored_document(smuggled, contract)
+
+
 def test_full_document_validator_preserves_explicitly_required_visual_assets():
     storyboard = design_report_storyboard(
         report_goal="Show the validated comparison.",
