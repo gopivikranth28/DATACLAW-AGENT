@@ -71,7 +71,10 @@ def visual_author_config(requirements: dict[str, Any] | None, override: dict[str
     config["mode"] = "creative"
     config["timeout_seconds"] = _bounded_int(
         config.get("timeout_seconds"),
-        default=240,
+        # Generous by default: this is a ceiling per model call, not a fixed wait,
+        # so a report that finishes early is not penalized, while a large detailed
+        # document streaming ~150k tokens has room to complete its first draft.
+        default=600,
         minimum=1,
         maximum=900,
         field="visual_author.timeout_seconds",
