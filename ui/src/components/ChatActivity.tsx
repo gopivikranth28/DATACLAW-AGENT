@@ -70,17 +70,18 @@ export function groupTranscript(entries: TimelineItem[]): TranscriptBlock[] {
     blocks.push({ kind: 'timeline', entry })
   }
   flush()
-  return keepLatestPublishedReportEvidence(blocks)
+  return keepLatestEvidence(blocks)
 }
 
 /**
- * Publishing the same durable report more than once is common during an
- * agentic turn (retry, quality gate, then final publish).  The transcript
- * should point to the latest version once, rather than stacking identical
- * report readers and their iframes.
+ * Publishing the same report or re-displaying a notebook chart is common
+ * during an agentic run. Keep the latest evidence surface so a captioned
+ * display can replace the raw execution output without rendering the same
+ * chart twice.
  */
-function keepLatestPublishedReportEvidence(blocks: TranscriptBlock[]) {
+function keepLatestEvidence(blocks: TranscriptBlock[]) {
   const seenReportPaths = new Set<string>()
+  const seenChartOutputs = new Set<string>()
   const keptBlocks: TranscriptBlock[] = []
 
   for (let blockIndex = blocks.length - 1; blockIndex >= 0; blockIndex -= 1) {
@@ -96,6 +97,9 @@ function keepLatestPublishedReportEvidence(blocks: TranscriptBlock[]) {
       const reportPath = successfulReportPath(call)
       if (reportPath && seenReportPaths.has(reportPath)) continue
       if (reportPath) seenReportPaths.add(reportPath)
+      const chartOutput = chartEvidenceKey(call)
+      if (chartOutput && seenChartOutputs.has(chartOutput)) continue
+      if (chartOutput) seenChartOutputs.add(chartOutput)
       evidence.push(call)
     }
     block.group.evidence = evidence.reverse()
@@ -103,6 +107,20 @@ function keepLatestPublishedReportEvidence(blocks: TranscriptBlock[]) {
   }
 
   return keptBlocks.reverse()
+}
+
+function chartEvidenceKey(call: ToolCallState) {
+  const toolName = toolBaseName(call.name)
+  if (!['execute_cell', 'execute_code', 'display_cell_output'].includes(toolName)) return ''
+  const data = parse(call.result)
+  if (!Array.isArray(data?.outputs)) return ''
+  const figures = data.outputs
+    .filter((output: any) => output?.type === 'plotly' && output?.figure)
+    .map((output: any) => output.figure.data)
+  if (figures.length === 0) return ''
+  const args = parse(call.args) || {}
+  const cell = data.cell_index ?? args.cell_index ?? ''
+  return `${cell}|${JSON.stringify(figures)}`
 }
 
 export function TurnActivity({ group, sessionId, onFileClick }: {
