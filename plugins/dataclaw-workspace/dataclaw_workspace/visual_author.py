@@ -90,6 +90,18 @@ def visual_author_config(requirements: dict[str, Any] | None, override: dict[str
         maximum=1,
         field="visual_author.max_repair_passes",
     )
+    # Input bound for the one repair pass, which restates the dossier plus the
+    # full authored HTML. Default fits a large-context provider; lower it to match
+    # a smaller context window. The dossier is trimmed to fit; if the HTML and
+    # findings alone exceed it, the repair is skipped and the unresolved evidence
+    # review fails the quality gate closed.
+    config["max_repair_prompt_chars"] = _bounded_int(
+        config.get("max_repair_prompt_chars"),
+        default=700_000,
+        minimum=50_000,
+        maximum=3_000_000,
+        field="visual_author.max_repair_prompt_chars",
+    )
     return config
 
 
@@ -850,6 +862,33 @@ Check authored wording and quantitative visuals against the supplied dossier. Fl
     return {"schema": 1, "status": status, "findings": normalized}
 
 
+def _bounded_repair_prompt(
+    dossier: str,
+    findings: list[dict[str, Any]],
+    html: str,
+    *,
+    max_chars: int,
+) -> str | None:
+    """Build the repair prompt within a bounded input budget.
+
+    The findings and the full authored HTML must be present (the model returns a
+    corrected complete document), so the dossier is what gets trimmed to fit. If
+    the HTML and findings alone exceed the budget, return None: the report is too
+    large to repair on this provider, the caller skips the pass, and the still
+    unresolved evidence review fails the quality gate closed.
+    """
+    findings_block = "\n\n# Required evidence repairs\n\n" + json.dumps(findings, ensure_ascii=False, indent=2)
+    instruction = "\n\nRevise the complete document below. Return the complete corrected HTML only.\n\n"
+    required = findings_block + instruction + html
+    dossier_budget = max_chars - len(required)
+    if dossier_budget <= 0:
+        return None
+    if len(dossier) <= dossier_budget:
+        return dossier + required
+    trimmed = dossier[:dossier_budget].rstrip() + "\n\n[dossier trimmed to fit the repair context]"
+    return trimmed + required
+
+
 async def _author_creative_document(
     storyboard: dict[str, Any],
     *,
@@ -901,33 +940,33 @@ async def _author_creative_document(
         )
         repair_count = 0
         if evidence_review["status"] == "attention_required" and cfg.get("max_repair_passes", 0):
-            repair_prompt = (
-                dossier
-                + "\n\n# Required evidence repairs\n\n"
-                + json.dumps(evidence_review["findings"], ensure_ascii=False, indent=2)
-                + "\n\nRevise the complete document below. Return the complete corrected HTML only.\n\n"
-                + html
+            repair_prompt = _bounded_repair_prompt(
+                dossier,
+                evidence_review["findings"],
+                html,
+                max_chars=cfg["max_repair_prompt_chars"],
             )
-            repaired_response = await _stream_text(
-                llm,
-                system=system,
-                prompt=repair_prompt,
-                timeout_seconds=cfg["timeout_seconds"],
-                max_output_chars=cfg["max_output_chars"],
-                reasoning_effort="medium",
-                text_verbosity="high",
-            )
-            html = _parse_authored_html(repaired_response)
-            validation = validate_authored_document(html, contract)
-            evidence_review = await _review_authored_evidence(
-                llm,
-                dossier=dossier,
-                html=html,
-                validation=validation,
-                contract=contract,
-                timeout_seconds=cfg["timeout_seconds"],
-            )
-            repair_count = 1
+            if repair_prompt is not None:
+                repaired_response = await _stream_text(
+                    llm,
+                    system=system,
+                    prompt=repair_prompt,
+                    timeout_seconds=cfg["timeout_seconds"],
+                    max_output_chars=cfg["max_output_chars"],
+                    reasoning_effort="medium",
+                    text_verbosity="high",
+                )
+                html = _parse_authored_html(repaired_response)
+                validation = validate_authored_document(html, contract)
+                evidence_review = await _review_authored_evidence(
+                    llm,
+                    dossier=dossier,
+                    html=html,
+                    validation=validation,
+                    contract=contract,
+                    timeout_seconds=cfg["timeout_seconds"],
+                )
+                repair_count = 1
     except Exception as exc:
         raise VisualAuthorRequiredError(
             f"{type(exc).__name__}: {exc}", storyboard=original, record=record

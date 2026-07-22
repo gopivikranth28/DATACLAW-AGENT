@@ -315,6 +315,22 @@ def test_lean_storyboard_shape_and_enriched_dossier():
         assert token in dossier, f"dossier missing {token}"
 
 
+def test_repair_prompt_is_bounded_to_the_context_budget():
+    from dataclaw_workspace.visual_author import _bounded_repair_prompt
+
+    findings = [{"issue": "unsupported claim", "recommendation": "cite evidence"}]
+    # Dossier fits: prompt keeps the full dossier.
+    fits = _bounded_repair_prompt("D" * 1_000, findings, "<html></html>", max_chars=700_000)
+    assert fits is not None and fits.startswith("D" * 1_000)
+    # Dossier too large: trimmed to fit, HTML + findings preserved.
+    trimmed = _bounded_repair_prompt("D" * 900_000, findings, "<html></html>", max_chars=100_000)
+    assert trimmed is not None and len(trimmed) <= 100_200
+    assert "dossier trimmed to fit the repair context" in trimmed
+    assert "<html></html>" in trimmed
+    # HTML alone exceeds the budget: skip the repair (fail-closed at the gate).
+    assert _bounded_repair_prompt("D" * 1_000, findings, "H" * 200_000, max_chars=100_000) is None
+
+
 def test_full_document_validator_enforces_source_coverage_evidence_and_safe_javascript():
     dossier, contract = build_creative_author_dossier(_ledger_backed_storyboard())
     assert dossier
