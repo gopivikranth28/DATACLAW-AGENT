@@ -192,20 +192,21 @@ def test_creative_dossier_includes_bounded_aggregate_values_and_complete_ledger(
         "caption": "Supplied aggregate comparison.",
         "interpretation": "The supplied leader changed.",
         "records": [
-            {"team": f"Team {index}", "before": index / 100, "after": (index + 3) / 100}
-            for index in range(75)
+            {"team": f"Team {index}", "before": index / 1000, "after": (index + 3) / 1000}
+            for index in range(250)
         ],
         "visual": {"type": "slopegraph", "label": "team", "start": "before", "end": "after"},
         "evidence": [{"kind": "notebook_cell", "ref": "cell-probability-shift"}],
     }]
 
-    dossier, contract = build_creative_author_dossier(storyboard, {"max_dossier_chars": 180_000})
+    dossier, contract = build_creative_author_dossier(storyboard, {"max_dossier_chars": 300_000})
 
-    assert '"included_row_count": 60' in dossier
-    assert '"row_count": 75' in dossier
+    # Aggregates are bounded (no raw-data dumps) but generously — 200 rows.
+    assert '"included_row_count": 200' in dossier
+    assert '"row_count": 250' in dossier
     assert '"team": "Team 0"' in dossier
-    assert '"team": "Team 59"' in dossier
-    assert '"team": "Team 60"' not in dossier
+    assert '"team": "Team 199"' in dossier
+    assert '"team": "Team 200"' not in dossier
     assert '"type": "slopegraph"' in dossier
     assert "cell-probability-shift" in dossier
     assert {item["alias"] for item in contract["sources"]} == {"src-finding-1", "src-asset-1"}

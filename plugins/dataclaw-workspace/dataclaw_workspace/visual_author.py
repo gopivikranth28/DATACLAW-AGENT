@@ -28,11 +28,15 @@ VISUAL_AUTHOR_SCHEMA = 1
 # Creative authoring bounds. The model writes a report-specific visual system in
 # validated inline CSS; these caps keep the dossier and its embedded aggregates
 # bounded and the authored document self-contained.
-_CREATIVE_MAX_OUTPUT_CHARS = 400_000
-_CREATIVE_MAX_DOSSIER_CHARS = 180_000
-_CREATIVE_MAX_ROWS_PER_ASSET = 60
-_CREATIVE_MAX_COLUMNS_PER_ASSET = 18
-_CREATIVE_MAX_INLINE_JS_CHARS = 30_000
+# Bounds keep the dossier and authored document self-contained and free of raw
+# data dumps; they are deliberately generous so a detailed report can present
+# every finding at full length rather than being forced to summarize.
+_CREATIVE_MAX_OUTPUT_CHARS = 600_000
+_CREATIVE_MAX_DOSSIER_CHARS = 300_000
+_CREATIVE_MAX_ROWS_PER_ASSET = 200
+_CREATIVE_MAX_COLUMNS_PER_ASSET = 24
+_CREATIVE_MAX_INLINE_JS_CHARS = 60_000
+_CREATIVE_MAX_INLINE_SCRIPTS = 8
 _CREATIVE_REVIEW_MAX_OUTPUT_CHARS = 20_000
 
 _AUTHORED_FORBIDDEN_JS: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -382,7 +386,7 @@ def build_creative_author_dossier(
         cfg.get("max_dossier_chars"),
         default=_CREATIVE_MAX_DOSSIER_CHARS,
         minimum=10_000,
-        maximum=300_000,
+        maximum=600_000,
         field="visual_author.max_dossier_chars",
     )
     if len(dossier) > max_chars:
@@ -597,7 +601,7 @@ def validate_authored_document(html: str, contract: dict[str, Any]) -> dict[str,
         raise ValueError("authored HTML requires html/head/body, exactly one title, and exactly one h1")
     if not parser.styles:
         raise ValueError("authored HTML requires original inline CSS")
-    if parser.script_count > 3 or parser.script_chars > _CREATIVE_MAX_INLINE_JS_CHARS:
+    if parser.script_count > _CREATIVE_MAX_INLINE_SCRIPTS or parser.script_chars > _CREATIVE_MAX_INLINE_JS_CHARS:
         raise ValueError("authored inline JavaScript exceeds the safe script budget")
     if len(parser.coverage_payloads) != 1:
         raise ValueError("authored HTML requires exactly one data-dc-author-coverage script")

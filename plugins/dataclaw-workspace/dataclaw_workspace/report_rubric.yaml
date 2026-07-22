@@ -1,18 +1,16 @@
 # Dataclaw report rubric — the canonical machine-readable definition of what a
-# good dataclaw report is (docs/report-builder-architecture.md, Appendix A).
+# good dataclaw report is.
 #
-# Three consumers read this file:
-#   - the generator/designer (criteria as instructions)
-#   - the self-critique loop (criteria as scores + remediations)
+# Two consumers read this file:
 #   - the quality gate analyze_report_quality (criteria as assertions)
+#   - tests, which assert the gate and this file stay in lockstep
 #
 # status semantics:
 #   live     — enforced by the gate today, at exactly this severity
 #   deferred — target standard; never scored until its mechanism ships
 #              (since_version names the unlock where known)
-# Per A.10, a deferred criterion enters as `warn` for one version before any
-# promotion to `fail`, except a versioned criterion that closes a material
-# publish-gate bypass. rubric_version bumps on any criteria/threshold change.
+# A deferred criterion enters as `warn` for one version before any promotion to
+# `fail`. rubric_version bumps on any criteria/threshold change.
 
 rubric_version: 14
 

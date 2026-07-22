@@ -478,16 +478,16 @@ def test_critique_requires_a_path_visual_for_a_customer_journey_forecast():
 
 def test_critique_keeps_path_language_as_advisory_without_an_explicit_contract():
     storyboard = report_renderer.design_report_storyboard(
-        report_goal="Forecast the remaining World Cup knockout matches and champion probabilities.",
+        report_goal="Forecast the remaining stages of the onboarding funnel and conversion probabilities.",
         insights=[{
-            "title": "Spain lead the title projection",
-            "detail": "Spain have a 28% chance to win the tournament from an inferred quarter-final pairing.",
+            "title": "Enterprise accounts lead the conversion projection",
+            "detail": "Enterprise accounts have a 28% projected conversion from an inferred mid-funnel stage.",
             "evidence": [{"kind": "notebook_cell", "ref": "cell-projection"}],
         }],
         analyses=[{
-            "title": "Champion probabilities",
-            "figure": {"data": [{"type": "bar", "x": ["Spain"], "y": [0.28]}]},
-            "interpretation": "Spain lead the projected title odds.",
+            "title": "Conversion probabilities",
+            "figure": {"data": [{"type": "bar", "x": ["Enterprise"], "y": [0.28]}]},
+            "interpretation": "Enterprise accounts lead the projected conversion odds.",
         }],
         requirements={},
     )

@@ -837,9 +837,9 @@ _PREDICTIVE_REVIEW_TERMS = (
     "predict ",
     "projected",
     "projection",
-    "win probability",
-    "advance probability",
-    "champion odds",
+    "probability",
+    "likelihood",
+    "odds",
 )
 _BASELINE_REVIEW_TERMS = (
     "baseline",
@@ -889,21 +889,13 @@ _PATH_DEPENDENT_REVIEW_TERMS = (
     "pathway",
     "incident chain",
     "staged launch",
-    # Sports remains one concrete path-dependent domain; these cues do not
-    # define the architecture, they merely preserve useful automatic review.
-    "tournament",
-    "knockout",
-    "quarter-final",
-    "quarterfinal",
-    "semi-final",
-    "semifinal",
+    "elimination",
+    "progression",
 )
 _DECISION_PATH_REVIEW_TERMS = _PATH_DEPENDENT_REVIEW_TERMS
 _DISCRETE_OUTCOME_REVIEW_TERMS = (
-    "match",
-    "goal",
-    "tie",
-    "scoreline",
+    "outcome",
+    "state",
     "branch",
     "stage",
     "handoff",
@@ -1018,8 +1010,6 @@ def _review_storyboard_analysis(storyboard: dict[str, Any], registry: dict[str, 
     ).lower().replace("-", "_").replace(" ", "_")
     path_dependent_requested = requested_archetype in {
         "path_dependent_forecast", "scenario_path_forecast", "decision_path_forecast",
-        # Backwards-compatible aliases for callers that used the original name.
-        "forecast_knockout", "tournament_forecast",
     }
     is_path_dependent = (
         clean_text(architecture.get("archetype") or "").lower() == "path_dependent_forecast"
@@ -1040,7 +1030,7 @@ def _review_storyboard_analysis(storyboard: dict[str, Any], registry: dict[str, 
             )
         if _contains_any(text, _DISCRETE_OUTCOME_REVIEW_TERMS) and not _review_item_complete(contract.get("outcome_distribution")) and not _has_review_visual(
             storyboard,
-            roles={"outcome_distribution", "final_scorelines"},
+            roles={"outcome_distribution", "outcome_states"},
             terms=_OUTCOME_DISTRIBUTION_REVIEW_TERMS,
         ):
             add(
@@ -1048,7 +1038,7 @@ def _review_storyboard_analysis(storyboard: dict[str, Any], registry: dict[str, 
                 category="presentation",
                 severity="info",
                 claim="The forecast discusses discrete outcome states without a declared outcome-distribution view.",
-                recommendation="Show the most likely states, branches, scorelines, or a compact distribution for the decision-relevant stages.",
+                recommendation="Show the most likely states, branches, or a compact distribution for the decision-relevant stages.",
             )
     elif (
         is_predictive
