@@ -40,7 +40,6 @@ def test_structured_eda_skill_is_bundled_and_parseable():
     assert "report_design_report" in body
     assert "report_publish" in body
     assert "requirements.evidence_registry.targets" in body
-    assert "preserved_low_confidence" in body
     assert "Do not treat appended report cells as the final EDA report" in body
     assert "grain, population, units, denominator" in body
     assert "Do not prescribe chart types, KPI counts, components" in body

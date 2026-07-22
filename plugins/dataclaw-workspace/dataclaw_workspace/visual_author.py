@@ -31,10 +31,8 @@ VISUAL_AUTHOR_SCHEMA = 1
 
 # Creative authoring bounds. The model writes a report-specific visual system in
 # validated inline CSS; these caps keep the dossier and its embedded aggregates
-# bounded and the authored document self-contained.
-# Bounds keep the dossier and authored document self-contained and free of raw
-# data dumps; they are deliberately generous so a detailed report can present
-# every finding at full length rather than being forced to summarize.
+# self-contained and free of raw-data dumps, while staying generous enough that a
+# detailed report can present every finding at full length rather than summarize.
 _CREATIVE_MAX_OUTPUT_CHARS = 600_000
 _CREATIVE_MAX_DOSSIER_CHARS = 300_000
 _CREATIVE_MAX_ROWS_PER_ASSET = 200
@@ -42,6 +40,7 @@ _CREATIVE_MAX_COLUMNS_PER_ASSET = 24
 _CREATIVE_MAX_INLINE_JS_CHARS = 60_000
 _CREATIVE_MAX_INLINE_SCRIPTS = 8
 _CREATIVE_REVIEW_MAX_OUTPUT_CHARS = 20_000
+
 
 class VisualAuthorRequiredError(ValueError):
     """A required visual-author run failed after producing an audit record."""
@@ -133,15 +132,26 @@ def _prompt_value(value: Any, *, depth: int = 0) -> Any:
     return _prompt_text(value, 500)
 
 
-def _bounded_aggregate_rows(value: Any) -> dict[str, Any]:
+def _bounded_aggregate_rows(value: Any, fields: Any = None) -> dict[str, Any]:
+    """Project bounded aggregate rows for the dossier.
+
+    When ``fields`` is supplied it is an allowlist: only those columns are
+    copied, so unmapped (possibly sensitive) columns are never exposed. This is
+    the data-minimization contract for bespoke visuals, matching what governed
+    advanced visuals already do by projecting only their mapped fields.
+    """
     rows = value if isinstance(value, list) else []
+    allow = [_clean(field) for field in fields if _clean(field)] if isinstance(fields, list) else []
     projected: list[dict[str, Any]] = []
     columns: list[str] = []
     for row in rows[:_CREATIVE_MAX_ROWS_PER_ASSET]:
         if not isinstance(row, dict):
             continue
         if not columns:
-            columns = [_clean(key) for key in list(row)[:_CREATIVE_MAX_COLUMNS_PER_ASSET] if _clean(key)]
+            if allow:
+                columns = [key for key in allow if key in row][:_CREATIVE_MAX_COLUMNS_PER_ASSET]
+            else:
+                columns = [_clean(key) for key in list(row)[:_CREATIVE_MAX_COLUMNS_PER_ASSET] if _clean(key)]
         projected.append({key: _prompt_value(row.get(key)) for key in columns})
     return {
         "row_count": len(rows),
@@ -303,7 +313,10 @@ def build_creative_author_dossier(
             ),
             "visual_medium": _clean(material.get("medium") or material.get("visual_medium")).lower(),
             "visual_mapping": _prompt_value(visual),
-            "aggregate_data": _bounded_aggregate_rows(rows_value) if rows_value else {},
+            "aggregate_data": _bounded_aggregate_rows(
+                rows_value,
+                material.get("fields") or material.get("field_bindings"),
+            ) if rows_value else {},
             "plotly_summary": _plotly_payload(material.get("figure_json") or material.get("figure")),
             "required_visual": bool(material.get("required_visual", False)),
             "evidence_aliases": evidence_aliases,
@@ -942,5 +955,3 @@ def _prompt_text(value: Any, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[: max(1, max_chars - 1)].rstrip() + "…"
-
-

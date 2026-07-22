@@ -2280,7 +2280,7 @@ def _fold_visual_into_direction(data: dict[str, Any], visual: dict[str, Any]) ->
         parts.append(note)
     hint_fields = {
         key: value for key, value in visual.items()
-        if key not in {"type", "description", "note", "caption"}
+        if key not in {"type", "description", "note", "caption", "medium"}
     }
     if hint_fields:
         parts.append("Suggested encodings: " + json.dumps(hint_fields, ensure_ascii=False, default=str)[:600])
@@ -2289,19 +2289,37 @@ def _fold_visual_into_direction(data: dict[str, Any], visual: dict[str, Any]) ->
         data["medium"] = medium
     data["visual_direction"] = " ".join(part for part in parts if part).strip()
 
+    # Field-level data minimization: the discarded mapping named specific record
+    # columns. Keep only those (plus any explicitly declared fields) so unmapped
+    # columns — which may be sensitive — are never copied into the dossier. A
+    # governed advanced visual projects mapped fields; the bespoke path must too.
+    records = data.get("records") if isinstance(data.get("records"), list) else data.get("rows")
+    columns = _columns_from_records(records) if isinstance(records, list) else []
+    declared = [clean_text(f) for f in data.get("fields", []) if clean_text(f)] if isinstance(data.get("fields"), list) else []
+    mapped = [
+        clean_text(value)
+        for key, value in hint_fields.items()
+        if isinstance(value, str) and clean_text(value) in columns
+    ]
+    allow = list(dict.fromkeys([f for f in (declared + mapped) if f in columns]))
+    if allow:
+        data["fields"] = allow
+
 
 def _promote_inferred_advanced_visuals(analyses: list[dict[str, Any]]) -> None:
     """Normalize familiar charts and promote unambiguous bespoke visuals."""
     for index, analysis in enumerate(analyses):
         explicit = clean_text(analysis.get("section_type") or analysis.get("kind") or "")
-        if explicit:
+        # Untyped assets and assets explicitly typed as advanced_visual are both
+        # candidates; any other explicit section type is left untouched.
+        if explicit and explicit != "advanced_visual":
             continue
         data = analysis.get("data") if isinstance(analysis.get("data"), dict) else analysis
         visual = data.get("visual", data.get("visual_spec"))
         if isinstance(visual, dict):
             visual_type = clean_text(visual.get("type") or "").lower().replace("-", "_")
             chart_type = STANDARD_CHART_TYPE_ALIASES.get(visual_type)
-            if chart_type:
+            if chart_type and not explicit:
                 normalized_chart = copy.deepcopy(visual)
                 normalized_chart["type"] = chart_type
                 data["chart"] = normalized_chart
@@ -2311,17 +2329,30 @@ def _promote_inferred_advanced_visuals(analyses: list[dict[str, Any]]) -> None:
             if not visual_type or visual_type in ADVANCED_VISUAL_FIELDS:
                 # A blank or governed visual type keeps the deterministic
                 # advanced-visual contract, which the artifact layer validates.
-                promoted = copy.deepcopy(analysis)
-                promoted["section_type"] = "advanced_visual"
-                analyses[index] = promoted
+                if not explicit:
+                    promoted = copy.deepcopy(analysis)
+                    promoted["section_type"] = "advanced_visual"
+                    analyses[index] = promoted
                 continue
             # An unrecognized visual type is a request for a bespoke visual, not
-            # an error. Fold it into free-text visual_direction so the creative
-            # author builds a custom SVG/Canvas/HTML visual from the same bounded
-            # data, instead of failing the closed advanced-visual validator.
+            # an error — whether it arrived untyped or already typed as an
+            # advanced_visual. Fold it into free-text visual_direction (with a
+            # field allowlist) and drop the governed typing so the creative
+            # author builds a custom visual instead of hitting the closed
+            # advanced-visual validator.
             _fold_visual_into_direction(data, visual)
             data.pop("visual", None)
             data.pop("visual_spec", None)
+            if explicit == "advanced_visual":
+                analysis.pop("section_type", None)
+                analysis.pop("kind", None)
+                if isinstance(analysis.get("data"), dict):
+                    analysis["data"].pop("section_type", None)
+                    analysis["data"].pop("kind", None)
+            continue
+        if explicit:
+            # Explicit advanced_visual with no visual mapping: leave it for the
+            # governed validator, which projects only the mapped fields.
             continue
         inferred = _inferred_advanced_visual(data)
         if inferred is None:
@@ -2855,5 +2886,3 @@ def _item_detail(item: dict[str, Any]) -> str:
         or item.get("body")
         or ""
     )
-
-

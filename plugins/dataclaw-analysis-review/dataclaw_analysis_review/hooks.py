@@ -125,8 +125,10 @@ async def surface_unreviewed_publish_hook(state: AgentState) -> AgentState:
             continue
         result = _parse_payload(tool_result.get("result", tool_result.get("content")))
         # publish_artifact identifies the publish by artifact_id; report_publish
-        # (workspace) identifies it by the published report path.
-        published_ref = str(result.get("artifact_id") or result.get("report_path") or "")
+        # (workspace) identifies it by the published report path (html_path).
+        published_ref = str(
+            result.get("artifact_id") or result.get("html_path") or result.get("report_path") or ""
+        )
         if not published_ref or result.get("success") is False or result.get("published") is False:
             continue
         blockers = _unaccepted_required_findings(session_id)

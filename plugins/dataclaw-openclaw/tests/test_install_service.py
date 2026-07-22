@@ -99,7 +99,7 @@ def test_report_tool_manifest_requires_the_governed_publish_parameters() -> None
         {"name": "publish_artifact", "parameters": {"type": "object", "properties": {}}},
     ])
 
-    assert "report_design_report missing properties: design_passes, presentation_mode, visual_author" in issues
+    assert "report_design_report missing properties: design_passes, visual_author" in issues
     assert "report_publish missing properties: require_visual_review" in issues
     assert "publish_artifact missing properties: report_receipt_path" in issues
     assert "report_publish is present but report_review_visuals is unavailable" in issues

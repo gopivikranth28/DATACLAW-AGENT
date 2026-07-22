@@ -40,7 +40,10 @@ router = APIRouter()
 agent_router = APIRouter()
 
 APP_CELL_OUTPUT_TOOLS = {"execute_cell", "display_cell_output", "execute_code"}
-APP_REPORT_TOOLS = {"build_report", "report_design_report", "report_add_section", "report_publish"}
+# report_design_report and report_publish are the active report tools; build_report
+# and report_add_section were removed but are kept here so reports produced by those
+# tools in older sessions still resolve to a report artifact on reload.
+APP_REPORT_TOOLS = {"report_design_report", "report_publish", "build_report", "report_add_section"}
 
 
 def _max_turns_notice(max_turns: int) -> str:

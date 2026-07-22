@@ -1332,6 +1332,15 @@ async def report_publish(
         raise ValueError(
             "Report publish integrity gate failed: the HTML does not match the storyboard's rendered output; redesign or rebuild the report before publishing."
         )
+    # Re-run artifact-safety validation under the current policy. A report authored
+    # under an older policy, or a hand-edited report/storyboard pair, must not
+    # receive a publish receipt for HTML the current validator would reject.
+    try:
+        validate_and_prepare_html(strip_dataclaw_runtime_scripts(doc), session_id=workspace_id)
+    except ArtifactValidationError as exc:
+        raise ValueError(
+            f"Report publish artifact-safety gate failed: {exc.code}: {exc}"
+        ) from exc
     expected_contract_hash = str(storyboard.get("analysis_contract_sha256") or "").strip().lower()
     actual_contract_hash = _stable_json_sha256(storyboard.get("analysis_contract", {}))
     if not expected_contract_hash:

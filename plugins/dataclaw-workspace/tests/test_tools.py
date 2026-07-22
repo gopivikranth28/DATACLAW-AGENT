@@ -721,4 +721,3 @@ async def test_runtime_smoke_emits_passing_semantic_review_for_a_designed_report
         assert semantic["visual_semantic_schema"] == 1
         assert semantic["status"] == "pass"
         assert semantic["findings"] == []
-

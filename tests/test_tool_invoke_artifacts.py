@@ -90,37 +90,6 @@ def test_direct_tool_invoke_applies_artifact_context_hooks(tmp_path, monkeypatch
         assert "window.Plotly" in exported.text or "Plotly.register" in exported.text
 
 
-def test_direct_report_section_logs_living_report_event(tmp_path, monkeypatch):
-    monkeypatch.setattr(paths, "DATACLAW_HOME", tmp_path)
-
-    with TestClient(create_app()) as client:
-        response = client.post("/api/tools/report_add_section/invoke", json={
-            "session_id": "section-session",
-            "params": {
-                "section_type": "findings",
-                "report_path": "reports/live.html",
-                "data": {
-                    "title": "Key findings",
-                    "items": [{
-                        "title": "Value follows consistency",
-                        "detail": "Consistency dominates raw volume.",
-                    }],
-                },
-            },
-        })
-
-        assert response.status_code == 200
-        result = response.json()["result"]
-        assert result["updated"] is True
-
-        listed = client.get("/api/artifacts", params={"session_id": "section-session"}).json()
-        living = listed["artifacts"][0]
-        events = read_manifest_events(living["artifact_id"])
-        assert events[0]["kind"] == "report_section"
-        assert events[0]["payload"]["section_type"] == "findings"
-        assert events[0]["payload"]["title"] == "Key findings"
-
-
 def test_openclaw_tool_proxy_runs_artifact_post_hooks(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "DATACLAW_HOME", tmp_path)
 

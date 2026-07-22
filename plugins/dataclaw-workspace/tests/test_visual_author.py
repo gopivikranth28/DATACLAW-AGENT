@@ -539,3 +539,87 @@ async def test_full_document_authored_report_survives_publication_revalidation(c
     assert published["quality"]["status"] in {"pass", "warn"}
     receipt = json.loads(Path(published["receipt_path"]).read_text(encoding="utf-8"))
     assert designed["html_sha256"] == receipt["html_sha256"]
+
+
+@pytest.mark.asyncio
+async def test_report_publish_reruns_artifact_safety_on_the_stored_html(cfg, tmp_path, monkeypatch):
+    """A hash-consistent report/storyboard pair with a remote asset must not publish.
+
+    Simulates a report authored under an older policy (or a jointly edited
+    report/storyboard pair): the stored HTML embeds a remote asset and the
+    storyboard hash matches it, so the integrity gate passes — but publication
+    must re-run artifact-safety under the current policy and fail closed.
+    """
+    import hashlib as _hashlib
+
+    import dataclaw.config.paths as paths
+
+    monkeypatch.setattr(paths, "DATACLAW_HOME", tmp_path)
+    await report_design_report(
+        cfg=cfg,
+        llm=_JSONLLM((_authored_html(title="Older-policy report"), {"status": "pass", "findings": []})),
+        report_goal="Publish an older-policy report.",
+        report_path="reports/legacy.html",
+        storyboard_path="reports/legacy.storyboard.json",
+        quality_gate="warn",
+        insights=[{"finding_id": "f-legacy", "title": "Finding", "detail": "Ready to publish."}],
+    )
+
+    html_path = tmp_path / "workspaces" / "default" / "reports" / "legacy.html"
+    storyboard_path = tmp_path / "workspaces" / "default" / "reports" / "legacy.storyboard.json"
+    tampered = html_path.read_text(encoding="utf-8").replace(
+        "</body>", '<img src="https://evil.example/x.png"></body>'
+    )
+    html_path.write_text(tampered, encoding="utf-8")
+    storyboard = json.loads(storyboard_path.read_text(encoding="utf-8"))
+    # Re-sign the hash so the integrity gate passes and the safety gate is reached.
+    storyboard["rendered_html_sha256"] = _hashlib.sha256(tampered.encode("utf-8")).hexdigest()
+    storyboard_path.write_text(json.dumps(storyboard), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="artifact-safety gate failed"):
+        await report_publish(
+            cfg=cfg,
+            report_path="reports/legacy.html",
+            storyboard_path="reports/legacy.storyboard.json",
+            export_docx=False,
+        )
+
+
+def test_bespoke_fold_minimizes_unmapped_columns_and_handles_explicit_advanced_visual():
+    """Folding an unsupported visual must project only mapped columns (no PII leak)
+    and must work whether the asset is untyped or explicitly typed advanced_visual."""
+    from dataclaw_workspace.report_renderer import design_report_storyboard
+
+    reqs = {"evidence_registry": {"targets": [{"id": "ev-1", "kind": "notebook_cell"}]}}
+    insights = [{"finding_id": "f1", "title": "T", "detail": "D",
+                 "evidence": [{"kind": "notebook_cell", "ref": "ev-1"}]}]
+    records = [
+        {"label": f"seg{i}", "value": i, "private_email": True, "contact": "secret@example.com"}
+        for i in range(4)
+    ]
+
+    def dossier_for(analysis):
+        sb = design_report_storyboard(report_goal="G", insights=insights, analyses=[analysis],
+                                      title="R", requirements=reqs, max_design_passes=1)
+        sb["evidence_registry"] = build_evidence_registry(sb)
+        text, _ = build_creative_author_dossier(sb, {"mode": "creative"})
+        return text
+
+    implicit = dossier_for({
+        "title": "Waffle", "caption": "c", "interpretation": "i", "records": records,
+        "visual": {"type": "waffle", "label": "label", "value": "value"},
+        "evidence": [{"kind": "notebook_cell", "ref": "ev-1"}],
+    })
+    assert "waffle" in implicit                       # folded to bespoke direction
+    assert "secret@example.com" not in implicit       # unmapped PII column dropped
+    assert "private_email" not in implicit
+
+    explicit = dossier_for({
+        "section_type": "advanced_visual", "title": "Waffle2", "caption": "c",
+        "interpretation": "i", "records": records,
+        "visual": {"type": "waffle", "label": "label", "value": "value"},
+        "evidence": [{"kind": "notebook_cell", "ref": "ev-1"}],
+    })
+    assert "waffle" in explicit                        # explicit advanced_visual also folds (no crash)
+    assert "secret@example.com" not in explicit
+    assert "private_email" not in explicit
