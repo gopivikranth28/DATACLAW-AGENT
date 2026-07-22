@@ -168,6 +168,40 @@ def test_gate_rejects_report_without_typed_section_metadata():
     assert "unstructured_report" in {warning["code"] for warning in quality["warnings"]}
 
 
+def test_mismatched_advanced_visual_binding_fails_closed():
+    """A governed advanced visual whose claim binds to no supplied finding must
+    fail closed at design — it cannot silently mint or replace a claim."""
+    with pytest.raises(ValueError, match="bind to exactly one supplied finding"):
+        report_renderer.design_report_storyboard(
+            report_goal="Explain the movement.",
+            insights=[
+                {"finding_id": "find-1", "title": "First", "detail": "a"},
+                {"finding_id": "find-2", "title": "Second", "detail": "b"},
+            ],
+            analyses=[{
+                "section_type": "advanced_visual",
+                "title": "Shift", "caption": "c", "interpretation": "The leader changed.",
+                "claim_source_id": "find-does-not-exist",
+                "records": [{"team": "x", "before": 0.1, "after": 0.2}],
+                "visual": {"type": "slopegraph", "label": "team", "start": "before", "end": "after"},
+            }],
+        )
+
+
+def test_gate_only_emits_live_criteria_never_deferred():
+    """The gate must never emit a deferred (or otherwise non-live) criterion."""
+    quality = report_renderer.analyze_report_quality("<html><body><h1>Raw</h1></body></html>")
+    assert quality["warnings"], "expected the raw-document gate to produce warnings"
+    criteria = rubric_criteria()
+    live = set(live_criterion_ids())
+    for warning in quality["warnings"]:
+        assert warning["code"] in criteria
+        assert criteria[warning["code"]]["status"] == "live"
+        assert warning["code"] in live
+    # export_fidelity is deferred and must not appear.
+    assert "export_fidelity" not in {warning["code"] for warning in quality["warnings"]}
+
+
 def test_gate_credits_authored_disclosure_markers():
     """An authored report marks required disclosures with data-dc-disclosure; the
     quality gate must credit them instead of always reporting them missing."""
