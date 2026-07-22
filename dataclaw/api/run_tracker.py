@@ -11,6 +11,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,10 @@ logger = logging.getLogger(__name__)
 # How long to keep finished runs for reconnection (seconds)
 _FINISHED_RUN_TTL = 600  # 10 minutes
 _MAX_EVENTS = 10_000
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 @dataclass
@@ -30,6 +35,10 @@ class RunState:
     queued_messages: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
     task: asyncio.Task[Any] | None = None
     finished_at: float | None = None
+    started_at: str = field(default_factory=_now_iso)
+    last_event_at: str = field(default_factory=_now_iso)
+    last_progress_at: str | None = None
+    active_tool: dict[str, Any] | None = None
     _waiters: list[asyncio.Event] = field(default_factory=list)
     _completion: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -39,6 +48,7 @@ class RunState:
 
     def append_event(self, event_str: str) -> int:
         """Append an event, notify all waiters, return cursor."""
+        self.last_event_at = _now_iso()
         self.cursor += 1
         self.events.append((self.cursor, event_str))
         # Cap event log size
@@ -101,6 +111,51 @@ class RunTracker:
             return -1
         return run.append_event(event_str)
 
+    def start_tool(self, thread_id: str, call_id: str, name: str) -> None:
+        """Record the currently executing tool for health/status reporting."""
+        run = self._runs.get(thread_id)
+        if run is None:
+            return
+        now = _now_iso()
+        run.last_progress_at = now
+        run.active_tool = {
+            "toolCallId": call_id,
+            "toolName": name,
+            "phase": "starting",
+            "label": f"Starting {name}",
+            "startedAt": now,
+            "updatedAt": now,
+        }
+
+    def update_tool_progress(
+        self,
+        thread_id: str,
+        call_id: str,
+        progress: dict[str, Any],
+    ) -> None:
+        """Update the active tool's health metadata without storing output."""
+        run = self._runs.get(thread_id)
+        if run is None:
+            return
+        now = _now_iso()
+        run.last_progress_at = now
+        if run.active_tool is None or run.active_tool.get("toolCallId") != call_id:
+            run.active_tool = {
+                "toolCallId": call_id,
+                "toolName": str(progress.get("toolName") or "unknown"),
+                "startedAt": now,
+            }
+        run.active_tool.update(progress)
+        run.active_tool["updatedAt"] = now
+
+    def finish_tool(self, thread_id: str, call_id: str) -> None:
+        run = self._runs.get(thread_id)
+        if run is None or run.active_tool is None:
+            return
+        if run.active_tool.get("toolCallId") == call_id:
+            run.last_progress_at = _now_iso()
+            run.active_tool = None
+
     def finish_run(self, thread_id: str, status: Literal["finished", "error"] = "finished") -> None:
         """Mark a run as finished. Starts the TTL countdown for cleanup."""
         run = self._runs.get(thread_id)
@@ -108,6 +163,7 @@ class RunTracker:
             return
         run.status = status
         run.finished_at = time.monotonic()
+        run.active_tool = None
         run._completion.set()
         # Wake up all tailers so they see the run is done
         for w in run._waiters:

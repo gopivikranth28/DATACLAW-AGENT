@@ -9,6 +9,7 @@ import re
 import pytest
 
 from dataclaw.providers.llm.provider import TextDeltaEvent, TurnCompleteEvent
+from dataclaw.tool_progress import tool_progress_context
 from dataclaw_workspace import tools as workspace_tools
 from dataclaw_workspace.config import WorkspaceConfig
 from dataclaw_workspace.report_renderer import (
@@ -113,6 +114,25 @@ def _authored_html(*, title: str = "Customer intervention brief", claim: str | N
   <script type="application/json" data-dc-author-coverage>{{"omitted":[]}}</script>
 </body>
 </html>'''
+
+
+@pytest.mark.asyncio
+async def test_creative_author_emits_real_phase_and_output_progress():
+    updates: list[dict] = []
+    llm = _JSONLLM((_authored_html(), {"status": "pass", "findings": []}))
+
+    with tool_progress_context(updates.append):
+        await author_report_visuals(_ledger_backed_storyboard(), llm=llm)
+
+    phases = [update["phase"] for update in updates]
+    assert phases[0] == "preparing"
+    assert "drafting" in phases
+    assert "validating" in phases
+    assert "reviewing" in phases
+    assert phases[-1] == "finalizing"
+    drafting = [update for update in updates if update["phase"] == "drafting"]
+    assert any(update.get("activity") == "receiving" for update in drafting)
+    assert max(update.get("outputChars", 0) for update in drafting) > 0
 
 
 @pytest.mark.asyncio

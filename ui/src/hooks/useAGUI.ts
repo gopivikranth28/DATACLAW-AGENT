@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { Subscription } from 'rxjs'
 import {
   runHttpRequest,
@@ -61,6 +61,39 @@ export interface ToolCallState {
   finishedAt?: number
   subagent?: SubagentProgress | null
   conversationId?: string
+  progress?: ToolProgress
+}
+
+export interface ToolProgress {
+  phase: string
+  label: string
+  activity?: 'waiting' | 'receiving' | 'received' | string
+  attempt?: number
+  maxAttempts?: number
+  elapsedMs?: number
+  outputChars?: number
+  lastOutputAt?: string
+  emittedAt?: string
+  heartbeat?: boolean
+  timeoutSeconds?: number
+  startedAt?: string
+}
+
+export interface RunHealth {
+  running: boolean
+  status: 'running' | 'finished' | 'error' | 'unknown'
+  healthy: boolean
+  task_status: 'running' | 'done' | 'cancelled' | 'unknown'
+  run_id?: string
+  cursor?: number
+  started_at?: string
+  last_event_at?: string
+  last_progress_at?: string | null
+  last_output_at?: string | null
+  active_tool?: Record<string, unknown> | null
+  server_time?: string
+  reachable: boolean
+  checkedAt: number
 }
 
 export interface GuardrailState {
@@ -85,8 +118,10 @@ interface AGUIState {
   toolCalls: ToolCallState[]
   guardrails: GuardrailState[]
   isRunning: boolean
+  isStopping: boolean
   error: string | null
   reconnecting: boolean
+  runHealth: RunHealth | null
 }
 
 /**
@@ -196,11 +231,14 @@ export function useAGUI(options?: { onRunFinished?: () => void }) {
     toolCalls: [],
     guardrails: [],
     isRunning: false,
+    isStopping: false,
     error: null,
     reconnecting: false,
+    runHealth: null,
   })
   const orderRef = useRef(0)
   const subRef = useRef<Subscription | null>(null)
+  const threadIdRef = useRef<string | null>(null)
   // Skip replacing messages on the next snapshot (we already have the optimistic user message)
   // but still update orderRef so subsequent events get correct ordering
   const skipSnapshotRef = useRef(false)
@@ -326,13 +364,13 @@ export function useAGUI(options?: { onRunFinished?: () => void }) {
             // Defer to next tick so state has settled before auto-continue triggers
             setTimeout(() => options?.onRunFinished?.(), 0)
           }
-          return { ...prev, isRunning: false, reconnecting: false }
+          return { ...prev, isRunning: false, isStopping: false, reconnecting: false, runHealth: null }
         })
         break
 
       case EventType.RUN_ERROR: {
         const e = event as RunErrorEvent
-        setState(prev => ({ ...prev, isRunning: false, reconnecting: false, error: e.message || 'Unknown error' }))
+        setState(prev => ({ ...prev, isRunning: false, isStopping: false, reconnecting: false, runHealth: null, error: e.message || 'Unknown error' }))
         break
       }
 
@@ -342,6 +380,38 @@ export function useAGUI(options?: { onRunFinished?: () => void }) {
         const name = (e as any).name as string | undefined
         const value = (e as any).value as any
         if (!name) break
+
+        if (name === 'tool:progress') {
+          const toolCallId = String(value?.toolCallId || '')
+          if (!toolCallId) break
+          const progress: ToolProgress = {
+            phase: String(value?.phase || 'working'),
+            label: String(value?.label || 'Working'),
+            activity: value?.activity,
+            attempt: typeof value?.attempt === 'number' ? value.attempt : undefined,
+            maxAttempts: typeof value?.maxAttempts === 'number' ? value.maxAttempts : undefined,
+            elapsedMs: typeof value?.elapsedMs === 'number' ? value.elapsedMs : undefined,
+            outputChars: typeof value?.outputChars === 'number' ? value.outputChars : undefined,
+            lastOutputAt: value?.lastOutputAt,
+            emittedAt: value?.emittedAt,
+            heartbeat: Boolean(value?.heartbeat),
+            timeoutSeconds: typeof value?.timeoutSeconds === 'number' ? value.timeoutSeconds : undefined,
+            startedAt: value?.startedAt,
+          }
+          setState(prev => ({
+            ...prev,
+            toolCalls: prev.toolCalls.map(tc => {
+              if (tc.id !== toolCallId) return tc
+              const parsedStart = progress.startedAt ? Date.parse(progress.startedAt) : NaN
+              return {
+                ...tc,
+                startedAt: Number.isFinite(parsedStart) ? parsedStart : tc.startedAt,
+                progress,
+              }
+            }),
+          }))
+          break
+        }
 
         if (name === 'agent:max_turns_reached') {
           const messageId = value?.messageId || `run-notice-${Date.now()}`
@@ -593,6 +663,7 @@ export function useAGUI(options?: { onRunFinished?: () => void }) {
   }, [])
 
   const connectToAgent = useCallback((threadId: string, messages: Array<{ role: string; content: string }>) => {
+    threadIdRef.current = threadId
     subRef.current?.unsubscribe()
 
     const http$ = runHttpRequest(`${API}/agent`, {
@@ -607,10 +678,10 @@ export function useAGUI(options?: { onRunFinished?: () => void }) {
     subRef.current = events$.subscribe({
       next: processEvent,
       error: (err: any) => {
-        setState(prev => ({ ...prev, isRunning: false, reconnecting: false, error: err.message || 'Connection failed' }))
+        setState(prev => ({ ...prev, isRunning: false, isStopping: false, reconnecting: false, error: err.message || 'Connection failed' }))
       },
       complete: () => {
-        setState(prev => prev.isRunning ? { ...prev, isRunning: false } : prev)
+        setState(prev => prev.isRunning ? { ...prev, isRunning: false, isStopping: false } : prev)
       },
     })
   }, [processEvent])
@@ -633,32 +704,82 @@ export function useAGUI(options?: { onRunFinished?: () => void }) {
       ...prev,
       messages: [...prev.messages, userMsg],
       isRunning: true,
+      isStopping: false,
       error: null,
       reconnecting: false,
+      runHealth: null,
     }))
 
     connectToAgent(threadId, [...history, { role: 'user', content: userText }])
   }, [connectToAgent])
 
   const checkAndReconnect = useCallback(async (threadId: string) => {
-    setState(prev => ({ ...prev, reconnecting: true, isRunning: true }))
+    setState(prev => ({ ...prev, reconnecting: true, isRunning: true, isStopping: false }))
     connectToAgent(threadId, [])
     return true
   }, [connectToAgent])
 
   const cancelRun = useCallback(async (threadId: string) => {
+    setState(prev => ({ ...prev, isStopping: true, error: null }))
     try {
-      await fetch(`${API}/agent/cancel/${threadId}`, { method: 'POST' })
-    } catch { /* ignore */ }
-    subRef.current?.unsubscribe()
-    setState(prev => ({ ...prev, isRunning: false }))
+      const response = await fetch(`${API}/agent/cancel/${threadId}`, { method: 'POST' })
+      if (!response.ok) throw new Error('The running task could not be stopped')
+    } catch (error) {
+      setState(prev => ({
+        ...prev,
+        isStopping: false,
+        error: error instanceof Error ? error.message : 'The running task could not be stopped',
+      }))
+    }
   }, [])
+
+  useEffect(() => {
+    if (!state.isRunning || !threadIdRef.current) return
+    let disposed = false
+
+    const poll = async () => {
+      const threadId = threadIdRef.current
+      if (!threadId) return
+      try {
+        const response = await fetch(`${API}/agent/status/${threadId}`)
+        if (!response.ok) throw new Error(`status ${response.status}`)
+        const payload = await response.json()
+        if (disposed) return
+        setState(prev => ({
+          ...prev,
+          runHealth: { ...payload, reachable: true, checkedAt: Date.now() },
+        }))
+      } catch {
+        if (disposed) return
+        setState(prev => ({
+          ...prev,
+          runHealth: {
+            running: prev.isRunning,
+            status: 'unknown',
+            healthy: false,
+            task_status: 'unknown',
+            reachable: false,
+            checkedAt: Date.now(),
+          },
+        }))
+      }
+    }
+
+    const initialTimer = window.setTimeout(poll, 750)
+    const timer = window.setInterval(poll, 5000)
+    return () => {
+      disposed = true
+      window.clearTimeout(initialTimer)
+      window.clearInterval(timer)
+    }
+  }, [state.isRunning])
 
   const reset = useCallback(() => {
     subRef.current?.unsubscribe()
     orderRef.current = 0
     skipSnapshotRef.current = false
-    setState({ messages: [], toolCalls: [], guardrails: [], isRunning: false, error: null, reconnecting: false })
+    threadIdRef.current = null
+    setState({ messages: [], toolCalls: [], guardrails: [], isRunning: false, isStopping: false, error: null, reconnecting: false, runHealth: null })
   }, [])
 
   const setMessages = useCallback((messages: AGUIMessage[]) => {

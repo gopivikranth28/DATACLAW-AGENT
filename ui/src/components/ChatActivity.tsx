@@ -158,7 +158,8 @@ export function TurnActivity({ group, sessionId, onFileClick }: {
     if (isRunning) setExpanded(true)
   }, [isRunning])
 
-  const duration = relativeDuration(allCalls)
+  const now = useLiveNow(isRunning)
+  const duration = relativeDuration(allCalls, now)
   const turnStartedAt = firstTimestamp(allCalls)
   const metricEvidence = group.evidence.filter(call => toolBaseName(call.name) === 'display_metric')
   const documentEvidence = group.evidence.filter(call => toolBaseName(call.name) !== 'display_metric')
@@ -196,9 +197,11 @@ export function TurnActivity({ group, sessionId, onFileClick }: {
 
 function ActivityStep({ call, turnStartedAt, duplicateCount = 1 }: { call: ToolCallState; turnStartedAt: number | null; duplicateCount?: number }) {
   const [open, setOpen] = useState(false)
+  const now = useLiveNow(call.status === 'calling')
   const failed = hasError(call)
   const timestamp = relativeTimestamp(call, turnStartedAt)
-  const label = `${stepLabel(call)}${duplicateCount > 1 ? ` — consolidated ${duplicateCount} identical updates` : ''}`
+  const label = `${stepLabel(call, now)}${duplicateCount > 1 ? ` — consolidated ${duplicateCount} identical updates` : ''}`
+  const progress = progressSummary(call, now)
   const disclosure = failed
     ? 'traceback'
     : sourceFor(call)
@@ -213,6 +216,7 @@ function ActivityStep({ call, turnStartedAt, duplicateCount = 1 }: { call: ToolC
     {timestamp && <span className="chat-step__time">{timestamp}</span>}
     <span className="chat-step__mark" aria-hidden="true">{call.status === 'calling' ? '•' : failed ? '!' : '·'}</span>
     <span className="chat-step__label">{label}</span>
+    {progress && <span className="chat-step__progress">{progress}</span>}
     {disclosure && <span className="chat-step__more">{open ? '▾' : '▸'} {disclosure}</span>}
   </>
 
@@ -308,7 +312,7 @@ function isEvidenceCall(call: ToolCallState) {
   return Array.isArray(data?.outputs) && data.outputs.some((output: any) => ['plotly', 'image', 'html'].includes(output?.type))
 }
 
-function stepLabel(call: ToolCallState): string {
+function stepLabel(call: ToolCallState, now: number = Date.now()): string {
   const args = parse(call.args) || {}
   const result = parse(call.result) || {}
   const cell = result.cell_index ?? result.index ?? args.cell_index ?? args.index
@@ -316,7 +320,7 @@ function stepLabel(call: ToolCallState): string {
   const failed = hasError(call)
   const failure = failed ? errorSummary(call, result) : ''
   const suffix = failure ? ` — ${failure}` : ''
-  const duration = callDuration(call, result)
+  const duration = callDuration(call, result, now)
   const durationSuffix = duration ? ` · ${duration}` : ''
   const toolName = toolBaseName(call.name)
 
@@ -357,7 +361,7 @@ function stepLabel(call: ToolCallState): string {
     case 'update_plan': return `Updated plan${planChange(args, result)}${suffix}`
     case 'delegate_to_subagent': return `Delegated to ${args.subagent_name || call.subagent?.name || 'subagent'}${call.subagent ? ` · ${call.subagent.currentTurn || 0} turns` : ''}${suffix}`
     case 'build_report': return `Built report ${displayName(args.title || path || 'report')}${args.report_goal ? ` — ${compactInline(args.report_goal, 110)}` : ''}${suffix}`
-    case 'report_design_report': return reportDesignLabel(args, result, path, suffix)
+    case 'report_design_report': return reportDesignLabel(call, args, result, path, suffix)
     case 'report_review_visuals': return `Reviewed report visuals for ${displayName(path || 'report')}${suffix}`
     case 'report_publish': return reportPublishLabel(call, suffix)
     case 'report_add_section': return reportSectionLabel(args, result, suffix)
@@ -366,11 +370,14 @@ function stepLabel(call: ToolCallState): string {
   }
 }
 
-function reportDesignLabel(args: any, result: any, path: unknown, suffix: string) {
+function reportDesignLabel(call: ToolCallState, args: any, result: any, path: unknown, suffix: string) {
   const title = displayName(args.title || result.title || path || 'report')
   const insightCount = Array.isArray(args.insights) ? args.insights.length : 0
   const purpose = args.report_goal || result.report_goal || ''
-  return `Designed report ${title}${insightCount ? ` from ${insightCount} completed finding${insightCount === 1 ? '' : 's'}` : ''}${purpose ? ` — ${compactInline(purpose, 110)}` : ''}${suffix}`
+  const action = call.status === 'calling'
+    ? call.progress?.label || 'Designing report'
+    : 'Designed report'
+  return `${action}: ${title}${insightCount ? ` from ${insightCount} completed finding${insightCount === 1 ? '' : 's'}` : ''}${call.status === 'calling' ? '' : purpose ? ` — ${compactInline(purpose, 110)}` : ''}${suffix}`
 }
 
 function reportPublishLabel(call: ToolCallState, suffix: string) {
@@ -503,9 +510,9 @@ function errorSummary(call: ToolCallState, result: any) {
   return compactInline(raw.replace(/^error:\s*/i, ''), 150)
 }
 
-function callDuration(call: ToolCallState, result: any) {
+function callDuration(call: ToolCallState, result: any, now: number = Date.now()) {
   const started = call.startedAt
-  const finished = call.finishedAt
+  const finished = call.finishedAt ?? (call.status === 'calling' ? now : undefined)
   const milliseconds = typeof started === 'number' && typeof finished === 'number'
     ? Math.max(0, finished - started)
     : Number(result?.duration_ms ?? result?.elapsed_ms ?? result?.durationMs ?? 0)
@@ -675,9 +682,48 @@ function formatBytes(size: number) {
   return size < 1024 ? `${size} B` : `${(size / 1024).toFixed(1)} KB`
 }
 
-function relativeDuration(calls: ToolCallState[]) {
+function relativeDuration(calls: ToolCallState[], now: number = Date.now()) {
   const times = calls.flatMap(call => [call.startedAt, call.finishedAt]).filter((value): value is number => typeof value === 'number')
-  if (times.length < 2) return null
-  const seconds = Math.max(0, Math.round((Math.max(...times) - Math.min(...times)) / 1000))
+  if (!times.length) return null
+  const end = calls.some(call => call.status === 'calling') ? now : Math.max(...times)
+  const seconds = Math.max(0, Math.round((end - Math.min(...times)) / 1000))
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
+}
+
+function useLiveNow(active: boolean) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!active) return
+    const initial = window.setTimeout(() => setNow(Date.now()), 0)
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => {
+      window.clearTimeout(initial)
+      window.clearInterval(timer)
+    }
+  }, [active])
+  return now
+}
+
+function progressSummary(call: ToolCallState, now: number) {
+  if (call.status !== 'calling') return ''
+  const progress = call.progress
+  const parts: string[] = []
+  if (progress?.attempt && progress.maxAttempts && progress.maxAttempts > 1) {
+    parts.push(`${progress.phase === 'repairing' ? 'repair ' : 'pass '}${progress.attempt}/${progress.maxAttempts}`)
+  }
+  if (progress?.activity === 'receiving') parts.push('receiving output')
+  else if (progress?.activity === 'waiting') parts.push('waiting for model')
+  else if (progress?.activity === 'received') parts.push('output received')
+  if (typeof progress?.outputChars === 'number' && progress.outputChars > 0) {
+    parts.push(formatCompactCount(progress.outputChars) + ' chars')
+  }
+  if (progress?.lastOutputAt) {
+    const age = Math.max(0, Math.round((now - Date.parse(progress.lastOutputAt)) / 1000))
+    parts.push(`output ${age < 2 ? 'now' : `${age}s ago`}`)
+  }
+  return parts.join(' · ')
+}
+
+function formatCompactCount(value: number) {
+  return value >= 1000 ? `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}k` : String(value)
 }

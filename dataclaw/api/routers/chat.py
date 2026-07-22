@@ -33,6 +33,7 @@ from dataclaw.providers.llm.provider import PendingToolCall, TextDeltaEvent, Too
 from dataclaw.providers.tool.llm_redact import redact_for_llm
 from dataclaw.schema import Message
 from dataclaw.storage import sessions
+from dataclaw.tool_progress import tool_progress_context
 
 logger = logging.getLogger(__name__)
 
@@ -575,8 +576,34 @@ async def _run_agent_loop(
                             "result": result_json, "status": "error", **tool_timing(tc.call_id),
                         })
                         continue
+                    tracker.start_tool(thread_id, tc.call_id, tc.tool_name)
+                    tool_started = asyncio.get_running_loop().time()
+                    tool_execution_started_at = datetime.now(timezone.utc).isoformat()
+
+                    def report_progress(
+                        progress: dict[str, Any],
+                        *,
+                        call_id: str = tc.call_id,
+                        tool_name: str = tc.tool_name,
+                        started: float = tool_started,
+                    ) -> None:
+                        payload = {
+                            "toolCallId": call_id,
+                            "toolName": tool_name,
+                            "startedAt": tool_execution_started_at,
+                            "elapsedMs": round(
+                                (asyncio.get_running_loop().time() - started) * 1000
+                            ),
+                            "emittedAt": datetime.now(timezone.utc).isoformat(),
+                            **progress,
+                        }
+                        tracker.update_tool_progress(thread_id, call_id, payload)
+                        emit(emitter.custom("tool:progress", payload))
+
                     try:
-                        result = await fn(**tc.tool_input)
+                        report_progress({"phase": "starting", "label": f"Starting {tc.tool_name}"})
+                        with tool_progress_context(report_progress):
+                            result = await fn(**tc.tool_input)
                         results_list.append(result)
                         errors_list.append(None)
                         result_json = json.dumps(result, default=str)
@@ -616,6 +643,8 @@ async def _run_agent_loop(
                             "args": json.dumps(tc.tool_input, default=str),
                             "result": result_json, "status": "error", **tool_timing(tc.call_id),
                         })
+                    finally:
+                        tracker.finish_tool(thread_id, tc.call_id)
 
                 # Build canonical messages and append to conversation. Use the
                 # redacted view of each result so the live-turn LLM context
@@ -1014,11 +1043,29 @@ async def agent_status(thread_id: str) -> dict[str, Any]:
     run = get_run_tracker().get_run(thread_id)
     if run is None:
         raise HTTPException(404, "No active run")
+    if run.task is None:
+        task_status = "unknown"
+    elif run.task.cancelled():
+        task_status = "cancelled"
+    elif run.task.done():
+        task_status = "done"
+    else:
+        task_status = "running"
     return {
         "running": run.status == "running",
         "status": run.status,
         "run_id": run.run_id,
         "cursor": run.cursor,
+        "healthy": run.status == "running" and task_status == "running",
+        "task_status": task_status,
+        "started_at": run.started_at,
+        "last_event_at": run.last_event_at,
+        "last_progress_at": run.last_progress_at,
+        "last_output_at": (
+            run.active_tool.get("lastOutputAt") if run.active_tool else None
+        ),
+        "active_tool": run.active_tool,
+        "server_time": datetime.now(timezone.utc).isoformat(),
     }
 
 

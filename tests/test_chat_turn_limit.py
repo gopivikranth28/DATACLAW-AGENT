@@ -11,6 +11,7 @@ from dataclaw.api.routers import chat
 from dataclaw.hooks.registry import HookRegistry
 from dataclaw.providers.llm.provider import PendingToolCall, TurnCompleteEvent
 from dataclaw.storage import sessions
+from dataclaw.tool_progress import emit_tool_progress
 from tests.conftest import MockToolAvailabilityProvider
 
 
@@ -24,6 +25,7 @@ async def test_agent_turn_limit_is_persisted_and_streamed(
     await sessions.create_session(session_id=session_id, title="Turn limit")
 
     async def echo(**kwargs):
+        emit_tool_progress("working", "Echoing the test payload", outputChars=12)
         return kwargs
 
     class AlwaysCallsToolAgent:
@@ -64,6 +66,8 @@ async def test_agent_turn_limit_is_persisted_and_streamed(
 
     encoded_events = "\n".join(event for _, event in run.events)
     assert "agent:max_turns_reached" in encoded_events
+    assert "tool:progress" in encoded_events
+    assert "Echoing the test payload" in encoded_events
     assert "RUN_FINISHED" in encoded_events
     assert run.status == "finished"
 

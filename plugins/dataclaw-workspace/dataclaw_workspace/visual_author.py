@@ -1006,6 +1006,8 @@ async def _review_authored_evidence(
     validation: dict[str, Any],
     contract: dict[str, Any],
     timeout_seconds: int,
+    attempt: int = 1,
+    max_attempts: int = 1,
 ) -> dict[str, Any]:
     system = """You are an independent evidence editor reviewing an authored analytical report. Return one JSON object only: {"status":"pass|attention_required","findings":[{"anchor":"element id or description","evidence_aliases":["ev-1"],"issue":"specific unsupported, overstated, causal, numeric, caveat, or visual-fidelity problem","recommendation":"specific correction"}]}.
 
@@ -1027,8 +1029,8 @@ Check authored wording and quantitative visuals against the supplied dossier. Fl
         text_verbosity="low",
         progress_phase="reviewing",
         progress_label="Reviewing report evidence",
-        attempt=1,
-        max_attempts=1,
+        attempt=attempt,
+        max_attempts=max_attempts,
     )
     candidate = _parse_json_object(response)
     status = _clean(candidate.get("status")).lower()
@@ -1219,6 +1221,8 @@ async def _author_creative_document(
                 validation=validation,
                 contract=contract,
                 timeout_seconds=cfg["timeout_seconds"],
+                attempt=repair_count + 1,
+                max_attempts=max_passes + 1,
             )
             if evidence_review["status"] != "attention_required" or repair_count >= max_passes:
                 break
