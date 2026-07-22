@@ -45,13 +45,14 @@ def test_artifacts_skill_is_bundled_and_parseable():
     assert "one note per non-EDA finding" in body
     assert "inline published-artifact card plus the right" in body
     assert "Treat `/app/:sessionId` as a legacy" in body
-    assert "reports and dashboards should feel like one" in body
-    assert ".r-section" in body
+    assert "`report_design` authors" in body
+    assert "report-specific visual system" in body
     assert "open/source/export/delete operations are session-scoped" in body
     assert "25 MiB cap applies to the published/exported single-file artifact" in body
     assert "Living-report attribution should travel by id, not by name." in body
     assert "Security contract" in body
     assert "Completion checklist" in body
+    assert "`dashboarding`" not in body
 
 
 def test_report_design_skill_is_bundled_and_parseable():
@@ -62,78 +63,52 @@ def test_report_design_skill_is_bundled_and_parseable():
     meta = yaml.safe_load(frontmatter)
 
     assert meta["name"] == "report_design"
-    assert "Design polished analytical reports" in meta["description"]
+    assert "Author and publish bespoke analytical reports" in meta["description"]
     assert "report_design_report" in body
     assert "quality_gate=\"fail\"" in body
-    assert "storyboard JSON" in body
-    assert "Upgrade an existing HTML report" in body
+    assert "sole final-report composition layer" in body
+    assert "Existing reports and revisions" in body
     assert "build_report" in body
     assert "preserved_low_confidence" in body
     assert "requirements.evidence_registry.targets" in body
     assert "export_docx=False" in body
     assert "`report_add_section` is a compatibility and draft helper" in body
-    assert "`plain_chart_overuse`" in body
-    assert "`chart_table_explorer`" in body
-    assert "`filterable_chart`" in body
-    assert "`interactive_table`" in body
-    assert "`selector_panel`" in body
-    assert "`entity_card_grid`" in body
-    assert _has(body, "A report with several plain charts and no explorer is a failed report shape.")
+    assert "presentation_mode=\"handcrafted\"" in body
+    assert "`advanced_visual`" in body
+    assert "requirements.story_arcs" in body
+    assert "fallback tools, not quotas" in body
+    assert "*.author-dossier.md" in body
+    assert "data-dc-author-script" in body
+    assert "independent evidence pass" in body
+    assert "claim_source_id" in body
+    assert "publication.require_visual_review=true" in body
+    assert "build_report(presentation_mode=\"handcrafted\")" in body
+    assert "Skill freshness warnings are advisory context" in body
+    assert "Do not pre-compose a final page from component names" in body
+    assert "Do not fetch a separate dashboard-layout skill" in body
 
 
-def test_visual_output_skills_route_publish_to_artifacts_skill():
+def test_visual_output_skills_have_one_final_report_owner():
     dataclaw = _read(SKILL_LIBRARY / "dataclaw.md")
     report_design = _read(SKILL_LIBRARY / "report_design.md")
     visualization = _read(SKILL_LIBRARY / "visualization.md")
-    dashboarding = _read(SKILL_LIBRARY / "dashboarding.md")
     artifacts = _read(SKILL_LIBRARY / "artifacts.md")
 
-    assert "fetch the `artifacts` skill before publishing or revising" in dataclaw
-    assert "Fetch the `dashboarding` and `report_design` skills before the reporting step" in dataclaw
-    assert _has(visualization, "fetch and follow `dashboarding` and `report_design` too")
-    assert _has(dashboarding, "fetch the `report_design` skill before final report generation")
-    assert "`report_design` for final report storyboards" in artifacts
-    assert "fetch and follow the `artifacts` skill" in visualization
-    assert "fetch and follow the `artifacts` skill" in dashboarding
-    assert "Report tool contract" in report_design
-    assert "Step attribution travels by stable plan step id" in visualization
+    assert not (SKILL_LIBRARY / "dashboarding.md").exists()
+    assert "fetch `report_design`" in dataclaw
+    assert "the creative author owns all unspecified prose" in dataclaw
+    assert "`report_design` for final report authorship" in artifacts
+    assert "fetch `artifacts`" in visualization
+    assert "Required handoff" in report_design
     assert "report_design_report" in visualization
-    assert "report_publish" in visualization
     assert "requirements.evidence_registry.targets" in visualization
-    assert "storyboard JSON" in visualization
-    assert "do not rely on appended report cells" in visualization
-    assert "dataclaw_report_add_section" in visualization
-    assert "`insight_grid`" in visualization
-    assert "`narrative_band`" in visualization
-    assert "`methodology_block`" in visualization
-    assert "`chart_interpretation`" in visualization
-    assert "`evidence_rail`" in visualization
-    assert "`ledger_timeline`" in visualization
-    assert "`hypothesis_ledger`" in visualization
-    assert "`evidence_trace`" in visualization
-    assert "`finding_id`" in visualization
-    assert "`hypothesis_id`" in visualization
-    assert "`chart_table_explorer`" in visualization
-    assert "`interactive_table`" in visualization
-    assert "`selector_panel`" in visualization
-    assert "`entity_card_grid`" in visualization
-    assert '"plan_step_id": "step-a1b2c3d4"' in visualization
-    assert "artifact publication is unavailable" in visualization
-    assert "Attribute sections and notes by stable plan step id" in dashboarding
-    assert "report_design_report" in dashboarding
-    assert "report_publish" in dashboarding
-    assert _has(dashboarding, "appended report cells as the final dashboard/report architecture")
-    assert "EDA findings ledger" in dashboarding
-    assert "structured EDA readiness verdict" in dashboarding
-    assert "publication is unavailable" in dashboarding
-    assert "`/app/:sessionId` is only a compatibility scratch view" in dashboarding
-    assert "`/app/:sessionId` route is compatibility only" in visualization
-    assert "`chart_interpretation` and `evidence_rail`" in dashboarding
-    assert "`methodology_block`" in dashboarding
-    assert "`ledger_timeline`" in dashboarding
-    assert "one shared DataClaw token system" in dashboarding
-    assert "shared DataClaw artifact token system" in visualization
-    assert _has(dashboarding, "when browser tooling is available")
+    assert "grain, population/scope, units, denominator" in visualization
+    assert "Do not pre-compose the report" in visualization
+    assert "do not add a `chart` or `visual` mapping merely" in visualization
+    assert _has(visualization, "Do not use `report_add_section` to assemble a polished report")
+    assert "`dashboarding`" not in visualization
+    assert "`dashboarding`" not in report_design
+    assert "`dashboarding`" not in dataclaw
 
 
 def test_openclaw_bundles_artifacts_skill():
@@ -180,7 +155,8 @@ def test_openclaw_data_science_routes_final_reports_to_artifacts():
         / "SKILL.md"
     )
 
-    assert "fetch the `artifacts` skill before publishing or revising" in bundled_data_science
-    assert "Fetch the `dashboarding` and `report_design` skills before the reporting step" in bundled_data_science
+    assert "fetch the `artifacts` skill for publication or revision" in bundled_data_science
+    assert "fetch `report_design`" in bundled_data_science
+    assert "`dashboarding`" not in bundled_data_science
     assert "published artifact or living report" in bundled_data_science
     assert "embedded in the App panel" not in bundled_data_science

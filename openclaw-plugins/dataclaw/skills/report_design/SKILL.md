@@ -1,532 +1,187 @@
 ---
 name: report_design
-description: Design polished analytical reports and upgrade legacy HTML from completed insights, aggregate assets, evidence, methodology, and interaction requirements. Use before final report generation so the agent creates a storyboard-backed, publishable report instead of appending chart dumps.
+description: Author and publish bespoke analytical reports from validated findings, bounded aggregate evidence, methodology, caveats, and an evidence ledger. Use for final reports, report-like dashboards, interactive analytical briefings, or redesigning existing report HTML; the creative author owns all unspecified story, prose, layout, and visual decisions.
 ---
 
-<!-- Canonical OpenClaw skill directory: report_design -->
+## Role
 
-## When to use
+Use this skill as the sole final-report composition layer. It owns the story,
+prose, hierarchy, visual forms, interactions, evidence placement, HTML, review,
+and publication handoff.
 
-Use this skill before producing any polished analytical report, dashboard, living-report artifact, or final report HTML. It owns report composition: story flow, section choice, interaction design, evidence placement, and the `report_design_report` payload contract.
+`visualization` is optional upstream support for notebook charts and evidence
+preparation. It is not a prerequisite when validated findings and aggregate
+outputs already exist. Do not fetch a separate dashboard-layout skill.
 
-Do not use this skill for a quick scratch chart or a single draft section. For that, `report_add_section` is acceptable with `quality_gate="warn"`, but it is not the final-report path.
+Do not pre-compose a final page from component names. Do not specify KPI/chart
+counts, fixed archetypes, visual types, or section order unless they are genuine
+user or analytical requirements. The author should receive evidence and
+constraints, not a nearly completed layout.
 
-## Required flow
+## Required handoff
 
-1. Finish the analysis first: notebook cells, validations, EDA findings, hypothesis dispositions, aggregate tables, chart specs, caveats, evidence ids, and methodology.
-2. Use completed outputs from `visualization` and `dashboarding` when those skills were already part of the analysis. If the task never did visual grammar or question-framing work, fetch the missing prerequisite before designing the final report.
-3. Build a short, domain-specific storyboard before calling the tool. It is a
-   variable set of named reader-facing arcs, not a fixed template. For each
-   arc, state the reader question, the supplied claim or topic, the primary
-   visual/table/card/interaction, a concise interpretation, and any material
-   caveat. Use an answer/readout, metrics, explorer, methodology, or appendix
-   only when the supplied material warrants it.
-   - A chart, compact table, map, comparison, or explorer is reader-facing
-     evidence for an analytical claim.
-   - Notebook cells, finding IDs, hypothesis IDs, query cards, and review
-     records are audit provenance. Keep them in the storyboard, receipt, and
-     an optional Sources & reproducibility disclosure; do not render them as
-     the main report story.
-   - Pass those arcs in `requirements.story_arcs` when their order should
-     control the report. Each arc needs a `title`, a distinct `reader_question`
-     (or `purpose`), and either explicit rendered section roles or analyses
-     marked with the same `story_arc` id. Set `primary_section` when the first
-     visual/table/card is not the central proof point; otherwise the compiler
-     records the first supplied evidence-shaped section. Arcs remain variable
-     in number and purpose; they may frame a question, comparison, mechanism,
-     scenario, or decision without imposing a fixed set of acts.
-4. Call `report_design_report`, not a sequence of final `report_add_section` calls. Inspect its `analytical_review` and quality result; resolve every `required` finding or obtain an explicit user-approved risk acceptance; resolve or explicitly disclose warnings before calling the report complete.
-   The designer performs up to five bounded critique-and-repair passes, stopping early when no further safe repair is available. These passes can improve structure, captions, caveats, and evidence presentation; they never invent analytical validation or silently clear a substantive finding.
-   Keep the default `design_passes=5` unless a deliberately smaller, faster draft is needed. The design passes preserve the full supplied context in the storyboard, retain audit-only provenance mappings, carry supplied caveats into chart interpretation, and plan visual emphasis without fabricating content. They preserve a source-authored `data_note` but do not add generic row-count notes unless `presentation.data_notes="automatic"` is explicitly requested for a diagnostic draft. They must not create generic `Evidence 01` sections, duplicate an insight beside its supporting chart, or insert filler captions.
-   When supplied assets include category/archetype cards, static visual evidence, and an interactive explorer, set `requirements.editorial_archetype="taxonomy_explorer"`. It makes the page architecture deliberate: **hero → floating KPIs → taxonomy cards → hero visualization → paired diagnostics → findings → explorer → methodology and limitations footer**. The supplied readout becomes the hero abstract, so the report does not duplicate its conclusion before analysis.
-   Category-shaped selector items (`archetype`, `category`, `segment`, etc.)
-   are automatically shown first as non-interactive cards while the original
-   selector remains the later explorer. Reports with visual evidence and an
-   explorer but no category system use the same paced `guided_explorer` flow
-   without the taxonomy-card act.
-   When a selector's supplied items and an aggregate chart/table share a clear
-   categorical field such as `archetype`, `category`, or `segment`, the
-   designer links them automatically: selection updates the matching chart,
-   table, and local interpretation context. For an ambiguous or nonstandard
-   relationship, set the same explicit contract on both analyses:
-   `selection={"group": "player-archetype", "key": "archetype"}`. Never
-   link sections by display position or manufacture rows to make a link work.
-   After the generic critique, the designer runs five page-architecture checks:
-   sequence restoration, visual hierarchy, local chart context,
-   evidence/explorer pacing, and a final architecture audit. The returned
-   `design_review` records every pass, safe repair, and unresolved design risk.
-   It may only reorder supplied sections or restore presentation metadata; a
-   missing visual, KPI, methodology note, or explorer remains a finding rather
-   than fabricated content.
-   Hero and comparison intent should be explicit when input order is not the
-   intended story order: set `editorial_role="hero"` (or a lower
-   `story_priority`) on the central visual, and the same `diagnostic_group` or
-   `comparison_group` on charts that belong in a two-column diagnostic pair.
-   The compiler also assigns every rendered section one desktop composition:
-   `opening`, `headline_metrics`, `reader_readout`, `editorial_findings`,
-   `guided_visual`, `interactive_explorer`, `comparison`, `trust_close`,
-   `story_arc`, or `supporting`. These are layout frames, not a new rigid
-   storyboard template: they make visual/evidence sections use the report
-   width, keep long-form conclusions and disclosures at a readable measure,
-   and prevent arbitrary narrow or floating panels. Override only a genuine
-   exception with `desktop_composition` on that analysis/section. If the
-   supplied evidence genuinely needs a non-default `layout_width`, add
-   `layout_exception={"width": "…", "reason": "…"}`; the reason is retained
-   for visual review. Do not use pixel offsets or a custom CSS width to
-   compensate for a weak story order.
-5. Keep `quality_gate="fail"` for final reports. Fix failures before presenting
-   the report as complete.
-6. For a final release, set `requirements.publication.require_visual_review=true`, inspect screenshots, then call `report_review_visuals(report_path=..., storyboard_path=..., reviewer=..., decision="approved", notes=...)`. It writes a named, hash-bound review only when browser evidence and automated semantic review pass; browser-unavailable cannot create approval, and changed HTML or screenshots require a new review.
-7. Call `report_publish(report_path=..., storyboard_path=...)` after the designed report passes (and, when required, review is approved). It re-runs the fail gate, writes a receipt, and records runtime-smoke/DOCX outcomes. Pass `export_docx=False` when no Word export was requested. Do not edit HTML after: its SHA-256 and analytical-review contract are bound to publication.
-8. Keep the report recipe in the notebook or source script. Designed reports also write a hash-bound `*.recipe.json` sidecar; regenerate from its storyboard/source context, never edited HTML.
+Finish the analysis before authoring. Give `report_design_report` enough detail
+to write independently without inventing facts:
 
-### Keep the critique domain-neutral
+- `report_goal` and the intended `audience` or decision;
+- completed insights with a stable `finding_id` (and `hypothesis_id` when
+  applicable), validated statement, claim scope/status, metrics where relevant,
+  caveat, and evidence references;
+- bounded aggregate analyses with title/topic, records or compact figure,
+  semantic relationship, grain, scope, units, denominator, field definitions,
+  filters, baseline, interpretation, caveat, `claim_source_id`, and evidence
+  references;
+- methodology, data-quality limits, uncertainty, assumptions, definitions, and
+  coverage risks;
+- a non-empty evidence ledger in
+  `requirements.evidence_registry.targets`, with matching typed references;
+- optional hard constraints: required controls, brand, design brief, or explicit
+  story arcs.
 
-The critique evaluates the reader's path, not the subject matter. Do not turn
-one report's nouns into global defaults: a `decision_path` might be a tournament
-bracket, customer journey, supply-chain route, treatment pathway, incident tree,
-or staged launch. Keep specialised labels in the supplied title, caption, and
-interpretation; select an editorial archetype only when the corresponding
-asset shape is present. Otherwise, use the standard or `guided_explorer` flow.
+Audience, decision, time scope, comparison baseline, grouping, and required
+lookup/filter tasks are report inputs. Put them in the goal, analyses, or
+requirements rather than using a separate dashboard-planning stage.
 
-## Upgrade an existing HTML report
+Use aggregate, ranked, or sampled records. Never include raw full datasets,
+credentials, connection strings, PII, or unbounded row collections.
 
-Use `build_report` for existing HTML rather than rewriting it or appending draft
-sections. It preserves the original as a sibling `.source.html`, creates a
-storyboard, runs the bounded critique, and returns `normalization`, `critique`,
-and `quality` records.
+## Default flow
 
-```python
-build_report(
-    html_path="legacy/customer-retention.html",
-    output_path="reports/customer-retention.html",
-    storyboard_path="reports/customer-retention.storyboard.json",
-    report_goal="Explain which customer cohorts need retention action.",
-    audience="Retention leadership",
-    quality_gate="warn",
-)
-```
-
-Publish only a `normalization.mode == "structured_rebuild"` or
-`"typed_preservation"` result, with its returned HTML and storyboard paths.
-`"preserved_low_confidence"` deliberately keeps unsupported source elements in
-the source file; recreate that report from typed insights and aggregate assets
-with `report_design_report` before publication. Never treat source preservation
-as proof that a legacy report passed the structured publish gate.
-
-## Report tool contract
-
-Call `report_design_report` with completed material:
+1. Assemble completed findings, aggregates, trust material, and evidence
+   targets. Do not manufacture ids or validation results to satisfy the gate.
+2. Call `report_design_report` with `presentation_mode="handcrafted"` (the
+   default), `quality_gate="fail"`, and the full handoff.
+3. Inspect `analytical_review`, `design_review`, `authoring_review`, source
+   coverage, evidence-review status, and quality. Resolve required analytical
+   findings with real evidence or obtain explicit user-approved risk acceptance.
+4. When `requirements.publication.require_visual_review=true`, inspect the
+   screenshots and call `report_review_visuals` with a named reviewer, decision,
+   and rationale. Handcrafted final releases require a current approved review.
+5. Call `report_publish(report_path=..., storyboard_path=...,
+   export_docx=False)` unless Word output was requested and supported. It
+   re-runs the gate and writes a hash-bound receipt.
+6. Fetch `artifacts` and call `publish_artifact` with the report source and
+   receipt. Use the same `artifact_id` and `base_version` for revisions.
 
 ```python
 report_design_report(
-    report_goal="Explain which customer cohorts need retention intervention and where readers should inspect the evidence.",
-    title="Customer Retention Health Report",
-    report_path="reports/customer-retention.html",
-    storyboard_path="reports/customer-retention-storyboard.json",
+    report_goal="Explain how the draw changed contender paths and where uncertainty remains.",
+    audience="Tournament analysts",
+    title="World Cup 2026 — The Draw Changed the Map",
+    report_path="reports/world-cup-draw.html",
+    storyboard_path="reports/world-cup-draw.storyboard.json",
+    presentation_mode="handcrafted",
     quality_gate="fail",
-    design_passes=5,
-    insights=[
-        {
-            "title": "New customers are the highest-risk renewal cohort",
-            "detail": "The first-90-day cohort has the lowest renewal rate and the largest recoverable account base.",
-            "finding_id": "find-new-customer-risk",
-            "hypothesis_id": "hyp-onboarding-risk",
-            "evidence": [{"kind": "notebook_cell", "cell_id": "cell-cohort-table"}],
-            "caveat": "Renewal status is observed only for cohorts that have reached their contract anniversary.",
-            "metrics": [{"label": "At-risk accounts", "value": "1,284"}],
-        }
-    ],
-    analyses=[
-        {
-            "title": "Cohort health explorer",
-            "caption": "Filter by customer segment or acquisition channel to inspect renewal, activation, and support burden.",
-            "records": cohort_summary.to_dict("records"),
-            "chart": {"type": "bar", "x": "cohort", "y": "renewal_rate", "color": "segment"},
-            "columns": ["cohort", "segment", "renewal_rate", "activation_rate", "support_tickets"],
-            "filters": [{"key": "segment", "label": "Customer segment"}],
-            "interpretation": "The same aggregate payload drives the chart and lookup table.",
-            "evidence": [{"kind": "notebook_cell", "cell_id": "cell-cohort-summary"}],
-        },
-        {
-            "section_type": "entity_card_grid",
-            "title": "Renewal segments",
-            "items": segment_cards,
-            "caption": "Cards summarize each segment before the reader explores individual accounts.",
-        },
-    ],
+    insights=validated_findings,
+    analyses=[change_asset, path_asset, scenario_lookup],
     requirements={
-        "editorial_archetype": "taxonomy_explorer",
-        "metrics": [{"label": "Accounts analyzed", "value": "12,480"}],
-        "methodology": [
-            {"title": "Grain", "detail": "Account-month and cohort-level aggregates."},
-            {"title": "Validation", "detail": "Renewal totals reconcile across billing and customer-success tables."},
-        ],
-        "checks": [{"title": "No raw full dataset embedded", "status": "pass"}],
-        "evidence_registry": {
-            "targets": [
-                {"id": "cell-cohort-table", "kind": "notebook_cell", "present": True},
-                {"id": "cell-cohort-summary", "kind": "notebook_cell", "present": True},
-            ],
-        },
+        "methodology": completed_methodology,
+        "limitations": material_limitations,
+        "evidence_registry": {"targets": completed_evidence_targets},
+        "publication": {"require_visual_review": True},
     },
 )
 ```
 
-## What the designer does with the payload
+## Creative authoring contract
 
-The designer preserves the provenance links between insights and the supplied
-analysis assets, but it does not expose opaque IDs, `Evidence for` backlinks,
-or copied insight cards in the reader path. Keep an honest internal status for
-every insight. In a final report, render only statuses that change
-interpretation—such as `caution`, `weakened`, `unresolved`, or `blocked`—not
-routine `confirmed` or `validated` badges.
+With a configured LLM and a non-empty ledger, handcrafted mode defaults to the
+ledger-backed `creative` author. The exact Markdown dossier is persisted as
+`*.author-dossier.md`. It includes the report brief, every completed finding,
+bounded aggregate values, grain, units, denominators, definitions, caveats,
+methods, evidence aliases, and optional constraints.
 
-### Editorial archetypes
+The author may write original supported prose and choose the complete story,
+layout, typography, density, HTML/CSS, bespoke SVG/Canvas visuals, and small
+safe DOM-local interactions. It may merge, split, reorder, or intentionally
+omit supplied sources. Familiar charts are allowed when they communicate best;
+custom visuals are allowed when the evidence supports them. The component
+library and governed `advanced_visual` mappings are fallback tools, not quotas
+or the authored report schema.
 
-`path_dependent_forecast` is for a forecast whose supplied evidence contains a
-decision-path visual. It uses the neutral sequence **answer → decision path →
-outcome race → mechanism → pivotal scenarios → complete lookup → trust**.
-Use `story_role` values `decision_path`, `outcome_race`, `mechanism`,
-`outcome_distribution`, and `complete_lookup` to identify those supplied
-assets. It is not a tournament-only layout: the report's own copy names the
-path, outcomes, and scenarios. Without a `decision_path` asset, the renderer
-falls back to the standard sequence rather than manufacturing one.
+The author must not introduce a new finding, value, category, denominator,
+causal explanation, or unsupported visual relationship. Descriptive evidence
+must remain descriptive. Every substantive claim and quantitative visual must
+use its source/evidence aliases; every source must be used or explicitly omitted
+with a reason.
 
-`taxonomy_explorer` is the recommended option for analytical reports that need
-to introduce a category system before showing evidence and offering reader-led
-inspection. It is used only when the payload supplies all three necessary
-assets: an `entity_card_grid`, one or more non-interactive chart sections, and an interactive
-section. The renderer then gives the hero a dark editorial treatment, lets the
-KPI row overlap it, groups the first two diagnostics in a two-column grid, and
-keeps the findings after the evidence. It preserves the original inputs and
-the absorbed readout in the storyboard's `source_context` and header metadata.
-Every `report_design_report` result also exposes `design_review`; the report UI
-shows unresolved architecture warnings separately from analytical findings.
-At publish time, desktop/webview browser checks verify overflow,
-diagnostic columns, floating-KPI anchoring, chart mounts, and a compositor
-screenshot when Playwright Chromium is available. An unavailable browser is
-recorded as an explicit review-info finding; design warnings are publish-blocking
-until the report is redesigned from its supplied assets.
+The host validates the complete document, runs an independent evidence pass,
+allows one bounded repair, and injects the canonical ledger, source coverage,
+CSP, report contract, and regeneration recipe. Authored JavaScript must use
+`data-dc-author-script`; external resources, live fetching, forms, storage,
+workers, unsafe handlers, dynamic code, and navigation scripts are rejected.
 
-```python
-analyses=[
-    {
-        "title": "Central comparison",
-        "figure": figure,
-        "interpretation": "The central evidence-backed conclusion.",
-        "evidence": [{"kind": "notebook_cell", "ref": "cell-central"}],
-        "editorial_role": "hero",
-    },
-    {
-        "title": "Diagnostic A",
-        "figure": diagnostic_a,
-        "interpretation": "The first comparable diagnostic.",
-        "evidence": [{"kind": "notebook_cell", "ref": "cell-diagnostic-a"}],
-        "diagnostic_group": "finishing",
-    },
-    {
-        "title": "Diagnostic B",
-        "figure": diagnostic_b,
-        "interpretation": "The second comparable diagnostic.",
-        "evidence": [{"kind": "notebook_cell", "ref": "cell-diagnostic-b"}],
-        "diagnostic_group": "finishing",
-    },
-]
-```
+## Optional constraints
 
-## Asset shapes the designer understands
+Let the author decide when the user has not imposed a requirement.
 
-Give the designer typed, aggregate assets. The section choice is driven by the
-shape of each `analyses` item:
+- Use `requirements.story_arcs` only when specific questions or ordering are
+  authoritative. Without them, the author chooses the narrative from the
+  dossier.
+- Use a design brief, tone, brand information, or required interaction only
+  when supplied by the user or clearly required by the task.
+- Describe analytical relationships and reader tasks instead of prescribing
+  components. For example, say “compare before and after” or “allow team lookup,”
+  not “use three KPI cards and a slopegraph.”
+- Attach an exact `visual` mapping only for a governed deterministic visual or
+  when the mapping itself is part of the validated analytical contract.
 
-- `records` or `rows` plus `chart` -> `chart_table_explorer` when columns,
-  filters, or many records are present.
-- `records` plus `chart` with a small payload -> `filterable_chart`.
-- `rows` plus `columns` -> `interactive_table`.
-- `figure` or `figure_json` -> `chart_interpretation`.
-- `items` or `entities` -> `entity_card_grid`.
-- explicit `section_type` or `kind` -> use that section type.
+## Evidence and analytical rigor
 
-Prefer aggregate, ranked, or sampled records. Do not embed raw full datasets,
-connection strings, secrets, or large unbounded row sets.
+Every evidence reference must resolve to a registered target with the same
+`kind` and id/ref. Keep audit provenance in the ledger and receipt; do not make
+opaque notebook ids the main reader story.
 
-When an insight or analysis cites evidence, provide an explicit registry in
-`requirements.evidence_registry.targets`, for example
-`{"id": "cell-team-summary", "kind": "notebook_cell", "present": true}`.
-Every `evidence`/`evidence_refs` entry must use the same `kind` and `ref` (or
-`cell_id`/`artifact_id`) so the report can resolve it. Do not invent ids to
-satisfy the gate.
+For forecasts, predictions, simulations, or other model-based reports, include
+`requirements.analysis_review` with the applicable completed baseline,
+uncertainty, assumptions, sensitivity, path/distribution evidence, and
+`export_runtime="local"`. A baseline needs status, method, result, and registered
+typed evidence. The critique may flag missing work but never invent it.
 
-### Analytical critique contract
+Use `resolve_review_finding` for a genuine evidence-backed resolution. Use
+`accepted_with_rationale` only with explicit user approval; the receipt retains
+that decision.
 
-For a forecast, prediction, simulation, or other model-based report, include
-an `analysis_review` object in `requirements`. The storyboard critique persists
-its findings in the returned `critique`, storyboard JSON, and publish receipt.
-It does not rerun the model or invent support; it flags missing declared work
-so the agent can add it before calling the report complete. A `required`
-finding blocks `report_publish` until it is remediated or explicitly accepted
-by the user with a rationale; warnings must be resolved or disclosed.
+## Existing reports and revisions
 
-Each emitted report finding is also recorded in the shared analysis-review
-lifecycle and returned as `review_lifecycle`, with a `review_finding_id` and
-status on the report finding itself. Use `resolve_review_finding` to record a
-real resolution (with supporting evidence when applicable) or an
-`accepted_with_rationale` risk decision.
-The latter requires explicit user approval through the review guardrail and is
-preserved in the publish receipt and report UI.
+Use `build_report` for existing standard HTML. Publish only
+`normalization.mode == "structured_rebuild"` or `"typed_preservation"`.
+`preserved_low_confidence` retains unsupported source material and must be
+rebuilt from validated insights and aggregate assets. Handcrafted upgrade from
+raw HTML fails closed: `build_report(presentation_mode="handcrafted")` directs
+the caller to `report_design_report` with the existing validated outputs.
 
-```python
-requirements={
-    "evidence_registry": {
-        "targets": [
-            {"id": "cell-ablation", "kind": "notebook_cell", "present": True},
-            {"id": "cell-pairing-scenarios", "kind": "notebook_cell", "present": True},
-        ],
-    },
-    "analysis_review": {
-        "mode": "predictive",
-        "baseline": {
-            "status": "complete",
-            "method": "Shared-holdout log loss against a prior-period-only baseline",
-            "result": "Full model improves log loss by 0.04",
-            "evidence": {"kind": "notebook_cell", "ref": "cell-ablation"},
-        },
-        "uncertainty": {"method": "block bootstrap", "result": "90% intervals"},
-        "assumptions": ["One workflow branch is inferred from historical process logs"],
-        "sensitivity": {"status": "complete", "evidence": "cell-path-scenarios"},
-        "decision_path": {"status": "complete", "summary": "Decision-path visual"},
-        "outcome_distribution": {"status": "complete", "summary": "Outcome distribution"},
-        "export_runtime": "local",
-    },
-}
-```
+For a creative-report revision, update the findings, aggregate assets,
+requirements, or design brief and re-author from the storyboard's
+`source_context` and persisted dossier. Exact HTML reproducibility is not
+required; ledger identity, source coverage, and reviewed analytical meaning
+are. Never edit generated HTML as the source of truth or after
+`report_publish`, because the receipt binds its bytes and review contract.
 
-The baseline is publish-blocking: it needs a completed status, a method, a
-result, and an evidence reference that resolves to a registered target in
-`requirements.evidence_registry.targets`, with an explicit matching `kind`.
-A bare `status: complete`, prose that mentions a baseline, or an unregistered
-id does not clear the gate.
+## Bounded compatibility paths
 
-Without this contract, conservative predictive cues still trigger findings for
-a missing baseline, uncertainty, or assumed-input sensitivity. Path language
-such as a journey, workflow, route, tree, bracket, or treatment pathway is only
-an advisory: it never makes a path visual mandatory by itself. Require a
-decision-path or outcome-distribution view only when the structured analysis
-contract declares it or the caller explicitly selects
-`editorial_archetype="path_dependent_forecast"`. Resolve findings by supplying
-the completed evidence or by narrowing/disclosing the report; never mark work
-complete by inventing IDs or validation results. `export_runtime="cdn"` is not
-an export fix: DataClaw reports must stay self-contained.
+Without a ledger, handcrafted mode falls back to bounded `runtime`. Use
+`visual_author={"mode": "off"}` for deterministic-only output, `runtime` for
+the legacy theme/surface selector, `required` to stop on bounded authoring
+failure, or `provided` for a previously validated bounded spec.
 
-## Section choices
+`report_add_section` is a compatibility and draft helper only. Use it for a
+scratch chart or incremental diagnostic with `quality_gate="warn"`; never use a
+sequence of these calls as the polished final-report architecture.
 
-Use report sections according to the job they do:
+## Completion criteria
 
-### Presentation contract
+Do not declare the report complete unless:
 
-The analysis contract proves a claim; the presentation contract makes that
-claim easy to read. Supply display semantics rather than asking the renderer to
-invent a domain's visual language:
+- the evidence review and artifact-safety validation pass;
+- every required analytical or design finding is resolved or explicitly
+  accepted by the user;
+- material caveats, uncertainty, units, and denominators remain visible;
+- required browser review is approved for the exact HTML;
+- `report_publish` returns a current receipt for the exact report bytes;
+- artifact publication succeeds, or unavailable artifact tooling is stated
+  plainly without inventing an id, version, or URL.
 
-```python
-requirements={
-    "presentation": {
-        "insight_layout": "editorial_list",  # default; use "card_grid" for true peer cards
-        "insight_evidence": "none",          # source IDs are not reader-facing evidence
-        "provenance": "audit",               # use "disclosure" only for an optional Sources appendix
-        "require_display_facts": True,         # enforce typed source facts for runtime composition
-    },
-    "rigor": {
-        "require_methodology": True,            # grain, denominator, validation
-        "require_data_quality": True,           # visible scope/coverage disclosure
-        "require_uncertainty": True,            # visible interval/confidence disclosure
-        "require_component_semantics": True,    # enforce declared semantic-role components
-    },
-}
-```
-
-Use `card_grid` only for genuine peers. For new reports, author pills, scan
-points, examples, and annotations as `display_facts`, never as prose the
-renderer must mine. Every fact needs a stable `fact_id`, exact source text,
-allowed `uses` (`pill`, `scan_point`, `example`, `annotation`), and preferably
-an evidence ref. A data-bearing display fact's evidence must resolve through the
-same `evidence_registry` as the insight or chart it supports. Legacy
-`pills`/`bullets` remain compatible, but the authoring review flags them when
-typed facts are required or runtime composition is used. With
-`require_display_facts=True`, unresolved authoring findings block publication.
-Rigor is source-declared, never inferred from prose: required methodology blocks
-only when requested; predictive analysis contracts require an uncertainty disclosure.
-Use `semantic_role` on an analysis (`methodology`, `data_quality`, `uncertainty`,
-`provenance`, `timeline`, or `status`) to select the safe matching component.
-
-### Runtime visual author
-
-Every report starts with the renderer's deterministic desktop-editorial
-baseline (semantic composition frames, hierarchy, evidence surfaces, and
-Plotly theming). It is recorded in the storyboard/receipt even when runtime
-visual authoring is off. This baseline is the reproducible default; it does
-not require an LLM.
-
-When a configured LLM should compose the presentation at build time, opt into
-the runtime visual author. It is a visual-editor stage, not a prompt-to-HTML
-stage: the model chooses a named theme, section surfaces/layouts, and supplied
-facts to show as pills, scan points, examples, or small annotations. The
-renderer then materializes those choices with its safe components.
-
-```python
-report_design_report(
-    # ... completed insights and analyses ...
-    visual_author={
-        "mode": "runtime",  # use "required" to fail instead of falling back
-        "facts": [
-            {
-                "fact_id": "renewal-rate",
-                "insight_id": "find-new-customer-risk",
-                "text": "61% renewal rate",
-                "uses": ["pill"],
-            },
-            {
-                "fact_id": "recoverable-base",
-                "insight_id": "find-new-customer-risk",
-                "text": "Largest recoverable account base",
-                "uses": ["scan_point"],
-            },
-            {
-                "fact_id": "affected-segments",
-                "insight_id": "find-new-customer-risk",
-                "text": "Self-serve and new enterprise accounts",
-                "uses": ["example"],
-            },
-        ],
-    },
-)
-```
-
-`insight_id` is the insight's `finding_id` when present (otherwise its stable
-storyboard position). For a metric row, entity grid, chart, explorer,
-methodology block, or provenance section, use `section_id` (its stable
-`layout_role`) instead. Set `visual_author_section_id` on an analysis when the
-source recipe needs a stable explicit section id. A section can also carry its
-own `display_facts`:
-
-```python
-analyses=[{
-    "title": "Cohort renewal evidence",
-    "visual_author_section_id": "renewal_evidence",
-    "figure": figure,
-    "display_facts": [
-        {"fact_id": "renewal-gap", "text": "23-point renewal gap", "uses": ["scan_point"]},
-        {"fact_id": "cohort-note", "text": "Observed cohorts only", "uses": ["annotation"]},
-    ],
-}]
-```
-
-Facts must have stable IDs, exact source text, a section or insight owner, and
-explicit allowed uses; prose summaries are never eligible. The LLM response is
-validated against those exact IDs and a fixed set of
-surface/layout/theme choices. It cannot add claims, labels, CSS, JavaScript, or
-HTML, and a fact cannot be repeated across display roles. Runtime output is
-bounded by a timeout and maximum response size. A malformed response or
-unavailable provider records `visual_author.status="fallback"` and renders the
-original storyboard; `mode="required"` stops the build and writes a
-`*.visual-author-failure.json` audit beside the storyboard. Use `mode="provided"`
-with a previously validated `spec` when an auditable reproducible run must not
-make an LLM call.
-
-For a real but bounded story-order decision, set `allow_story_reorder=true` and
-label consecutive source sections with both `visual_author_story_zone` and
-`visual_author_story_block`. The model may reorder whole declared blocks only
-within that zone; it cannot split a block or move it across another narrative
-boundary. Do not enable it merely to shuffle a settled architecture.
-
-### Surface budget
-
-Treat cards as a scarce visual treatment, not the default wrapper for every
-section. The default grammar is one strong hero, cards for KPIs and genuinely
-comparable entities, a flat numbered list for primary findings, one framed
-surface per chart or explorer, compact methodology cards, and a quiet
-provenance disclosure. Dense card grids remain valid when the reader is
-comparing peer entities. The invariant is not a fixed card count: avoid nested
-surfaces unless their parent-child relationship is clear, and do not frame
-purely narrative material repeatedly.
-
-- `narrative_band` for the answer, revised interpretation, or caveat turn.
-- `insight_grid` for the 3-7 findings that change the user's answer.
-- `chart_interpretation` for a conclusion-bearing chart with evidence and caveat.
-- `chart_table_explorer` when a chart and searchable table should inspect the
-  same aggregate payload.
-- `filterable_chart` when the same chart should respond to controls.
-- `interactive_table` when lookup, sorting, search, or column filters matter.
-- `selector_panel` when a team, player, cohort, model, or scenario selector
-  changes adjacent evidence.
-- `entity_card_grid` for archetypes, segments, cohorts, players, models, or
-  scenarios.
-- `methodology_block` for grain, denominator, validation, review method, and
-  assumptions.
-- `evidence_trace` and `evidence_rail` only for an explicitly requested
-  Sources & reproducibility disclosure. Keep notebook cells, filter IDs,
-  artifact IDs, findings, and review references out of the main narrative.
-- `hypothesis_ledger` and `ledger_timeline` for EDA hypotheses, dispositions,
-  supersessions, risk acceptance, and review chronology.
-
-Use plain `chart` only as supporting material when interpretation and provenance
-are already next to it. A report with several plain charts and no explorer is a
-failed report shape.
-
-## Story flows
-
-Use **answer → findings → primary evidence/explorer → trust** for an executive
-readout; add a hypothesis ledger for EDA, entity cards before evidence for a
-taxonomy, and **answer → supplied path → outcomes → mechanism → scenarios →
-lookup → trust** for a path-dependent forecast. These are semantic sequences,
-not domain labels or mandatory templates.
-
-## Quality gate
-
-The gate loads its criteria from the report rubric (`report_rubric.yaml`,
-currently v7) — the canonical machine-readable definition of a good dataclaw
-report. Every quality result cites the `rubric_version` it was judged by.
-Before calling a report complete, the quality result must not include:
-
-- `consecutive_plain_charts`
-- `chart_dump`
-- `plain_chart_overuse`
-- `missing_interactive_explorer`
-- `missing_primary_insights`
-- `missing_insight_sections`
-- `unsourced_claim` (formerly `missing_evidence_ids`)
-- `chart_interpretation_missing_evidence`
-- `missing_table_caption`
-- `stale_installed_skills`
-- `oversized_report`
-- `unstructured_report`
-
-If any of these appear, revise the storyboard or analysis payloads. Do not
-present a failed report as complete.
-
-The live v7 rubric also reports warning-level remediation for unresolved evidence
-targets, evidence-free chart conclusions, missing narrative/deks/table captions,
-unpaired insights, baked chart themes, inaccessible token contrast, external
-assets, typed-display-fact coverage, runtime visual-author fallback, visual-plan
-budget observations, and failed or skipped runtime smoke. Browser review records
-full-page desktop and desktop key-section screenshot hashes when Playwright
-is available; it also checks rendered-page heading hierarchy, evidence context,
-editorial findings, and nested surfaces. A final-release visual-review request
-requires a named approved review record bound to that exact HTML and those screenshot hashes.
-Treat warnings
-as work to resolve or disclose; compatible warning
-severity is not permission to ignore them.
-
-## Anti-patterns
-
-- Building the final report with repeated `report_add_section(section_type="chart")`.
-- Saving final charts as PNGs when Plotly/report sections are available.
-- A long findings list with no evidence ids, caveats, or adjacent chart/table.
-- Separate static charts where one explorer with filters would answer better.
-- A methodology callout at the end that should have been beside the evidence.
-- Report assembly logic that exists only as transient tool calls.
-
-`report_add_section` is a compatibility and draft helper. Use
-`quality_gate="warn"` for scratch sections; the polished final report path is
-`report_design_report`, its returned storyboard JSON, and `report_publish`.
+Skill freshness warnings are advisory context. Judge publication from the
+report's evidence ledger, review results, safety checks, and receipt—not from
+layout-skill reproducibility.

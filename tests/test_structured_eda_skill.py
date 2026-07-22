@@ -35,23 +35,17 @@ def test_structured_eda_skill_is_bundled_and_parseable():
     assert "deferred: loop budget" in body
     assert "Insight loop behavior" in body
     assert "Default to at most 3 insight loops" in body
-    assert "Fetch the `visualization` skill" in body
-    assert "Fetch the `report_design` skill" in body
+    assert "Fetch `visualization` when non-trivial notebook charting" in body
+    assert "Fetch `report_design` before producing a polished EDA report" in body
     assert "report_design_report" in body
     assert "report_publish" in body
     assert "requirements.evidence_registry.targets" in body
     assert "preserved_low_confidence" in body
     assert "Do not treat appended report cells as the final EDA report" in body
-    assert "`hypothesis_ledger`" in body
-    assert "`ledger_timeline`" in body
-    assert "`evidence_trace`" in body
-    assert "`evidence_rail`" in body
-    assert "`chart_interpretation`" in body
-    assert "`methodology_block`" in body
-    assert "`narrative_band`" in body
-    assert "`insight_grid`" in body
-    assert "`methodology`" in body
-    assert "new layer of\nunderstanding" in body
+    assert "grain, population, units, denominator" in body
+    assert "Do not prescribe chart types, KPI counts, components" in body
+    assert "Pass the author the new layer of understanding" in body
+    assert "Skill freshness is advisory" in body
     assert "`loop_index`" in body
     assert "`selection` with `screened_n`, `selection_rule`, and `correction`" in body
 
@@ -84,7 +78,8 @@ def test_openclaw_dataclaw_skill_routes_eda_to_structured_eda():
     )
 
     assert "fetch the `structured_eda` skill" in bundled_skill
-    assert "`report_design` skills before the reporting step" in bundled_skill
+    assert "fetch `report_design`" in bundled_skill
+    assert "`dashboarding`" not in bundled_skill
     assert "Use `data_profiling` only for a compact quick profile" in bundled_skill
     assert "dataclaw_request_analysis_review" in bundled_skill
     assert "report_publish" in bundled_skill

@@ -1238,6 +1238,8 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
                     ? <TurnActivity group={block.group} onFileClick={previewFile} sessionId={activeSessionId} />
                     : (block.entry.item as AGUIMessage).role === 'compaction'
                     ? <CompactionDivider message={block.entry.item as AGUIMessage} />
+                    : (block.entry.item as AGUIMessage).role === 'run_notice'
+                    ? <RunNotice message={block.entry.item as AGUIMessage} />
                     : <MessageBubble message={block.entry.item as AGUIMessage} onFileClick={previewFile} />
                   }
                 </div>
@@ -2023,6 +2025,21 @@ function MessageBubble({ message, onFileClick }: { message: AGUIMessage; onFileC
         {isUser ? <span style={{ whiteSpace: 'pre-wrap' }}>{message.content}</span> : <MarkdownContent content={message.content} onFileClick={onFileClick} />}
       </div>
     </div>
+  )
+}
+
+function RunNotice({ message }: { message: AGUIMessage }) {
+  const title = message.stopReason === 'max_turns'
+    ? `Agent stopped after reaching ${message.maxTurns || 'the configured number of'} turns`
+    : 'Agent stopped before the task finished'
+  return (
+    <Alert
+      type="warning"
+      showIcon
+      title={title}
+      description={message.content}
+      style={{ marginBottom: 18 }}
+    />
   )
 }
 

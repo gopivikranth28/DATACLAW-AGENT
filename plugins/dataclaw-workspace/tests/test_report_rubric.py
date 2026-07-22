@@ -33,8 +33,8 @@ def cfg():
     return WorkspaceConfig()
 
 
-# The gate checks implemented in analyze_report_quality, by criterion id. If a
-# rubric criterion is flipped to `live` without adding an evaluator (or vice
+# Checks implemented by the quality, typed-section, and design/publish gates.
+# If a rubric criterion is flipped to `live` without an evaluator (or vice
 # versa), this set stops matching and the test fails — that is the point.
 IMPLEMENTED_GATE_CHECKS = {
     "evidence_unresolved",
@@ -59,6 +59,9 @@ IMPLEMENTED_GATE_CHECKS = {
     "runtime_smoke_failed",
     "visual_semantic_review",
     "visual_author_fallback",
+    "creative_evidence_ledger_missing",
+    "authored_evidence_coverage_missing",
+    "authored_evidence_review_failed",
     "visual_plan_budget",
     "display_fact_coverage",
     "missing_methodology",
@@ -68,12 +71,15 @@ IMPLEMENTED_GATE_CHECKS = {
     "plaintext_where_component_warranted",
     "not_self_contained",
     "contrast_below_aa",
+    "advanced_visual_semantics",
+    "handcrafted_claim_source_missing",
+    "handcrafted_story_arc_incomplete",
 }
 
 
 def test_rubric_loads_and_matches_implemented_checks():
     rubric = load_report_rubric()
-    assert rubric_version() == 7
+    assert rubric_version() == 12
     assert set(live_criterion_ids()) == IMPLEMENTED_GATE_CHECKS
     for value in rubric_thresholds().values():
         assert isinstance(value, int)
@@ -81,6 +87,27 @@ def test_rubric_loads_and_matches_implemented_checks():
     assert report_renderer.REPORT_QUALITY_MAX_BYTES == rubric_thresholds()["max_payload_bytes"]
     axes = {criterion["axis"] for criterion in rubric["criteria"]}
     assert axes == {"rigor", "narrative", "integrity"}
+
+
+def test_stale_skill_freshness_is_advisory_not_publish_blocking():
+    criterion = rubric_criteria()["stale_installed_skills"]
+    assert criterion["severity"] == "warn"
+    assert criterion["on_fail"] == "warn"
+
+    doc = (
+        '<html data-dc-authored-document="true"><body>'
+        '<script type="application/json" data-dc-section-meta>'
+        '{"section_schema":3,"kind":"narrative_band","section_id":"authored",'
+        '"title":"Report","caption":"Answer","payload":{"authored":true}}'
+        '</script></body></html>'
+    )
+    quality = report_renderer.analyze_report_quality(
+        doc,
+        stale_skills=[{"skill": "visualization", "reason": "library changed"}],
+    )
+    stale = next(item for item in quality["warnings"] if item["code"] == "stale_installed_skills")
+    assert stale["severity"] == "warn"
+    assert quality["status"] != "fail"
 
 
 def test_rubric_rename_is_recorded():
@@ -129,7 +156,7 @@ async def test_gate_result_cites_rubric_version(cfg):
         quality_gate="warn",
         data={"title": "Note", "text": "Just one section."},
     )
-    assert result["quality"]["rubric_version"] == 7
+    assert result["quality"]["rubric_version"] == 12
 
 
 def test_gate_rejects_report_without_typed_section_metadata():
@@ -916,6 +943,198 @@ def test_story_arcs_allow_variable_reader_questions_to_order_supplied_sections()
     assert "What separates the outcomes?" in rendered
     assert "Where should readers look next?" in rendered
     assert "r-section is-full-width is-quiet-surface is-story-arc" in rendered
+    assert rendered.count('class="r-story-arc-group"') == 2
+    assert 'data-dc-story-arc-group="signal"' in rendered
+    assert 'data-dc-story-arc="signal"' in rendered
+
+
+def test_handcrafted_mode_renders_advanced_visuals_inside_story_arc_groups():
+    storyboard = report_renderer.design_report_storyboard(
+        report_goal="Explain how the validated contender probabilities changed.",
+        insights=[{
+            "title": "The update changed the ordering",
+            "detail": "The supplied before/after aggregate moves one contender ahead of another.",
+        }],
+        analyses=[{
+            "section_type": "advanced_visual",
+            "title": "Contender movement",
+            "caption": "Before and after probabilities from the supplied aggregate output.",
+            "records": [
+                {"team": "A", "before": 18.2, "after": 23.4},
+                {"team": "B", "before": 20.1, "after": 17.8},
+            ],
+            "visual": {
+                "type": "slopegraph",
+                "label": "team",
+                "start": "before",
+                "end": "after",
+                "unit": "%",
+            },
+            "interpretation": "The supplied update moves A ahead of B.",
+            "story_arc": "movement",
+            "evidence": [{"kind": "notebook_cell", "ref": "cell-movement"}],
+        }],
+        requirements={
+            "presentation": {"mode": "handcrafted"},
+            "story_arcs": [{
+                "id": "movement",
+                "title": "What changed?",
+                "reader_question": "Which validated probability movements change the ordering?",
+            }],
+            "evidence_registry": {
+                "targets": [{"id": "cell-movement", "kind": "notebook_cell", "present": True}],
+            },
+        },
+    )
+
+    assert storyboard["designer"]["mode"] == "handcrafted_report"
+    assert storyboard["presentation"]["mode"] == "handcrafted"
+    assert storyboard["source_context"]["requirements"].get("publication", {}).get("require_visual_review") is not True
+    advanced = next(item for item in storyboard["section_plan"] if item["section_type"] == "advanced_visual")
+    assert advanced["story_arc_group"] == "movement"
+    assert advanced["story_arc_primary"] is True
+
+    rendered = report_renderer.render_report_from_storyboard(storyboard)
+    assert 'data-dc-presentation-mode="handcrafted"' in rendered
+    assert 'data-dc-section="advanced_visual"' in rendered
+    assert 'data-dc-story-arc-group="movement"' in rendered
+    assert "initAdvancedVisual" in rendered
+    assert "renderAdvancedSlope" in rendered
+    assert "r-advanced-visual-target" in rendered
+    assert 'data-dc-runtime="plotly"' not in rendered
+    assert "Before and after probabilities" in rendered
+    assert "The supplied update moves A ahead of B." in rendered
+
+
+def _handcrafted_storyboard(**overrides):
+    analysis = {
+        "section_type": "advanced_visual",
+        "title": "Movement",
+        "caption": "Validated aggregate movement.",
+        "records": [
+            {"name": "A", "before": 1, "after": 2, "private_email": "secret@example.com", "raw_script": "</script><script>alert(1)</script>"},
+            {"name": "B", "before": 2, "after": 1, "private_email": "other@example.com"},
+        ],
+        "visual": {"type": "slopegraph", "label": "name", "start": "before", "end": "after"},
+        "interpretation": "A moves ahead of B in the supplied aggregate.",
+        "story_arc": "movement",
+        "finding_id": "finding-movement",
+        "evidence": [{"ref": "cell-movement", "kind": "notebook_cell"}],
+    }
+    analysis.update(overrides.pop("analysis", {}))
+    requirements = {
+        "presentation": {"mode": "handcrafted"},
+        "publication": {"require_visual_review": False},
+        "story_arcs": [{
+            "id": "movement", "title": "What changed?",
+            "reader_question": "Which supplied aggregate movement changes the ordering?",
+        }],
+    }
+    requirements.update(overrides.pop("requirements", {}))
+    return report_renderer.design_report_storyboard(
+        report_goal="Explain the validated movement.",
+        insights=[{
+            "finding_id": "finding-movement",
+            "title": "The ordering changed",
+            "detail": "A moves ahead of B in the supplied aggregate.",
+            "evidence": [{"ref": "cell-movement", "kind": "notebook_cell"}],
+        }],
+        analyses=[analysis],
+        requirements=requirements,
+        **overrides,
+    )
+
+
+def test_handcrafted_payload_is_minimized_source_bound_accessible_and_deterministic():
+    storyboard = _handcrafted_storyboard()
+    rendered = report_renderer.render_report_from_storyboard(copy.deepcopy(storyboard))
+    rendered_again = report_renderer.render_report_from_storyboard(copy.deepcopy(storyboard))
+    advanced = next(item for item in storyboard["section_plan"] if item["section_type"] == "advanced_visual")
+
+    assert rendered == rendered_again
+    assert "secret@example.com" not in rendered
+    assert "alert(1)" not in rendered
+    assert "secret@example.com" not in repr(storyboard["source_context"])
+    assert set(advanced["data"]["records"][0]) == {"name", "before", "after"}
+    assert advanced["data"]["claim_source"]["finding_id"] == "finding-movement"
+    assert not any(item["layout_role"] == "primary_insights" for item in storyboard["section_plan"])
+    assert 'class="r-advanced-data-summary"' in rendered
+    assert "Accessible data table" in rendered
+    assert "data-dc-advanced-mark" in rendered
+    assert storyboard["source_context"]["requirements"]["publication"]["require_visual_review"] is False
+
+
+def test_handcrafted_mode_infers_missing_arcs_and_allows_faithful_conventional_charts():
+    inferred = _handcrafted_storyboard(requirements={"story_arcs": []})
+    assert inferred["story_arc_origin"] == "compiler_default"
+    assert [arc["phase"] for arc in inferred["storyboard"]] == ["movement"]
+
+    conventional = report_renderer.design_report_storyboard(
+        report_goal="Explain the supplied aggregate.",
+        insights=[{"title": "Result", "detail": "The supplied aggregate has a result."}],
+        analyses=[{
+            "section_type": "chart_interpretation", "title": "Familiar comparison", "caption": "Comparison.",
+            "figure": {"data": [{"type": "bar", "x": ["A"], "y": [1]}]},
+            "interpretation": "The supplied aggregate has a result.",
+        }],
+        requirements={"presentation": {"mode": "handcrafted"}},
+    )
+    assert conventional["story_arc_origin"] == "compiler_default"
+    assert any(item["section_type"] == "chart_interpretation" for item in conventional["section_plan"])
+
+
+def test_default_handcrafted_mode_promotes_clear_aggregate_relationships():
+    storyboard = report_renderer.design_report_storyboard(
+        report_goal="Explain the supplied before-and-after movement.",
+        insights=[{
+            "finding_id": "finding-movement",
+            "title": "The ordering changed",
+            "detail": "A moves ahead of B in the supplied aggregate.",
+        }],
+        analyses=[{
+            "title": "Movement",
+            "caption": "Before and after values from the supplied aggregate.",
+            "records": [
+                {"name": "A", "before": 1, "after": 3, "unused_private": "discard"},
+                {"name": "B", "before": 2, "after": 1, "unused_private": "discard"},
+            ],
+            "interpretation": "A moves ahead of B in the supplied aggregate.",
+            "finding_id": "finding-movement",
+        }],
+    )
+
+    assert storyboard["presentation"]["mode"] == "handcrafted"
+    assert storyboard["story_arc_origin"] == "compiler_default"
+    advanced = next(item for item in storyboard["section_plan"] if item["section_type"] == "advanced_visual")
+    assert advanced["data"]["visual"]["type"] == "slopegraph"
+    assert set(advanced["data"]["records"][0]) == {"name", "before", "after"}
+    assert "unused_private" not in repr(storyboard["source_context"])
+
+
+def test_analysis_router_supports_more_semantic_asset_shapes():
+    storyboard = report_renderer.design_report_storyboard(
+        report_goal="Explain the supplied operational review.",
+        insights=[{"title": "Review complete", "detail": "The supplied review contains decision-ready assets."}],
+        analyses=[
+            {"title": "Scorecard", "semantic_role": "kpi", "metrics": [{"label": "Coverage", "value": "94%"}]},
+            {"title": "Conclusions", "semantic_role": "conclusions", "findings": [{"title": "Coverage is high"}]},
+            {"title": "Hypotheses", "semantic_role": "hypotheses", "hypotheses": [{"title": "Coverage threshold", "status": "supported"}]},
+            {"title": "Process", "semantic_role": "process", "steps": [{"title": "Validate"}, {"title": "Publish"}]},
+            {"title": "Lookup", "semantic_role": "lookup", "records": [{"segment": "A", "value": 1}, {"segment": "B", "value": 2}]},
+        ],
+    )
+
+    types = {item["section_type"] for item in storyboard["section_plan"]}
+    assert {"metric_row", "findings", "hypothesis_ledger", "explanation", "interactive_table"}.issubset(types)
+
+
+def test_handcrafted_claim_digest_blocks_post_design_interpretation_changes():
+    storyboard = _handcrafted_storyboard()
+    advanced = next(item for item in storyboard["section_plan"] if item["section_type"] == "advanced_visual")
+    advanced["data"]["interpretation"] = "A new unsupported causal explanation."
+
+    with pytest.raises(Exception, match="no longer matches"):
+        report_renderer.render_report_from_storyboard(storyboard)
 
 
 def test_story_arc_requires_a_reader_question_and_valid_primary_section():
@@ -1224,5 +1443,5 @@ def test_storyboard_quality_plan_derives_from_rubric():
         requirements={},
     )
     plan = storyboard["quality_plan"]
-    assert plan["rubric_version"] == 7
+    assert plan["rubric_version"] == 12
     assert plan["checks"] == live_criterion_ids()

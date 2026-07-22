@@ -7,14 +7,15 @@ import hashlib
 import html as html_lib
 import json
 import re
-import uuid
 from html.parser import HTMLParser
 from typing import Any
 
 from dataclaw_artifacts.sections import (
+    ADVANCED_VISUAL_FIELDS,
     TABLE_PREVIEW_MAX_BYTES,
     clean_text,
     normalize_section,
+    prepare_advanced_visual_data,
     section_attrs as artifact_section_attrs,
     section_meta_script as artifact_section_meta_script,
 )
@@ -26,7 +27,11 @@ from dataclaw_workspace.report_rubric import (
     rubric_thresholds,
     rubric_version,
 )
-from dataclaw_workspace.visual_author import visual_theme_tokens
+from dataclaw_workspace.visual_author import (
+    validate_applied_creative_layout,
+    validate_authored_document,
+    visual_theme_tokens,
+)
 
 REPORT_SECTION_START = "<!-- DATACLAW_REPORT_SECTIONS_START -->"
 REPORT_SECTION_END = "<!-- DATACLAW_REPORT_SECTIONS_END -->"
@@ -67,6 +72,8 @@ __all__ = [
 ]
 
 CHART_SECTION_KINDS = {"chart", "chart_interpretation", "filterable_chart", "chart_table_explorer"}
+ADVANCED_VISUAL_SECTION_KINDS = {"advanced_visual"}
+VISUAL_SECTION_KINDS = CHART_SECTION_KINDS | ADVANCED_VISUAL_SECTION_KINDS
 INTERACTIVE_SECTION_KINDS = {"filterable_chart", "interactive_table", "selector_panel", "chart_table_explorer"}
 DESKTOP_COMPOSITIONS = {
     "opening",
@@ -95,6 +102,7 @@ STORY_SECTION_KINDS = {
     "selector_panel",
     "chart_table_explorer",
     "entity_card_grid",
+    "advanced_visual",
 }
 # The rubric is the single source of truth for gate thresholds; this constant is
 # kept as the public name for the payload cap (docs reference it by name).
@@ -110,18 +118,31 @@ def report_shell(
     visual_theme: dict[str, Any] | None = None,
     report_contract: dict[str, Any] | None = None,
     regeneration_recipe: dict[str, Any] | None = None,
+    presentation_mode: str = "standard",
+    creative_layout: dict[str, Any] | None = None,
 ) -> str:
     safe_title = html_lib.escape(title)
     theme_name = clean_text((visual_theme or {}).get("name") if isinstance(visual_theme, dict) else "").lower()
     theme_attr = f' data-dc-visual-theme="{html_lib.escape(theme_name, quote=True)}"' if visual_theme_tokens(theme_name) else ""
+    normalized_presentation = clean_text(presentation_mode or "standard").lower().replace("-", "_")
+    if normalized_presentation not in {"standard", "handcrafted"}:
+        normalized_presentation = "standard"
+    presentation_attr = f' data-dc-presentation-mode="{html_lib.escape(normalized_presentation, quote=True)}"'
     plotly_script = plotly_script_tag() if include_plotly else ""
     shell_css = report_shell_css(visual_theme=visual_theme)
     shell_script = report_shell_script()
     registry_script = _evidence_registry_script(evidence_registry)
     contract_script = _report_contract_script(report_contract)
     recipe_script = _regeneration_recipe_script(regeneration_recipe)
+    creative_css = clean_text(creative_layout.get("css") or "") if isinstance(creative_layout, dict) else ""
+    creative_style = (
+        f'  <style data-dc-creative-author-css>\n{creative_css}\n  </style>'
+        if creative_css else ""
+    )
+    page_class = "r-page is-creative-layout" if creative_css else "r-page"
+    creative_attr = ' data-dc-creative-layout="true"' if creative_css else ""
     return f"""<!doctype html>
-<html lang="en"{theme_attr}>
+<html lang="en"{theme_attr}{presentation_attr}>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -130,11 +151,12 @@ def report_shell(
   <style {REPORT_SHELL_CSS_ATTR}>
 {shell_css}
   </style>
+{creative_style}
 </head>
 <body>
   <div class="r-progress" aria-hidden="true"><span></span></div>
   <nav class="r-story-nav" aria-label="Report sections"></nav>
-  <main class="r-page">
+  <main class="{page_class}"{creative_attr}>
     {REPORT_SECTION_START}
 {first_section}
     {registry_script}
@@ -435,7 +457,7 @@ main { counter-reset: story-step; }
   box-shadow: 0 12px 28px rgba(15, 23, 42, .14);
 }
 .r-section[data-dc-section="metric_row"]::before, .r-section[data-dc-section="insight_grid"]::before { display: none; }
-.r-section[data-dc-section="chart"], .r-section[data-dc-section="chart_interpretation"], .r-section[data-dc-section="filterable_chart"], .r-section[data-dc-section="chart_table_explorer"], .r-section[data-dc-section="interactive_table"] { background: linear-gradient(180deg, var(--dc-surface), var(--dc-surface-muted)); }
+.r-section[data-dc-section="chart"], .r-section[data-dc-section="chart_interpretation"], .r-section[data-dc-section="filterable_chart"], .r-section[data-dc-section="chart_table_explorer"], .r-section[data-dc-section="interactive_table"], .r-section[data-dc-section="advanced_visual"] { background: linear-gradient(180deg, var(--dc-surface), var(--dc-surface-muted)); }
 .r-section[data-dc-section="narrative_band"] { background: linear-gradient(135deg, color-mix(in srgb, var(--dc-accent) 8%, var(--dc-surface)), var(--dc-surface)); border-left: 4px solid color-mix(in srgb, var(--dc-accent) 55%, var(--line)); }
 .r-section[data-dc-section="methodology_block"] { background: color-mix(in srgb, var(--dc-accent-2) 5%, var(--dc-surface)); }
 .r-section[data-dc-section="hypothesis_ledger"], .r-section[data-dc-section="evidence_trace"], .r-section[data-dc-section="ledger_timeline"], .r-section[data-dc-section="evidence_rail"] {
@@ -468,6 +490,38 @@ main { counter-reset: story-step; }
 .r-method-card h3 { margin: 0 0 6px; color: var(--ink); }
 .r-chart-story-grid, .r-evidence-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 320px); gap: 18px; align-items: start; }
 .r-chart-main, .r-chart-story-grid > *, .r-explorer-grid > * { min-width: 0; }
+.r-advanced-visual-target {
+  min-height: 300px;
+  width: 100%;
+  overflow: auto hidden;
+  border: 1px solid color-mix(in srgb, var(--dc-accent) 16%, var(--line));
+  border-radius: 14px;
+  background:
+    linear-gradient(color-mix(in srgb, var(--dc-line) 36%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--dc-line) 26%, transparent) 1px, transparent 1px),
+    var(--dc-surface-raised);
+  background-size: 100% 44px, 72px 100%, auto;
+}
+.r-advanced-svg { display: block; width: 100%; height: auto; min-height: 280px; font-family: inherit; }
+.r-av-label { fill: var(--dc-ink); font-size: 13px; font-weight: 650; }
+.r-av-value, .r-av-axis-label { fill: var(--dc-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.r-av-line { stroke: color-mix(in srgb, var(--dc-accent) 50%, var(--dc-line)); stroke-width: 2; fill: none; }
+.r-av-line-strong { stroke: var(--dc-accent); stroke-width: 3; fill: none; }
+.r-av-mark { fill: var(--dc-accent); stroke: var(--dc-surface-raised); stroke-width: 2; }
+.r-av-mark-alt { fill: var(--dc-accent-2); stroke: var(--dc-surface-raised); stroke-width: 2; }
+.r-av-range { stroke: var(--dc-accent-2); stroke-width: 7; stroke-linecap: round; opacity: .64; }
+.r-av-gridline { stroke: color-mix(in srgb, var(--dc-line) 75%, transparent); stroke-width: 1; }
+.r-av-matrix-cell { fill: var(--dc-accent); stroke: var(--dc-surface-raised); stroke-width: 2; }
+.r-av-node { fill: color-mix(in srgb, var(--dc-accent) 11%, var(--dc-surface-raised)); stroke: color-mix(in srgb, var(--dc-accent) 46%, var(--line)); stroke-width: 1.5; }
+.r-av-node-primary { fill: color-mix(in srgb, var(--dc-accent-2) 16%, var(--dc-surface-raised)); stroke: var(--dc-accent-2); }
+.r-av-flow { fill: none; stroke: color-mix(in srgb, var(--dc-accent) 44%, var(--dc-line)); stroke-linecap: round; }
+.r-av-timeline { stroke: color-mix(in srgb, var(--dc-accent-2) 55%, var(--line)); stroke-width: 3; }
+.r-av-caption { fill: var(--dc-muted); font-size: 10px; }
+.r-advanced-svg [tabindex="0"]:focus-visible { outline: none; filter: drop-shadow(0 0 4px color-mix(in srgb, var(--dc-accent) 86%, transparent)); stroke-width: 4; }
+.r-advanced-data-summary { margin-top: 10px; color: var(--dc-muted); font-size: 12px; }
+.r-advanced-data-summary summary { width: fit-content; cursor: pointer; color: var(--dc-accent); font-weight: 700; }
+.r-advanced-data-summary summary:focus-visible { outline: 3px solid color-mix(in srgb, var(--dc-accent) 34%, transparent); outline-offset: 3px; border-radius: 3px; }
+.r-advanced-data-summary .r-interactive-table-wrap { margin-top: 8px; max-height: 320px; }
 .r-interpretation-panel, .r-evidence-rail { border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: var(--dc-surface-raised); }
 .r-interpretation-panel h3, .r-evidence-rail h3 { margin: 0 0 8px; color: var(--ink); font-size: 15px; }
 .r-interpretation-panel p { margin: 0 0 8px; }
@@ -635,6 +689,43 @@ main { counter-reset: story-step; }
 .r-explorer-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 380px); gap: 16px; align-items: start; }
 .r-diagnostic-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin: 18px 0; }
 .r-diagnostic-pair .r-section { height: 100%; margin: 0; }
+.r-story-arc-group {
+  position: relative;
+  margin: 42px 0;
+  padding: 6px 22px 22px;
+  border: 1px solid color-mix(in srgb, var(--dc-accent) 18%, var(--line));
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--dc-surface) 78%, transparent);
+}
+.r-story-arc-group > .r-section:first-child { margin-top: 20px; }
+.r-story-arc-group > .r-section:last-child, .r-story-arc-group > .r-diagnostic-pair:last-child { margin-bottom: 0; }
+.r-story-arc-group .r-section.is-story-arc { margin-top: 18px; }
+.r-story-arc-group .r-section.is-story-arc-primary { border-color: color-mix(in srgb, var(--dc-accent) 42%, var(--line)); }
+html[data-dc-presentation-mode="handcrafted"] body {
+  background:
+    radial-gradient(circle at 9% 4%, color-mix(in srgb, var(--dc-accent) 13%, transparent), transparent 29rem),
+    radial-gradient(circle at 91% 13%, color-mix(in srgb, var(--dc-accent-2) 11%, transparent), transparent 31rem),
+    var(--dc-bg);
+}
+html[data-dc-presentation-mode="handcrafted"] .r-hero h1,
+html[data-dc-presentation-mode="handcrafted"] .r-section h2 { font-family: Georgia, "Times New Roman", serif; letter-spacing: -.018em; }
+html[data-dc-presentation-mode="handcrafted"] .r-hero {
+  border-radius: 6px 28px 6px 28px;
+  background:
+    linear-gradient(125deg, color-mix(in srgb, var(--dc-accent) 18%, var(--dc-surface)), color-mix(in srgb, var(--dc-accent-2) 10%, var(--dc-surface)) 62%, var(--dc-surface));
+}
+html[data-dc-presentation-mode="handcrafted"] .r-story-arc-group {
+  padding: 10px 28px 28px;
+  border-left: 6px solid var(--dc-accent);
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--dc-accent) 5%, var(--dc-surface)), var(--dc-surface) 48%, color-mix(in srgb, var(--dc-accent-2) 5%, var(--dc-surface)));
+  box-shadow: var(--dc-shadow-soft);
+}
+html[data-dc-presentation-mode="handcrafted"] .r-story-arc-group:nth-of-type(even) { border-left-color: var(--dc-accent-2); }
+html[data-dc-presentation-mode="handcrafted"] .r-section[data-dc-section="advanced_visual"] {
+  border-radius: 28px 8px 28px 8px;
+  overflow: hidden;
+}
 .r-table-tools { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
 .r-table-tools input { max-width: 260px; }
 .r-interactive-table-wrap { width: 100%; overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--dc-surface); }
@@ -797,6 +888,11 @@ a.r-evidence-chip:hover { border-color: color-mix(in srgb, var(--dc-accent) 45%,
   .r-hero.is-editorial-dark { padding: 34px 24px 48px; }
   .r-hero + .r-section.is-floating-kpis { margin: -28px 10px 18px; transform: translateY(-12px); }
   .r-interpretation-panel, .r-evidence-rail { position: static; }
+  .r-story-arc-group, html[data-dc-presentation-mode="handcrafted"] .r-story-arc-group { margin: 28px 0; padding: 4px 12px 16px; border-radius: 16px; }
+  .r-advanced-visual-target { min-height: 240px; }
+  .r-advanced-svg .r-av-label { font-size: 28px; }
+  .r-advanced-svg .r-av-value, .r-advanced-svg .r-av-axis-label { font-size: 23px; }
+  .r-advanced-svg .r-av-caption { font-size: 21px; }
 }
 """
     theme_name = clean_text((visual_theme or {}).get("name") if isinstance(visual_theme, dict) else "")
@@ -1281,6 +1377,339 @@ def report_shell_script() -> str:
     Plotly.react(target, traces, applyChartTheme(layout), {responsive: true, displaylogo: false});
     registerChartRender(target, function() { renderChart(target, chart, rows); });
   }
+  function advancedValue(row, visual, key, fallback) {
+    var field = text(visual[key] || fallback || key);
+    return cell(row, field);
+  }
+  function advancedNumber(row, visual, key, fallback) {
+    return coerceNumber(advancedValue(row, visual, key, fallback));
+  }
+  function advancedFormat(value, unit) {
+    var number = coerceNumber(value);
+    if (number === null) return text(value);
+    var formatted = number.toLocaleString(undefined, {maximumFractionDigits: 2});
+    return unit ? formatted + text(unit) : formatted;
+  }
+  function advancedDomain(values, includeZero) {
+    var numbers = values.map(coerceNumber).filter(function(value) { return value !== null; });
+    if (!numbers.length) return [0, 1];
+    var low = Math.min.apply(null, numbers);
+    var high = Math.max.apply(null, numbers);
+    if (includeZero !== false) {
+      low = Math.min(0, low);
+      high = Math.max(0, high);
+    }
+    if (low === high) {
+      var padding = Math.abs(low || 1) * .1;
+      low -= padding;
+      high += padding;
+    }
+    return [low, high];
+  }
+  function advancedScale(value, domain, start, end) {
+    var number = coerceNumber(value);
+    if (number === null) return start;
+    return start + ((number - domain[0]) / (domain[1] - domain[0])) * (end - start);
+  }
+  function advancedSpreadLabels(values, scale, low, high, gap) {
+    var positioned = values.map(function(value, index) { return {index: index, desired: scale(value)}; })
+      .sort(function(a, b) { return a.desired - b.desired; });
+    positioned.forEach(function(item, index) {
+      item.y = Math.max(item.desired, index ? positioned[index - 1].y + gap : low);
+    });
+    if (positioned.length && positioned[positioned.length - 1].y > high) {
+      positioned[positioned.length - 1].y = high;
+      for (var index = positioned.length - 2; index >= 0; index -= 1) {
+        positioned[index].y = Math.min(positioned[index].y, positioned[index + 1].y - gap);
+      }
+    }
+    var result = [];
+    positioned.forEach(function(item) { result[item.index] = Math.max(low, item.y); });
+    return result;
+  }
+  function advancedGrid(domain, start, end, top, bottom) {
+    var out = '';
+    for (var index = 0; index <= 4; index += 1) {
+      var ratio = index / 4;
+      var x = start + ratio * (end - start);
+      var value = domain[0] + ratio * (domain[1] - domain[0]);
+      out += '<line class="r-av-gridline" x1="' + x + '" x2="' + x + '" y1="' + top + '" y2="' + bottom + '"></line>';
+      out += '<text class="r-av-axis-label" x="' + x + '" y="' + (bottom + 22) + '" text-anchor="middle">' + esc(advancedFormat(value, '')) + '</text>';
+    }
+    return out;
+  }
+  function advancedSvg(width, height, label, body) {
+    return '<svg class="r-advanced-svg" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="' + esc(label) + '"><desc>Interactive marks are keyboard focusable. The same aggregate values are available in the adjacent accessible data table.</desc>' + body + '</svg>';
+  }
+  function renderAdvancedDots(target, visual, rows, lollipop) {
+    var labelKey = text(visual.label);
+    var valueKey = text(visual.value);
+    var unit = text(visual.unit || '');
+    var cleanRows = rows.filter(function(row) { return advancedNumber(row, visual, 'value') !== null; }).slice();
+    if (visual.sort !== 'source') cleanRows.sort(function(a, b) { return advancedNumber(b, visual, 'value') - advancedNumber(a, visual, 'value'); });
+    var width = 900;
+    var height = Math.max(260, cleanRows.length * 42 + 62);
+    var left = 210;
+    var right = 820;
+    var values = cleanRows.map(function(row) { return cell(row, valueKey); });
+    var domain = advancedDomain(values, visual.zero_baseline !== false);
+    var body = advancedGrid(domain, left, right, 24, height - 42);
+    cleanRows.forEach(function(row, index) {
+      var y = 34 + index * 42;
+      var value = advancedNumber(row, visual, 'value');
+      var x = advancedScale(value, domain, left, right);
+      var baseline = advancedScale(0, domain, left, right);
+      var label = text(cell(row, labelKey));
+      if (lollipop) body += '<line class="r-av-line" x1="' + baseline + '" x2="' + x + '" y1="' + y + '" y2="' + y + '"></line>';
+      body += '<text class="r-av-label" x="18" y="' + (y + 4) + '">' + esc(label) + '</text>';
+      body += '<circle class="r-av-mark" data-dc-advanced-mark tabindex="0" role="img" aria-label="' + esc(label + ': ' + advancedFormat(value, unit)) + '" cx="' + x + '" cy="' + y + '" r="7"><title>' + esc(label + ': ' + advancedFormat(value, unit)) + '</title></circle>';
+      body += '<text class="r-av-value" x="' + Math.min(right + 8, x + 12) + '" y="' + (y + 4) + '">' + esc(advancedFormat(value, unit)) + '</text>';
+    });
+    target.innerHTML = advancedSvg(width, height, text(visual.aria_label || (lollipop ? 'Lollipop comparison' : 'Dot plot comparison')), body);
+  }
+  function renderAdvancedRange(target, visual, rows) {
+    var labelKey = text(visual.label);
+    var lowKey = text(visual.low);
+    var highKey = text(visual.high);
+    var valueKey = text(visual.value || '');
+    var unit = text(visual.unit || '');
+    var cleanRows = rows.filter(function(row) {
+      return coerceNumber(cell(row, lowKey)) !== null && coerceNumber(cell(row, highKey)) !== null;
+    });
+    var width = 900;
+    var height = Math.max(260, cleanRows.length * 44 + 64);
+    var left = 210;
+    var right = 820;
+    var values = [];
+    cleanRows.forEach(function(row) { values.push(cell(row, lowKey), cell(row, highKey)); });
+    var domain = advancedDomain(values, visual.zero_baseline === true);
+    var body = advancedGrid(domain, left, right, 24, height - 42);
+    cleanRows.forEach(function(row, index) {
+      var y = 34 + index * 44;
+      var low = coerceNumber(cell(row, lowKey));
+      var high = coerceNumber(cell(row, highKey));
+      var midpoint = valueKey ? coerceNumber(cell(row, valueKey)) : (low + high) / 2;
+      var xLow = advancedScale(low, domain, left, right);
+      var xHigh = advancedScale(high, domain, left, right);
+      var xMid = advancedScale(midpoint, domain, left, right);
+      var label = text(cell(row, labelKey));
+      body += '<text class="r-av-label" x="18" y="' + (y + 4) + '">' + esc(label) + '</text>';
+      body += '<line class="r-av-range" x1="' + xLow + '" x2="' + xHigh + '" y1="' + y + '" y2="' + y + '"></line>';
+      body += '<circle class="r-av-mark" data-dc-advanced-mark tabindex="0" role="img" aria-label="' + esc(label + ': ' + advancedFormat(low, unit) + ' to ' + advancedFormat(high, unit)) + '" cx="' + xMid + '" cy="' + y + '" r="7"><title>' + esc(label + ': ' + advancedFormat(low, unit) + ' to ' + advancedFormat(high, unit)) + '</title></circle>';
+      body += '<text class="r-av-value" x="' + (xHigh + 9) + '" y="' + (y + 4) + '">' + esc(advancedFormat(low, unit) + '–' + advancedFormat(high, unit)) + '</text>';
+    });
+    target.innerHTML = advancedSvg(width, height, text(visual.aria_label || 'Range and uncertainty comparison'), body);
+  }
+  function renderAdvancedSlope(target, visual, rows) {
+    var labelKey = text(visual.label);
+    var startKey = text(visual.start);
+    var endKey = text(visual.end);
+    var unit = text(visual.unit || '');
+    var cleanRows = rows.filter(function(row) {
+      return coerceNumber(cell(row, startKey)) !== null && coerceNumber(cell(row, endKey)) !== null;
+    });
+    var width = 900;
+    var height = Math.max(340, Math.min(620, cleanRows.length * 44 + 150));
+    var xStart = 260;
+    var xEnd = 690;
+    var values = [];
+    cleanRows.forEach(function(row) { values.push(cell(row, startKey), cell(row, endKey)); });
+    var domain = advancedDomain(values, false);
+    var yScale = function(value) { return advancedScale(value, domain, height - 70, 70); };
+    var leftLabels = advancedSpreadLabels(cleanRows.map(function(row) { return cell(row, startKey); }), yScale, 62, height - 62, 18);
+    var rightLabels = advancedSpreadLabels(cleanRows.map(function(row) { return cell(row, endKey); }), yScale, 62, height - 62, 18);
+    var body = '<text class="r-av-axis-label" x="' + xStart + '" y="34" text-anchor="middle">' + esc(text(visual.start_label || startKey).replace(/_/g, ' ')) + '</text>' +
+      '<text class="r-av-axis-label" x="' + xEnd + '" y="34" text-anchor="middle">' + esc(text(visual.end_label || endKey).replace(/_/g, ' ')) + '</text>' +
+      '<line class="r-av-gridline" x1="' + (xStart - 25) + '" x2="' + (xEnd + 25) + '" y1="70" y2="70"></line>' +
+      '<line class="r-av-gridline" x1="' + (xStart - 25) + '" x2="' + (xEnd + 25) + '" y1="' + (height - 70) + '" y2="' + (height - 70) + '"></line>' +
+      '<text class="r-av-axis-label" x="' + (xStart - 35) + '" y="74" text-anchor="end">' + esc(advancedFormat(domain[1], unit)) + '</text>' +
+      '<text class="r-av-axis-label" x="' + (xStart - 35) + '" y="' + (height - 66) + '" text-anchor="end">' + esc(advancedFormat(domain[0], unit)) + '</text>' +
+      '<text class="r-av-caption" x="450" y="' + (height - 20) + '" text-anchor="middle">Shared linear scale · ' + esc(advancedFormat(domain[0], unit)) + ' to ' + esc(advancedFormat(domain[1], unit)) + '</text>';
+    cleanRows.forEach(function(row, index) {
+      var label = text(cell(row, labelKey));
+      var start = coerceNumber(cell(row, startKey));
+      var end = coerceNumber(cell(row, endKey));
+      var yStart = yScale(start);
+      var yEnd = yScale(end);
+      var directionClass = end >= start ? 'r-av-line-strong' : 'r-av-line';
+      body += '<path class="' + directionClass + '" data-dc-advanced-mark tabindex="0" role="img" aria-label="' + esc(label + ': ' + advancedFormat(start, unit) + ' to ' + advancedFormat(end, unit)) + '" d="M ' + xStart + ' ' + yStart + ' L ' + xEnd + ' ' + yEnd + '"><title>' + esc(label + ': ' + advancedFormat(start, unit) + ' to ' + advancedFormat(end, unit)) + '</title></path>';
+      body += '<circle class="r-av-mark" cx="' + xStart + '" cy="' + yStart + '" r="6"></circle><circle class="r-av-mark-alt" cx="' + xEnd + '" cy="' + yEnd + '" r="6"></circle>';
+      body += '<line class="r-av-gridline" x1="' + (xStart - 8) + '" x2="' + (xStart - 14) + '" y1="' + yStart + '" y2="' + leftLabels[index] + '"></line>';
+      body += '<line class="r-av-gridline" x1="' + (xEnd + 8) + '" x2="' + (xEnd + 14) + '" y1="' + yEnd + '" y2="' + rightLabels[index] + '"></line>';
+      body += '<text class="r-av-label" x="' + (xStart - 16) + '" y="' + (leftLabels[index] + 4) + '" text-anchor="end">' + esc(label + ' ' + advancedFormat(start, unit)) + '</text>';
+      body += '<text class="r-av-label" x="' + (xEnd + 16) + '" y="' + (rightLabels[index] + 4) + '">' + esc(advancedFormat(end, unit) + ' ' + label) + '</text>';
+    });
+    target.innerHTML = advancedSvg(width, height, text(visual.aria_label || 'Before and after slopegraph'), body);
+  }
+  function renderAdvancedMatrix(target, visual, rows) {
+    var xKey = text(visual.x);
+    var yKey = text(visual.y);
+    var valueKey = text(visual.value);
+    var unit = text(visual.unit || '');
+    var xs = [], ys = [], seenX = {}, seenY = {};
+    rows.forEach(function(row) {
+      var x = text(cell(row, xKey));
+      var y = text(cell(row, yKey));
+      if (x && !seenX[x]) { seenX[x] = true; xs.push(x); }
+      if (y && !seenY[y]) { seenY[y] = true; ys.push(y); }
+    });
+    var width = 900;
+    var left = 170;
+    var top = 100;
+    var chartWidth = 680;
+    var cellWidth = chartWidth / Math.max(1, xs.length);
+    var cellHeight = Math.max(34, Math.min(62, 430 / Math.max(1, ys.length)));
+    var height = top + ys.length * cellHeight + 46;
+    var values = rows.map(function(row) { return coerceNumber(cell(row, valueKey)); }).filter(function(value) { return value !== null; });
+    var domain = advancedDomain(values, false);
+    var body = '<defs><linearGradient id="dc-matrix-legend"><stop offset="0%" stop-color="var(--dc-accent)" stop-opacity=".16"></stop><stop offset="100%" stop-color="var(--dc-accent)" stop-opacity=".96"></stop></linearGradient></defs>' +
+      '<rect x="650" y="26" width="150" height="10" rx="5" fill="url(#dc-matrix-legend)"></rect>' +
+      '<text class="r-av-axis-label" x="644" y="35" text-anchor="end">' + esc(advancedFormat(domain[0], unit)) + '</text>' +
+      '<text class="r-av-axis-label" x="806" y="35">' + esc(advancedFormat(domain[1], unit)) + '</text>';
+    xs.forEach(function(label, index) {
+      var x = left + index * cellWidth + cellWidth / 2;
+      body += '<text class="r-av-axis-label" x="' + x + '" y="' + (top - 16) + '" text-anchor="end" transform="rotate(-34 ' + x + ' ' + (top - 16) + ')">' + esc(label) + '</text>';
+    });
+    ys.forEach(function(label, index) {
+      body += '<text class="r-av-label" x="' + (left - 12) + '" y="' + (top + index * cellHeight + cellHeight / 2 + 4) + '" text-anchor="end">' + esc(label) + '</text>';
+    });
+    rows.forEach(function(row) {
+      var xi = xs.indexOf(text(cell(row, xKey)));
+      var yi = ys.indexOf(text(cell(row, yKey)));
+      var value = coerceNumber(cell(row, valueKey));
+      if (xi < 0 || yi < 0 || value === null) return;
+      var ratio = (value - domain[0]) / (domain[1] - domain[0]);
+      var x = left + xi * cellWidth;
+      var y = top + yi * cellHeight;
+      var label = text(cell(row, yKey)) + ' × ' + text(cell(row, xKey));
+      body += '<rect class="r-av-matrix-cell" data-dc-advanced-mark tabindex="0" role="img" aria-label="' + esc(label + ': ' + advancedFormat(value, unit)) + '" x="' + x + '" y="' + y + '" width="' + cellWidth + '" height="' + cellHeight + '" rx="7" fill-opacity="' + (.16 + .8 * ratio) + '"><title>' + esc(label + ': ' + advancedFormat(value, unit)) + '</title></rect>';
+      if (cellWidth >= 58 && cellHeight >= 34) body += '<text class="r-av-value" x="' + (x + cellWidth / 2) + '" y="' + (y + cellHeight / 2 + 4) + '" text-anchor="middle">' + esc(advancedFormat(value, unit)) + '</text>';
+    });
+    target.innerHTML = advancedSvg(width, height, text(visual.aria_label || 'Comparison matrix'), body);
+  }
+  function renderAdvancedTimeline(target, visual, rows) {
+    var labelKey = text(visual.label);
+    var timeKey = text(visual.time);
+    var detailKey = text(visual.detail || '');
+    var ordered = rows.slice().sort(function(a, b) {
+      var av = Date.parse(text(cell(a, timeKey)));
+      var bv = Date.parse(text(cell(b, timeKey)));
+      if (!Number.isNaN(av) && !Number.isNaN(bv)) return av - bv;
+      return text(cell(a, timeKey)).localeCompare(text(cell(b, timeKey)), undefined, {numeric: true});
+    });
+    var width = 900;
+    var height = 340;
+    var left = 70;
+    var right = 830;
+    var y = 170;
+    var timed = visual.scale === 'time' ? ordered.map(function(row) { return Date.parse(text(cell(row, timeKey))); }) : [];
+    var timeDomain = timed.length ? [Math.min.apply(null, timed), Math.max.apply(null, timed)] : [];
+    var body = '<line class="r-av-timeline" x1="' + left + '" x2="' + right + '" y1="' + y + '" y2="' + y + '"></line>' +
+      '<text class="r-av-caption" x="450" y="320" text-anchor="middle">' + (visual.scale === 'time' ? 'Time-proportional spacing' : 'Ordinal event spacing') + '</text>';
+    ordered.forEach(function(row, index) {
+      var x = ordered.length === 1 ? (left + right) / 2 : (visual.scale === 'time' && timeDomain[0] !== timeDomain[1]
+        ? left + ((timed[index] - timeDomain[0]) / (timeDomain[1] - timeDomain[0])) * (right - left)
+        : left + (index / (ordered.length - 1)) * (right - left));
+      var above = index % 2 === 0;
+      var labelY = above ? y - 50 : y + 62;
+      var timeY = above ? y - 29 : y + 39;
+      var label = text(cell(row, labelKey));
+      var time = text(cell(row, timeKey));
+      var detail = detailKey ? text(cell(row, detailKey)) : '';
+      body += '<line class="r-av-line" x1="' + x + '" x2="' + x + '" y1="' + (above ? y - 8 : y + 8) + '" y2="' + (above ? y - 23 : y + 23) + '"></line>';
+      body += '<circle class="r-av-mark-alt" data-dc-advanced-mark tabindex="0" role="img" aria-label="' + esc(label + ' — ' + time + (detail ? ': ' + detail : '')) + '" cx="' + x + '" cy="' + y + '" r="8"><title>' + esc(label + ' — ' + time + (detail ? ': ' + detail : '')) + '</title></circle>';
+      body += '<text class="r-av-label" x="' + x + '" y="' + labelY + '" text-anchor="middle">' + esc(label) + '</text>';
+      body += '<text class="r-av-axis-label" x="' + x + '" y="' + timeY + '" text-anchor="middle">' + esc(time) + '</text>';
+    });
+    target.innerHTML = advancedSvg(width, height, text(visual.aria_label || 'Event timeline'), body);
+  }
+  function renderAdvancedFlow(target, visual, rows, bracket) {
+    var sourceKey = text(visual.source);
+    var targetKey = text(visual.target);
+    var valueKey = text(visual.value || '');
+    var links = rows.map(function(row) {
+      return {source: text(cell(row, sourceKey)), target: text(cell(row, targetKey)), value: valueKey ? coerceNumber(cell(row, valueKey)) : null};
+    }).filter(function(link) { return link.source && link.target; });
+    var nodes = {};
+    links.forEach(function(link) {
+      if (!nodes[link.source]) nodes[link.source] = {name: link.source, depth: 0};
+      if (!nodes[link.target]) nodes[link.target] = {name: link.target, depth: 1};
+    });
+    for (var pass = 0; pass < 20; pass += 1) {
+      var changed = false;
+      links.forEach(function(link) {
+        var next = Math.min(8, nodes[link.source].depth + 1);
+        if (nodes[link.target].depth < next) { nodes[link.target].depth = next; changed = true; }
+      });
+      if (!changed) break;
+    }
+    var maxDepth = Object.keys(nodes).reduce(function(maximum, key) { return Math.max(maximum, nodes[key].depth); }, 0);
+    var columns = [];
+    for (var depth = 0; depth <= maxDepth; depth += 1) columns.push([]);
+    Object.keys(nodes).forEach(function(key) { columns[nodes[key].depth].push(nodes[key]); });
+    columns.forEach(function(column) { column.sort(function(a, b) { return a.name.localeCompare(b.name, undefined, {numeric: true}); }); });
+    var width = 900;
+    var maxColumn = columns.reduce(function(maximum, column) { return Math.max(maximum, column.length); }, 1);
+    var height = Math.max(300, maxColumn * 54 + 80);
+    var nodeWidth = Math.max(100, Math.min(156, 660 / Math.max(1, columns.length)));
+    var xStep = columns.length === 1 ? 0 : (width - nodeWidth - 70) / (columns.length - 1);
+    columns.forEach(function(column, columnIndex) {
+      var yStep = (height - 70) / Math.max(1, column.length);
+      column.forEach(function(node, rowIndex) {
+        node.x = 34 + columnIndex * xStep;
+        node.y = 42 + rowIndex * yStep;
+      });
+    });
+    var outgoing = {};
+    links.forEach(function(link) { outgoing[link.source] = true; });
+    var values = links.map(function(link) { return link.value; }).filter(function(value) { return value !== null; });
+    var maxValue = values.length ? Math.max.apply(null, values) : 1;
+    var body = '';
+    columns.forEach(function(column, index) {
+      var heading = Array.isArray(visual.stages) ? visual.stages[index] : ((bracket ? 'Round ' : 'Stage ') + (index + 1));
+      body += '<text class="r-av-axis-label" x="' + (34 + index * xStep + nodeWidth / 2) + '" y="22" text-anchor="middle">' + esc(heading || '') + '</text>';
+    });
+    links.forEach(function(link) {
+      var source = nodes[link.source];
+      var destination = nodes[link.target];
+      var x1 = source.x + nodeWidth;
+      var y1 = source.y + 16;
+      var x2 = destination.x;
+      var y2 = destination.y + 16;
+      var bend = (x1 + x2) / 2;
+      var strokeWidth = link.value === null ? 2 : 1.5 + 6 * (link.value / Math.max(1, maxValue));
+      var linkLabel = link.source + ' → ' + link.target + (link.value === null ? '' : ': ' + advancedFormat(link.value, visual.unit || ''));
+      body += '<path class="r-av-flow" data-dc-advanced-mark tabindex="0" role="img" aria-label="' + esc(linkLabel) + '" stroke-width="' + strokeWidth + '" d="M ' + x1 + ' ' + y1 + ' C ' + bend + ' ' + y1 + ', ' + bend + ' ' + y2 + ', ' + x2 + ' ' + y2 + '"><title>' + esc(linkLabel) + '</title></path>';
+    });
+    Object.keys(nodes).forEach(function(key) {
+      var node = nodes[key];
+      var primary = !outgoing[node.name];
+      body += '<rect class="r-av-node' + (primary ? ' r-av-node-primary' : '') + '" tabindex="0" role="img" aria-label="' + esc(node.name) + '" x="' + node.x + '" y="' + node.y + '" width="' + nodeWidth + '" height="32" rx="' + (bracket ? 4 : 12) + '"><title>' + esc(node.name) + '</title></rect>';
+      body += '<text class="r-av-label" x="' + (node.x + nodeWidth / 2) + '" y="' + (node.y + 21) + '" text-anchor="middle">' + esc(node.name) + '</text>';
+    });
+    target.innerHTML = advancedSvg(width, height, text(visual.aria_label || (bracket ? 'Progression bracket' : 'Flow diagram')), body);
+  }
+  function renderAdvancedVisual(target, visual, rows) {
+    if (!target) return;
+    visual = visual || {};
+    rows = Array.isArray(rows) ? rows : [];
+    if (!rows.length) {
+      target.innerHTML = '<div class="r-empty-state">No aggregate records were supplied for this visual.</div>';
+      return;
+    }
+    var type = text(visual.type).toLowerCase().replace(/-/g, '_');
+    if (type === 'dot_plot') renderAdvancedDots(target, visual, rows, false);
+    else if (type === 'lollipop') renderAdvancedDots(target, visual, rows, true);
+    else if (type === 'range_band') renderAdvancedRange(target, visual, rows);
+    else if (type === 'slopegraph') renderAdvancedSlope(target, visual, rows);
+    else if (type === 'matrix') renderAdvancedMatrix(target, visual, rows);
+    else if (type === 'timeline') renderAdvancedTimeline(target, visual, rows);
+    else if (type === 'flow' || type === 'bracket') renderAdvancedFlow(target, visual, rows, type === 'bracket');
+    else target.innerHTML = '<div class="r-empty-state">Unsupported advanced visual type.</div>';
+    var markCount = target.querySelectorAll('[data-dc-advanced-mark]').length;
+    target.setAttribute('data-dc-advanced-mark-count', String(markCount));
+    if (!markCount) target.innerHTML = '<div class="r-empty-state">The validated aggregate payload produced no visual marks.</div>';
+  }
   function initTable(root, config, rowsProvider) {
     var baseRows = normalizeTableRows(config.rows || config.records || [], config.columns);
     var cols = columnsFrom(baseRows, config.columns);
@@ -1386,6 +1815,14 @@ def report_shell_script() -> str:
     var target = document.getElementById(id);
     if (!target) return;
     renderFigure(target, (config && config.figure) || {});
+  };
+  window.DataClawReport.initAdvancedVisual = function(id, config) {
+    var target = document.getElementById(id);
+    if (!target) return;
+    config = config || {};
+    var render = function() { renderAdvancedVisual(target, config.visual || {}, config.records || config.rows || []); };
+    render();
+    registerChartRender(target, render);
   };
   window.DataClawReport.initInteractiveTable = function(id, config) {
     var root = document.getElementById(id);
@@ -1777,7 +2214,7 @@ def analyze_report_quality(
     if isinstance(visual_author, dict):
         author_mode = clean_text(visual_author.get("mode") or "")
         author_status = clean_text(visual_author.get("status") or "")
-        if author_mode in {"runtime", "required"} and author_status == "fallback":
+        if author_mode in {"runtime", "creative", "required"} and author_status == "fallback":
             warn(
                 "visual_author_fallback",
                 "The runtime visual author did not produce a validated plan; the deterministic storyboard was rendered instead.",
@@ -1844,8 +2281,8 @@ def analyze_report_quality(
 
     kinds = [clean_text(section.get("kind") or "") for section in sections]
     plain_chart_count = kinds.count("chart")
-    chart_like_count = sum(1 for kind in kinds if kind in CHART_SECTION_KINDS)
-    interpreted_chart_count = kinds.count("chart_interpretation")
+    chart_like_count = sum(1 for kind in kinds if kind in VISUAL_SECTION_KINDS)
+    interpreted_chart_count = kinds.count("chart_interpretation") + kinds.count("advanced_visual")
     story_count = sum(1 for kind in kinds if kind in STORY_SECTION_KINDS and kind != "chart")
     interactive_count = sum(1 for kind in kinds if kind in INTERACTIVE_SECTION_KINDS)
     primary_insight_count = 0
@@ -1853,6 +2290,8 @@ def analyze_report_quality(
         kind = clean_text(section.get("kind") or "")
         payload = section.get("payload") if isinstance(section.get("payload"), dict) else {}
         if kind in {"findings", "insight_grid"} and isinstance(payload.get("items"), list) and payload.get("items"):
+            primary_insight_count += 1
+        elif kind == "advanced_visual" and payload.get("has_interpretation") and isinstance(payload.get("claim_source"), dict):
             primary_insight_count += 1
 
     run = 0
@@ -1894,7 +2333,7 @@ def analyze_report_quality(
     if len(kinds) >= thresholds["insight_required_min_sections"] and primary_insight_count == 0:
         warn(
             "missing_primary_insights",
-            "Report has multiple sections but no findings or insight grid carrying completed insight items.",
+            "Report has multiple sections but no completed finding, insight grid, or source-bound advanced interpretation.",
             details={"section_count": len(kinds)},
         )
     if (
@@ -1925,7 +2364,7 @@ def analyze_report_quality(
                     "Insight/evidence section has items but no finding_id, hypothesis_id, or evidence reference in metadata.",
                     details={"section_id": section.get("section_id"), "kind": kind},
                 )
-        if kind == "chart_interpretation" and payload.get("has_interpretation") and not payload.get("evidence_count"):
+        if kind in {"chart_interpretation", "advanced_visual"} and payload.get("has_interpretation") and not payload.get("evidence_count"):
             warn(
                 "chart_interpretation_missing_evidence",
                 "Chart interpretation has a narrative conclusion but no evidence refs.",
@@ -1935,7 +2374,7 @@ def analyze_report_quality(
         has_chart_conclusion = bool(clean_text(
             payload.get("conclusion") or payload.get("interpretation") or payload.get("insight") or payload.get("summary") or ""
         )) or bool(payload.get("has_interpretation"))
-        if kind in {"chart", "chart_interpretation", "filterable_chart"} and not has_chart_conclusion:
+        if kind in {"chart", "chart_interpretation", "filterable_chart", "advanced_visual"} and not has_chart_conclusion:
             warn(
                 "chart_missing_conclusion",
                 "Chart section has no stated interpretation or conclusion.",
@@ -1972,6 +2411,40 @@ def analyze_report_quality(
 
     registry_document = _extract_evidence_registry_document(doc)
     registry = _extract_evidence_registry(doc)
+    if (
+        isinstance(visual_author, dict)
+        and clean_text(visual_author.get("mode") or "") == "creative"
+        and clean_text(visual_author.get("status") or "") == "applied"
+        and not [item for item in registry_document.get("targets", []) if isinstance(item, dict)]
+    ):
+        warn(
+            "creative_evidence_ledger_missing",
+            "Creatively authored report HTML has no embedded evidence-ledger targets.",
+            details={"visual_author_mode": "creative"},
+        )
+    if (
+        isinstance(visual_author, dict)
+        and clean_text(visual_author.get("mode") or "") == "creative"
+        and clean_text(visual_author.get("status") or "") == "applied"
+    ):
+        coverage = _extract_report_metadata(doc, "data-dc-author-coverage")
+        if (
+            coverage.get("coverage_schema") != 1
+            or not isinstance(coverage.get("used"), list)
+            or not isinstance(coverage.get("omitted"), list)
+        ):
+            warn(
+                "authored_evidence_coverage_missing",
+                "The authored report has no valid host-attached source coverage manifest.",
+                details={"visual_author_mode": "creative"},
+            )
+        evidence_review = visual_author.get("evidence_review") if isinstance(visual_author.get("evidence_review"), dict) else {}
+        if clean_text(evidence_review.get("status") or "") != "pass":
+            warn(
+                "authored_evidence_review_failed",
+                "The independent evidence review did not pass the authored prose and visuals.",
+                details={"evidence_review": evidence_review},
+            )
     registry_references = registry_document.get("references", []) if isinstance(registry_document.get("references", []), list) else []
     unresolved_refs = _unresolved_evidence_refs(sections, registry, registry_references)
     if unresolved_refs:
@@ -2223,7 +2696,7 @@ def _report_contract_for_storyboard(storyboard: dict[str, Any]) -> dict[str, Any
 
 
 def ensure_regeneration_recipe(storyboard: dict[str, Any]) -> dict[str, Any]:
-    """Attach a deterministic, source-bound recipe without serializing runtime state."""
+    """Attach a source-bound recipe; authored HTML need not be deterministic."""
     source_context = storyboard.get("source_context") if isinstance(storyboard.get("source_context"), dict) else {}
     source_inputs = {
         "insights": source_context.get("insights", []),
@@ -2238,6 +2711,19 @@ def ensure_regeneration_recipe(storyboard: dict[str, Any]) -> dict[str, Any]:
         "section_plan_sha256": _stable_json_sha256(storyboard.get("section_plan", [])),
         "instructions": "Regenerate from this storyboard's source_context and section_plan; do not edit the rendered HTML as the source of truth.",
     }
+    authored = storyboard.get("authored_document") if isinstance(storyboard.get("authored_document"), dict) else {}
+    if authored:
+        recipe.update({
+            "authoring_mode": "llm_full_document",
+            "dossier_sha256": clean_text(authored.get("dossier_sha256") or ""),
+            "authored_document_sha256": hashlib.sha256(
+                clean_text(authored.get("html") or "").encode("utf-8")
+            ).hexdigest(),
+            "instructions": (
+                "Re-author from the source_context and persisted author dossier. Exact report HTML is not required "
+                "to reproduce; preserve the evidence ledger, source coverage, and reviewed analytical meaning."
+            ),
+        })
     storyboard["regeneration_recipe"] = recipe
     return recipe
 
@@ -3017,7 +3503,7 @@ def _has_review_visual(
         if not isinstance(item, dict):
             continue
         section_type = clean_text(item.get("section_type") or "")
-        if section_type not in CHART_SECTION_KINDS:
+        if section_type not in VISUAL_SECTION_KINDS:
             continue
         data = item.get("data") if isinstance(item.get("data"), dict) else {}
         role = clean_text(
@@ -3068,7 +3554,8 @@ def _external_asset_refs(doc: str) -> list[str]:
 
 def _runtime_smoke_failures(doc: str, sections: list[dict[str, Any]]) -> list[dict[str, str]]:
     failures: list[dict[str, str]] = []
-    if REPORT_SHELL_SCRIPT_ATTR not in doc:
+    authored_document = bool(re.search(r"<html\b[^>]*data-dc-authored-document=", doc, re.IGNORECASE))
+    if REPORT_SHELL_SCRIPT_ATTR not in doc and not authored_document:
         failures.append({"check": "report_shell_script", "detail": "missing report runtime script"})
 
     if any(clean_text(section.get("kind") or "") in CHART_SECTION_KINDS for section in sections) and not PLOTLY_RUNTIME_RE.search(doc):
@@ -3085,6 +3572,8 @@ def _runtime_smoke_failures(doc: str, sections: list[dict[str, Any]]) -> list[di
         section_id = clean_text(section.get("section_id") or "")
         if kind in CHART_SECTION_KINDS and "r-chart-target" not in doc:
             failures.append({"check": "chart_target", "detail": f"{section_id or kind} has no chart mount"})
+        if kind in ADVANCED_VISUAL_SECTION_KINDS and "r-advanced-visual-target" not in doc:
+            failures.append({"check": "advanced_visual_target", "detail": f"{section_id or kind} has no advanced visual mount"})
         if kind in INTERACTIVE_SECTION_KINDS and "data-dc-control-bar" not in doc:
             failures.append({"check": "interactive_controls", "detail": f"{section_id or kind} has no control mount"})
     return failures
@@ -3152,6 +3641,13 @@ def _presentation_options(requirements: dict[str, Any]) -> dict[str, str]:
     """
     supplied = requirements.get("presentation")
     supplied = supplied if isinstance(supplied, dict) else {}
+    mode = clean_text(
+        supplied.get("mode")
+        or requirements.get("presentation_mode")
+        or "handcrafted"
+    ).lower().replace("-", "_")
+    if mode not in {"standard", "handcrafted"}:
+        raise ValueError("presentation.mode must be 'standard' or 'handcrafted'")
     insight_layout = clean_text(
         supplied.get("insight_layout")
         or requirements.get("insight_layout")
@@ -3185,6 +3681,7 @@ def _presentation_options(requirements: dict[str, Any]) -> dict[str, str]:
     if data_notes not in {"source_only", "automatic"}:
         raise ValueError("presentation.data_notes must be 'source_only' or 'automatic'")
     return {
+        "mode": mode,
         "insight_layout": insight_layout,
         "insight_evidence": insight_evidence,
         "provenance": provenance,
@@ -3226,7 +3723,7 @@ def _desktop_composition_for(item: dict[str, Any]) -> str:
         return "editorial_findings"
     if section_type in INTERACTIVE_SECTION_KINDS:
         return "interactive_explorer"
-    if section_type in CHART_SECTION_KINDS:
+    if section_type in VISUAL_SECTION_KINDS:
         return "guided_visual"
     if section_type in TRUST_SECTION_KINDS or role in {
         "methodology", "data_quality", "uncertainty", "hypothesis_dispositions", "evidence_trace",
@@ -3301,6 +3798,58 @@ def _story_arc_id(value: Any, index: int) -> str:
     return normalized or f"arc_{index + 1}"
 
 
+def _ensure_default_story_arcs(
+    planned_analyses: list[dict[str, Any]],
+    requirements: dict[str, Any],
+    report_goal: str,
+) -> str:
+    """Create a minimal story-arc contract from supplied structure when absent.
+
+    Handcrafted is the normal designed-report mode, so callers should not have
+    to manufacture a story-arcs payload merely to use the renderer.  Explicit
+    arcs remain authoritative.  The fallback only groups existing analytical
+    sections and reuses the supplied report goal or section titles; it does not
+    create a finding, interpretation, caveat, or causal statement.
+    """
+    supplied = requirements.get("story_arcs")
+    if isinstance(supplied, list) and supplied:
+        return "supplied"
+    if supplied not in (None, "", []):
+        # Let _apply_story_arcs produce the field-specific validation error.
+        return "invalid"
+    if not planned_analyses:
+        requirements.pop("story_arcs", None)
+        return "not_applicable"
+
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for planned in planned_analyses:
+        data = planned.get("data") if isinstance(planned.get("data"), dict) else {}
+        declared = clean_text(data.get("story_arc") or data.get("arc") or "")
+        arc_id = _story_arc_id(declared or "evidence", 0)
+        data["story_arc"] = arc_id
+        planned["data"] = data
+        grouped.setdefault(arc_id, []).append(planned)
+
+    arcs: list[dict[str, Any]] = []
+    for index, (arc_id, sections) in enumerate(grouped.items()):
+        first_data = sections[0].get("data") if isinstance(sections[0].get("data"), dict) else {}
+        supplied_title = clean_text(first_data.get("story_arc_title") or "")
+        title = supplied_title or ("Evidence" if len(grouped) == 1 else arc_id.replace("_", " ").title())
+        question = clean_text(
+            first_data.get("reader_question")
+            or first_data.get("question")
+            or (report_goal if len(grouped) == 1 else first_data.get("title"))
+            or title
+        )
+        arcs.append({
+            "id": arc_id,
+            "title": title,
+            "reader_question": question,
+        })
+    requirements["story_arcs"] = arcs
+    return "compiler_default"
+
+
 def _apply_story_arcs(
     section_plan: list[dict[str, Any]], requirements: dict[str, Any],
 ) -> list[dict[str, Any]]:
@@ -3324,6 +3873,12 @@ def _apply_story_arcs(
         item for item in section_plan
         if not clean_text(item.get("layout_role") or "").startswith("story_arc_")
     ]
+    for item in section_plan:
+        if not isinstance(item, dict):
+            continue
+        item.pop("story_arc_group", None)
+        item.pop("story_arc_position", None)
+        item.pop("story_arc_primary", None)
     by_role = {
         clean_text(item.get("layout_role") or ""): item
         for item in section_plan
@@ -3393,7 +3948,7 @@ def _apply_story_arcs(
             (
                 role for role in roles
                 if clean_text(by_role[role].get("section_type") or "")
-                in (CHART_SECTION_KINDS | INTERACTIVE_SECTION_KINDS | {"table", "entity_card_grid", "comparison"})
+                in (VISUAL_SECTION_KINDS | INTERACTIVE_SECTION_KINDS | {"table", "entity_card_grid", "comparison"})
             ),
             roles[0],
         )
@@ -3404,7 +3959,7 @@ def _apply_story_arcs(
             "sections": roles,
             "primary_section": primary_section,
         }
-        for key in ("question", "claim", "caveat", "interaction"):
+        for key in ("question", "caveat", "interaction"):
             value = clean_text(raw.get(key) or "")
             if value:
                 arc[key] = value
@@ -3421,11 +3976,19 @@ def _apply_story_arcs(
     ordered: list[dict[str, Any]] = [by_role[role] for role in pinned]
     for arc in arcs:
         arc_id = arc["phase"]
-        purpose = clean_text(arc.get("question") or arc.get("claim") or arc["purpose"])
+        purpose = clean_text(arc.get("question") or arc["purpose"])
         title = clean_text(arc["title"])
+        primary_section = clean_text(arc.get("primary_section") or "")
+        for position, role in enumerate(arc["sections"]):
+            by_role[role]["story_arc_group"] = arc_id
+            by_role[role]["story_arc_position"] = position + 1
+            by_role[role]["story_arc_primary"] = role == primary_section
         ordered.append({
             "section_type": "narrative_band",
             "layout_role": f"story_arc_{arc_id}",
+            "story_arc_group": arc_id,
+            "story_arc_position": 0,
+            "story_arc_primary": False,
             "layout_width": "full",
             "rationale": "Introduce the supplied reader question before its existing supporting sections.",
             "data": {
@@ -3546,7 +4109,7 @@ def design_report_storyboard(
     and chart interpretation using only supplied material; it never invents a
     conclusion, caveat, or analytical result.
     """
-    requirements = requirements or {}
+    requirements = copy.deepcopy(requirements or {})
     presentation = _presentation_options(requirements)
     analysis_contract = requirements.get("analysis_review", {})
     if not isinstance(analysis_contract, dict):
@@ -3558,12 +4121,40 @@ def design_report_storyboard(
     analyses = analyses or []
     clean_goal = clean_text(report_goal or title)
     clean_audience = clean_text(audience or requirements.get("audience") or "decision-maker")
-    normalized_insights = [item for item in insights if isinstance(item, dict)]
-    normalized_analyses = [item for item in analyses if isinstance(item, dict)]
+    normalized_insights = [copy.deepcopy(item) for item in insights if isinstance(item, dict)]
+    normalized_analyses = [copy.deepcopy(item) for item in analyses if isinstance(item, dict)]
     if not normalized_insights:
         raise ValueError(
             "report_design_report requires at least one completed insight; use report_add_section for low-level drafts."
         )
+    # Promote simple aggregate shapes into governed visual forms before
+    # minimization.  This lets supplied semantics choose a richer default
+    # without requiring every caller to hand-author a visual mapping.
+    _promote_inferred_advanced_visuals(normalized_analyses)
+
+    # Validate and minimize advanced payloads before they can enter either the
+    # section plan or source_context. Unmapped columns never reach the HTML or
+    # its regeneration sidecar.
+    for index, analysis in enumerate(normalized_analyses):
+        explicit = clean_text(analysis.get("section_type") or analysis.get("kind") or "")
+        if explicit not in ADVANCED_VISUAL_SECTION_KINDS:
+            continue
+        source_data = analysis.get("data") if isinstance(analysis.get("data"), dict) else analysis
+        projected, visual, _ = prepare_advanced_visual_data(source_data)
+        sanitized = {
+            key: copy.deepcopy(value)
+            for key, value in analysis.items()
+            if key not in {"data", "records", "rows", "visual", "visual_spec"}
+        }
+        sanitized.update({
+            key: copy.deepcopy(value)
+            for key, value in source_data.items()
+            if key not in {"records", "rows", "visual", "visual_spec"}
+        })
+        sanitized["records"] = projected
+        sanitized["visual"] = visual
+        sanitized["section_type"] = "advanced_visual"
+        normalized_analyses[index] = sanitized
     section_plan: list[dict[str, Any]] = []
 
     def add(section_type: str, role: str, rationale: str, data: dict[str, Any]) -> None:
@@ -3603,17 +4194,25 @@ def design_report_storyboard(
         planned["data"]["section_id"] = f"sec-analysis-{index + 1}"
         planned["data"].setdefault(
             "layout_width",
-            "full" if planned["section_type"] in (CHART_SECTION_KINDS | INTERACTIVE_SECTION_KINDS) else "content",
+            "full" if planned["section_type"] in (VISUAL_SECTION_KINDS | INTERACTIVE_SECTION_KINDS) else "content",
         )
-        if not hero_assigned and planned["section_type"] in (CHART_SECTION_KINDS | INTERACTIVE_SECTION_KINDS):
+        if not hero_assigned and planned["section_type"] in (VISUAL_SECTION_KINDS | INTERACTIVE_SECTION_KINDS):
             planned["data"]["emphasis"] = "hero"
             hero_assigned = True
         planned_analyses.append(planned)
 
     _link_related_explorers(planned_analyses)
 
-    paired_insights = [_storyboard_insight_item(item, i) for i, item in enumerate(normalized_insights[:7])]
-    _pair_insights_with_evidence(paired_insights, planned_analyses)
+    story_arc_origin = "not_applicable"
+    if presentation["mode"] == "handcrafted":
+        story_arc_origin = _ensure_default_story_arcs(planned_analyses, requirements, clean_goal)
+
+    source_bound_insights = [_storyboard_insight_item(item, i) for i, item in enumerate(normalized_insights)]
+    _pair_insights_with_evidence(source_bound_insights, planned_analyses)
+    if presentation["mode"] == "handcrafted":
+        _validate_handcrafted_plan(planned_analyses, requirements)
+        _bind_handcrafted_claim_sources(source_bound_insights, planned_analyses)
+    paired_insights = source_bound_insights[:7]
 
     readout = _storyboard_readout(clean_goal, normalized_insights)
     add("narrative_band", "executive_readout", "State the answer before the reader reaches supporting evidence.", {
@@ -3628,7 +4227,12 @@ def design_report_storyboard(
         ],
     })
 
-    if paired_insights:
+    visible_insights = (
+        [item for item in paired_insights if not clean_text(item.get("advanced_visual_anchor") or "")]
+        if presentation["mode"] == "handcrafted"
+        else paired_insights
+    )
+    if visible_insights:
         add("insight_grid", "primary_insights", "Separate the material conclusions from the notebook execution trail.", {
             "title": requirements.get("insights_title", "Primary insights"),
             "kicker": "What changed",
@@ -3641,11 +4245,11 @@ def design_report_storyboard(
             ),
             "evidence_presentation": presentation["insight_evidence"],
             "layout_width": "content",
-            "items": paired_insights,
+            "items": visible_insights,
         })
         insight_arcs = {
             _story_arc_id(item.get("story_arc") or item.get("arc") or "", 0)
-            for item in paired_insights
+            for item in visible_insights
             if clean_text(item.get("story_arc") or item.get("arc") or "")
         }
         if len(insight_arcs) == 1:
@@ -3720,7 +4324,13 @@ def design_report_storyboard(
     ]
 
     editorial_architecture = _apply_editorial_architecture(section_plan, requirements)
-    supplied_story_arcs = _apply_story_arcs(section_plan, requirements)
+    if story_arc_origin == "compiler_default" and editorial_architecture["archetype"] != "standard":
+        # A named or data-inferred architecture already supplies a deliberate
+        # reader path. Do not wrap it in a generic arc and undo its pacing.
+        supplied_story_arcs: list[dict[str, Any]] = []
+        story_arc_origin = "editorial_architecture"
+    else:
+        supplied_story_arcs = _apply_story_arcs(section_plan, requirements)
     _apply_desktop_compositions(section_plan)
     if supplied_story_arcs:
         storyboard_steps = supplied_story_arcs
@@ -3737,9 +4347,11 @@ def design_report_storyboard(
         "report_goal": clean_goal,
         "audience": clean_audience,
         "designer": {
-            "mode": "whole_report",
+            "mode": "handcrafted_report" if presentation["mode"] == "handcrafted" else "whole_report",
             "note": "Render from this storyboard after analysis is complete; do not rely on incremental report-cell appends for the final artifact.",
         },
+        "presentation": presentation,
+        "story_arc_origin": story_arc_origin,
         "storyboard": storyboard_steps,
         "editorial_architecture": editorial_architecture,
         "layout_plan": _storyboard_layout(section_plan),
@@ -3747,6 +4359,7 @@ def design_report_storyboard(
         "data_contract": {
             "policy": "Embed aggregate, ranked, or sampled payloads only. Do not fetch live data or embed raw full datasets.",
             "interactive_section_kinds": sorted(INTERACTIVE_SECTION_KINDS),
+            "advanced_visual_section_kinds": sorted(ADVANCED_VISUAL_SECTION_KINDS),
         },
         "intake": {
             "methodology": requirements.get("methodology") or requirements.get("methods") or [],
@@ -3910,7 +4523,7 @@ def _apply_editorial_architecture(
         if isinstance(item, dict) and clean_text(item.get("layout_role") or "").startswith("analysis_")
     ]
     has_visual = any(
-        clean_text(item.get("section_type") or "") in CHART_SECTION_KINDS
+        clean_text(item.get("section_type") or "") in VISUAL_SECTION_KINDS
         and clean_text(item.get("section_type") or "") not in INTERACTIVE_SECTION_KINDS
         for item in analyses
     )
@@ -3992,7 +4605,7 @@ def _apply_editorial_architecture(
     static_visuals = [item for item in analyses
         if item is not taxonomy
         and item not in interactive
-        and clean_text(item.get("section_type") or "") in CHART_SECTION_KINDS
+        and clean_text(item.get("section_type") or "") in VISUAL_SECTION_KINDS
     ]
     indexed_visuals = list(enumerate(static_visuals))
     indexed_visuals.sort(key=lambda pair: _editorial_priority(pair[1], pair[0]))
@@ -4358,7 +4971,11 @@ def _critique_editorial_design(storyboard: dict[str, Any], *, max_passes: int = 
             before = copy.deepcopy(section_plan)
             repaired_architecture = _apply_editorial_architecture(section_plan, requirements)
             storyboard["editorial_architecture"] = repaired_architecture
-            repaired_arcs = _apply_story_arcs(section_plan, requirements)
+            repaired_arcs = (
+                []
+                if clean_text(storyboard.get("story_arc_origin") or "") == "editorial_architecture"
+                else _apply_story_arcs(section_plan, requirements)
+            )
             if repaired_arcs:
                 storyboard["storyboard"] = repaired_arcs
                 storyboard["storyboard_schema"] = 2
@@ -4577,7 +5194,7 @@ def _review_editorial_design(storyboard: dict[str, Any]) -> dict[str, Any]:
 
     visual_sections = [
         item for item in indexed
-        if clean_text(item.get("section_type") or "") in CHART_SECTION_KINDS
+        if clean_text(item.get("section_type") or "") in VISUAL_SECTION_KINDS
     ]
     contextless_visuals = []
     unevidenced_guided_visuals = []
@@ -4588,7 +5205,7 @@ def _review_editorial_design(storyboard: dict[str, Any]) -> dict[str, Any]:
         has_caption = bool(clean_text(data.get("caption") or data.get("dek") or ""))
         has_interpretation = bool(clean_text(data.get("interpretation") or data.get("conclusion") or data.get("insight") or ""))
         has_note = bool(clean_text(data.get("data_note") or ""))
-        guided_visual = variant in {"hero_visual", "diagnostic"} or section_type in {"chart", "chart_interpretation"}
+        guided_visual = variant in {"hero_visual", "diagnostic"} or section_type in {"chart", "chart_interpretation", "advanced_visual"}
         if not (has_caption and (has_interpretation if guided_visual else (has_interpretation or has_note))):
             contextless_visuals.append(clean_text(item.get("layout_role") or ""))
         if guided_visual and not _evidence_ref_keys(data):
@@ -4609,6 +5226,45 @@ def _review_editorial_design(storyboard: dict[str, Any]) -> dict[str, Any]:
             recommendation="Attach the completed analysis cell, artifact, or finding reference to each hero and diagnostic visual; do not rely on a chart title as evidence.",
             sections=unevidenced_guided_visuals,
         )
+
+    presentation = storyboard.get("presentation") if isinstance(storyboard.get("presentation"), dict) else {}
+    handcrafted = clean_text(presentation.get("mode") or "") == "handcrafted"
+    if handcrafted:
+        advanced = [item for item in indexed if clean_text(item.get("section_type") or "") == "advanced_visual"]
+        analytical_roles = [
+            clean_text(item.get("layout_role") or item.get("section_type") or "")
+            for item in indexed
+            if clean_text(item.get("layout_role") or "").startswith("analysis_")
+        ]
+        ungrouped = [
+            clean_text(item.get("layout_role") or item.get("section_type") or "")
+            for item in indexed
+            if clean_text(item.get("layout_role") or "").startswith("analysis_")
+            and not clean_text(item.get("story_arc_group") or "")
+            and len(clean_text(item_data(item).get("story_arc_exempt_reason") or "").strip()) < 12
+        ]
+        requires_arc_groups = clean_text(storyboard.get("story_arc_origin") or "") in {"supplied", "compiler_default"}
+        if requires_arc_groups and analytical_roles and (not declared_arcs or ungrouped):
+            add(
+                "handcrafted_story_arc_incomplete",
+                severity="warning",
+                claim="Handcrafted mode does not group every analytical section into a reader-question story arc.",
+                recommendation="Declare story_arcs and assign every analysis, or document a narrow exemption.",
+                sections=ungrouped,
+            )
+        unbound = [
+            clean_text(item.get("layout_role") or "")
+            for item in advanced
+            if not isinstance(item_data(item).get("claim_source"), dict)
+        ]
+        if unbound:
+            add(
+                "handcrafted_claim_source_missing",
+                severity="warning",
+                claim="An advanced visual interpretation is not bound to a supplied completed finding.",
+                recommendation="Bind it using finding_id/claim_source_id or shared evidence refs before rendering.",
+                sections=unbound,
+            )
 
     if archetype not in {"taxonomy_explorer", "guided_explorer", "path_dependent_forecast", "forecast_knockout"}:
         return {
@@ -4811,6 +5467,8 @@ def review_storyboard_authoring(storyboard: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(visual_config, dict):
         visual_config = requirements.get("visual_author") if isinstance(requirements.get("visual_author"), dict) else {}
     mode = clean_text(visual_config.get("mode") or "off").lower().replace("-", "_")
+    # Full-document creative authoring is reviewed against its evidence dossier;
+    # typed display facts remain the contract for bounded visual-plan modes.
     requested = bool(presentation.get("require_display_facts")) or mode in {"runtime", "required", "provided"}
     declared: set[tuple[str, str]] = set()
     explicit_fact_count = 0
@@ -5092,7 +5750,7 @@ def _apply_visual_emphasis_plan(section_plan: list[dict[str, Any]]) -> bool:
         if section_type == "entity_card_grid" and "card_style" not in data:
             data["card_style"] = "categorical_accents"
             section_changed = True
-        if section_type in {"chart_interpretation", "filterable_chart", "chart_table_explorer"} and "layout_variant" not in data:
+        if section_type in {"chart_interpretation", "filterable_chart", "chart_table_explorer", "advanced_visual"} and "layout_variant" not in data:
             data["layout_variant"] = "evidence_with_interpretation"
             section_changed = True
         if section_changed:
@@ -5101,17 +5759,123 @@ def _apply_visual_emphasis_plan(section_plan: list[dict[str, Any]]) -> bool:
     return changed
 
 
+def _render_authored_document(storyboard: dict[str, Any], *, title: str | None = None) -> str:
+    """Revalidate and attach host-owned audit metadata to LLM-authored HTML."""
+    authored = storyboard.get("authored_document")
+    if not isinstance(authored, dict):
+        raise ValueError("authored document payload is missing")
+    html = authored.get("html")
+    contract = authored.get("contract")
+    if not isinstance(html, str) or not isinstance(contract, dict):
+        raise ValueError("authored document requires HTML and an author contract")
+    validation = validate_authored_document(html, contract)
+    if authored.get("dossier_sha256") != contract.get("dossier_sha256"):
+        raise ValueError("authored document dossier identity no longer matches its contract")
+
+    # Never trust model-supplied host metadata, even if a persisted storyboard
+    # was manually edited after the original authoring pass.
+    reserved_patterns = (
+        r"<script[^>]*data-dc-author-coverage[^>]*>.*?</script>",
+        r"<script[^>]*data-dc-author-evidence-map[^>]*>.*?</script>",
+        r"<script[^>]*data-dc-evidence-registry[^>]*>.*?</script>",
+        rf"<script[^>]*{re.escape(REPORT_CONTRACT_ATTR)}[^>]*>.*?</script>",
+        rf"<script[^>]*{re.escape(REGENERATION_RECIPE_ATTR)}[^>]*>.*?</script>",
+        r"<script[^>]*data-dc-section-meta[^>]*>.*?</script>",
+    )
+    for pattern in reserved_patterns:
+        html = re.sub(pattern, "", html, flags=re.IGNORECASE | re.DOTALL)
+
+    registry = build_evidence_registry(storyboard)
+    report_contract = _report_contract_for_storyboard(storyboard)
+    recipe = ensure_regeneration_recipe(storyboard)
+    evidence_map = {
+        item["alias"]: {"id": item.get("id"), "kind": item.get("kind")}
+        for item in contract.get("evidence", [])
+        if isinstance(item, dict) and clean_text(item.get("alias") or "")
+    }
+    canonical_coverage = {
+        "coverage_schema": 1,
+        "used": validation["coverage"]["used"],
+        "omitted": [
+            {"source": source, "reason": reason}
+            for source, reason in sorted(validation["coverage"]["omitted"].items())
+        ],
+    }
+    authored_meta = {
+        "section_schema": 3,
+        "kind": "narrative_band",
+        "section_id": "authored-document",
+        "title": clean_text(title or storyboard.get("title") or "Analysis Report"),
+        "caption": clean_text(storyboard.get("report_goal") or ""),
+        "payload": {
+            "semantic_role": "authored_document",
+            "source_count": len(contract.get("sources", [])),
+            "evidence_target_count": len(contract.get("evidence", [])),
+            "authored": True,
+        },
+    }
+    host_scripts = "\n".join((
+        f'<script type="application/json" data-dc-author-coverage>{_json_for_script(canonical_coverage)}</script>',
+        f'<script type="application/json" data-dc-author-evidence-map>{_json_for_script(evidence_map)}</script>',
+        _evidence_registry_script(registry),
+        _report_contract_script(report_contract),
+        _regeneration_recipe_script(recipe),
+        f'<script type="application/json" data-dc-section-meta>{_json_for_script(authored_meta)}</script>',
+    ))
+    html = re.sub(
+        r"<meta\b(?=[^>]*http-equiv=[\"']Content-Security-Policy[\"'])[^>]*>",
+        "",
+        html,
+        flags=re.IGNORECASE,
+    )
+    csp = (
+        '<meta http-equiv="Content-Security-Policy" '
+        'content="default-src \'none\'; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'; '
+        'img-src data:; font-src data:; connect-src \'none\'; object-src \'none\'; '
+        'base-uri \'none\'; form-action \'none\'">'
+    )
+    html = re.sub(r"</head\s*>", csp + "\n</head>", html, count=1, flags=re.IGNORECASE)
+    if not re.search(r"<html\b[^>]*data-dc-authored-document=", html, re.IGNORECASE):
+        html = re.sub(
+            r"<html\b([^>]*)>",
+            r'<html\1 data-dc-authored-document="true">',
+            html,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+    html = re.sub(r"</body\s*>", host_scripts + "\n</body>", html, count=1, flags=re.IGNORECASE)
+    authored["coverage"] = validation["coverage"]
+    storyboard["authored_document"] = authored
+    return html
+
+
 def render_report_from_storyboard(storyboard: dict[str, Any], *, title: str | None = None) -> str:
     """Render all storyboard sections in one pass."""
     section_plan = storyboard.get("section_plan", [])
     if not isinstance(section_plan, list) or not section_plan:
         raise ValueError("storyboard requires non-empty list 'section_plan'")
+    presentation = storyboard.get("presentation") if isinstance(storyboard.get("presentation"), dict) else {}
+    if clean_text(presentation.get("mode") or "") == "handcrafted":
+        _validate_handcrafted_source_bindings(storyboard)
+        review = _review_editorial_design(storyboard)
+        blocking_ids = {
+            "handcrafted_story_arc_incomplete",
+            "handcrafted_claim_source_missing",
+        }
+        blockers = [
+            finding["id"] for finding in review.get("findings", [])
+            if isinstance(finding, dict) and finding.get("id") in blocking_ids
+        ]
+        if blockers:
+            raise ValueError("handcrafted storyboard gate failed: " + ", ".join(blockers))
+    if isinstance(storyboard.get("authored_document"), dict):
+        return _render_authored_document(storyboard, title=title)
     _apply_desktop_compositions(section_plan)
     storyboard["layout_plan"] = _storyboard_layout(section_plan)
 
-    html_sections: list[str] = []
+    creative_layout = validate_applied_creative_layout(storyboard)
+    rendered_sections: list[tuple[str, str, str, str]] = []
     include_plotly = False
-    active_group = ""
     for index, planned in enumerate(section_plan):
         if not isinstance(planned, dict):
             continue
@@ -5121,18 +5885,63 @@ def render_report_from_storyboard(storyboard: dict[str, Any], *, title: str | No
             raise ValueError(f"storyboard section {index} is missing section_type")
         data = dict(data)
         data.setdefault("semantic_key", planned.get("layout_role") or f"section-{index}")
+        arc_group = clean_text(planned.get("story_arc_group") or "")
+        if arc_group:
+            data["story_arc_group"] = arc_group
+            data["story_arc_primary"] = bool(planned.get("story_arc_primary"))
         typed = typed_report_section(section_type, data)
         include_plotly = include_plotly or typed.get("kind") in CHART_SECTION_KINDS
         group = clean_text(planned.get("layout_group") or "")
-        if group != active_group:
-            if active_group:
-                html_sections.append("    </div>")
-            if group:
-                html_sections.append(f'    <div class="r-diagnostic-pair" data-dc-layout-group="{_esc(group)}">')
-            active_group = group
-        html_sections.append(render_report_section(section_type, data, typed))
-    if active_group:
-        html_sections.append("    </div>")
+        slot_id = clean_text(
+            planned.get("visual_author_section_id")
+            or data.get("visual_author_section_id")
+            or planned.get("layout_role")
+            or data.get("section_id")
+            or f"section-{index + 1}"
+        )
+        rendered_sections.append((slot_id, arc_group, group, render_report_section(section_type, data, typed)))
+
+    html_sections: list[str] = []
+    if creative_layout:
+        layout_html = creative_layout["layout_html"]
+        seen_slots: set[str] = set()
+        for slot_id, _, _, rendered in rendered_sections:
+            if slot_id in seen_slots:
+                raise ValueError(f"creative layout section id appears more than once: {slot_id}")
+            seen_slots.add(slot_id)
+            token = f"{{{{section:{slot_id}}}}}"
+            if token not in layout_html:
+                raise ValueError(f"creative layout is missing section placeholder: {slot_id}")
+            layout_html = layout_html.replace(token, rendered, 1)
+        if re.search(r"\{\{section:[^}]+\}\}", layout_html):
+            raise ValueError("creative layout contains an unresolved section placeholder")
+        html_sections.append(layout_html)
+    else:
+        active_group = ""
+        active_arc = ""
+        for _, arc_group, group, rendered in rendered_sections:
+            if arc_group != active_arc:
+                if active_group:
+                    html_sections.append("    </div>")
+                    active_group = ""
+                if active_arc:
+                    html_sections.append("    </div>")
+                if arc_group:
+                    html_sections.append(
+                        f'    <div class="r-story-arc-group" data-dc-story-arc-group="{_esc(arc_group)}">'
+                    )
+                active_arc = arc_group
+            if group != active_group:
+                if active_group:
+                    html_sections.append("    </div>")
+                if group:
+                    html_sections.append(f'    <div class="r-diagnostic-pair" data-dc-layout-group="{_esc(group)}">')
+                active_group = group
+            html_sections.append(rendered)
+        if active_group:
+            html_sections.append("    </div>")
+        if active_arc:
+            html_sections.append("    </div>")
 
     registry = build_evidence_registry(storyboard)
     recipe = ensure_regeneration_recipe(storyboard)
@@ -5146,6 +5955,10 @@ def render_report_from_storyboard(storyboard: dict[str, Any], *, title: str | No
         visual_theme=storyboard.get("visual_theme") if isinstance(storyboard.get("visual_theme"), dict) else None,
         report_contract=contract,
         regeneration_recipe=recipe,
+        presentation_mode=clean_text((storyboard.get("presentation") or {}).get("mode") or "standard")
+        if isinstance(storyboard.get("presentation"), dict)
+        else "standard",
+        creative_layout=creative_layout,
     )
 
 
@@ -5245,6 +6058,143 @@ def _pair_insights_with_evidence(insights: list[dict[str, Any]], planned_analyse
                 break
 
 
+def _bind_handcrafted_claim_sources(
+    insights: list[dict[str, Any]], planned_analyses: list[dict[str, Any]],
+) -> None:
+    """Bind each rendered advanced interpretation to a supplied finding.
+
+    The interpretation text remains byte-for-byte sourced from the completed
+    analysis. The binding records which supplied finding it supports and a
+    digest of the exact source text, so refinement cannot silently create or
+    replace a claim.
+    """
+    insight_sources: list[tuple[str, set[str], dict[str, Any]]] = []
+    for index, insight in enumerate(insights):
+        source_id = clean_text(insight.get("finding_id") or insight.get("insight_id") or f"insight-{index + 1}")
+        insight_sources.append((source_id, _evidence_ref_keys(insight), insight))
+    for planned in planned_analyses:
+        if clean_text(planned.get("section_type") or "") != "advanced_visual":
+            continue
+        data = planned.get("data") if isinstance(planned.get("data"), dict) else {}
+        interpretation = clean_text(data.get("interpretation") or data.get("insight") or data.get("summary") or "")
+        if not interpretation:
+            raise ValueError("handcrafted advanced visuals require a supplied interpretation")
+        explicit_id = clean_text(data.get("finding_id") or data.get("claim_source_id") or "")
+        analysis_refs = _evidence_ref_keys(data)
+        candidates = [
+            source for source in insight_sources
+            if (explicit_id and source[0] == explicit_id)
+            or (analysis_refs and source[1] and bool(analysis_refs & source[1]))
+        ]
+        if not candidates and len(insight_sources) == 1:
+            candidates = insight_sources
+        if len(candidates) != 1:
+            raise ValueError(
+                "handcrafted advanced visual interpretations must bind to exactly one supplied finding "
+                "using finding_id/claim_source_id or shared evidence refs"
+            )
+        source_id, _, source_insight = candidates[0]
+        source_insight["evidence_anchor"] = clean_text(data.get("section_id") or "")
+        source_insight["advanced_visual_anchor"] = clean_text(data.get("section_id") or "")
+        data["claim_source"] = {
+            "finding_id": source_id,
+            "source": "completed_analysis.interpretation",
+            "text_sha256": hashlib.sha256(interpretation.encode("utf-8")).hexdigest(),
+            "data_sha256": _stable_json_sha256({
+                "records": data.get("records", data.get("rows", [])),
+                "visual": data.get("visual", data.get("visual_spec", {})),
+            }),
+        }
+        planned["data"] = data
+
+
+def _handcrafted_exception(data: dict[str, Any]) -> str:
+    exception = data.get("handcrafted_exception")
+    if not isinstance(exception, dict) or exception.get("allow_conventional_chart") is not True:
+        return ""
+    reason = clean_text(exception.get("reason") or "").strip()
+    return reason if len(reason) >= 12 else ""
+
+
+def _validate_handcrafted_plan(
+    planned_analyses: list[dict[str, Any]], requirements: dict[str, Any],
+) -> None:
+    """Validate the adaptive handcrafted plan without imposing a chart quota.
+
+    Handcrafted describes the report composition and authoring standard.  It
+    no longer means that every report must contain an advanced visual or avoid
+    all conventional charts.  When analyses exist, the compiler supplies a
+    default arc contract before this check; explicit source arcs still win.
+    """
+    if planned_analyses and (
+        not isinstance(requirements.get("story_arcs"), list)
+        or not requirements.get("story_arcs")
+    ):
+        raise ValueError("handcrafted analysis sections require a story-arc contract")
+    for planned in planned_analyses:
+        data = planned.get("data") if isinstance(planned.get("data"), dict) else {}
+        arc = clean_text(data.get("story_arc") or data.get("arc") or "")
+        exemption = clean_text(data.get("story_arc_exempt_reason") or "").strip()
+        if not arc and len(exemption) < 12:
+            raise ValueError(
+                "handcrafted analyses must declare story_arc, or a story_arc_exempt_reason of at least 12 characters"
+            )
+
+
+def _validate_handcrafted_source_bindings(storyboard: dict[str, Any]) -> None:
+    source_context = storyboard.get("source_context") if isinstance(storyboard.get("source_context"), dict) else {}
+    insights = [item for item in source_context.get("insights", []) if isinstance(item, dict)]
+    analyses = [item for item in source_context.get("analyses", []) if isinstance(item, dict)]
+    insight_sources = [
+        (
+            clean_text(item.get("finding_id") or item.get("insight_id") or f"insight-{index + 1}"),
+            _evidence_ref_keys(item),
+        )
+        for index, item in enumerate(insights)
+    ]
+    insight_ids = {source_id for source_id, _ in insight_sources}
+    source_claims: set[tuple[str, str, str]] = set()
+    for analysis in analyses:
+        explicit = clean_text(analysis.get("section_type") or analysis.get("kind") or "")
+        if explicit != "advanced_visual":
+            continue
+        source_data = analysis.get("data") if isinstance(analysis.get("data"), dict) else analysis
+        records, visual, _ = prepare_advanced_visual_data(source_data)
+        interpretation = clean_text(
+            source_data.get("interpretation") or source_data.get("insight") or source_data.get("summary") or ""
+        )
+        explicit_id = clean_text(source_data.get("finding_id") or source_data.get("claim_source_id") or "")
+        refs = _evidence_ref_keys(source_data)
+        candidate_ids = {
+            source_id for source_id, insight_refs in insight_sources
+            if (explicit_id and explicit_id == source_id)
+            or (refs and insight_refs and bool(refs & insight_refs))
+        }
+        if not candidate_ids and len(insight_sources) == 1:
+            candidate_ids = {insight_sources[0][0]}
+        for source_id in candidate_ids:
+            source_claims.add((
+                source_id,
+                hashlib.sha256(interpretation.encode("utf-8")).hexdigest(),
+                _stable_json_sha256({"records": records, "visual": visual}),
+            ))
+    for planned in storyboard.get("section_plan", []):
+        if not isinstance(planned, dict) or clean_text(planned.get("section_type") or "") != "advanced_visual":
+            continue
+        data = planned.get("data") if isinstance(planned.get("data"), dict) else {}
+        binding = data.get("claim_source") if isinstance(data.get("claim_source"), dict) else {}
+        finding_id = clean_text(binding.get("finding_id") or "")
+        claim = (
+            finding_id,
+            clean_text(binding.get("text_sha256") or ""),
+            clean_text(binding.get("data_sha256") or ""),
+        )
+        if finding_id not in insight_ids or claim not in source_claims:
+            raise ValueError(
+                "handcrafted claim/data binding does not match the storyboard's supplied completed insights and analyses"
+            )
+
+
 def _storyboard_insight_item(item: dict[str, Any], index: int) -> dict[str, Any]:
     copied = dict(item)
     copied.setdefault("title", _item_title(item, f"Insight {index + 1}"))
@@ -5279,6 +6229,135 @@ def _disclosure_text(value: Any) -> str:
     return ""
 
 
+def _record_field(records: list[dict[str, Any]], *candidates: Any) -> str:
+    """Resolve a supplied field name without creating or transforming values."""
+    available: dict[str, str] = {}
+    for row in records:
+        for key in row:
+            normalized = re.sub(r"[^a-z0-9]+", "_", clean_text(key).lower()).strip("_")
+            if normalized and normalized not in available:
+                available[normalized] = clean_text(key)
+    for candidate in candidates:
+        normalized = re.sub(r"[^a-z0-9]+", "_", clean_text(candidate).lower()).strip("_")
+        if normalized in available:
+            return available[normalized]
+    return ""
+
+
+def _inferred_advanced_visual(data: dict[str, Any]) -> dict[str, Any] | None:
+    """Infer a governed visual mapping from clear aggregate semantics.
+
+    This is intentionally conservative.  It recognizes relationships, not
+    report domains, and returns only mappings to existing columns.  Ambiguous
+    payloads remain tables, explorers, figures, or explicit components.
+    """
+    records = data.get("records", data.get("rows"))
+    if not isinstance(records, list) or not records or not all(isinstance(row, dict) for row in records):
+        return None
+    if not clean_text(data.get("interpretation") or data.get("insight") or data.get("summary") or ""):
+        return None
+    if not clean_text(data.get("caption") or ""):
+        return None
+
+    rows = [row for row in records if isinstance(row, dict)]
+    intent = clean_text(
+        data.get("visual_intent")
+        or data.get("semantic_role")
+        or data.get("semantic_intent")
+        or data.get("relationship")
+        or ""
+    ).lower().replace("-", "_")
+    chart = data.get("chart") if isinstance(data.get("chart"), dict) else {}
+
+    label = _record_field(
+        rows,
+        data.get("label"), chart.get("label"), chart.get("x"),
+        "label", "name", "category", "entity", "team", "player", "segment", "cohort", "scenario", "item",
+    )
+    value = _record_field(
+        rows,
+        data.get("value"), chart.get("value"), chart.get("y"),
+        "value", "score", "rate", "percentage", "percent", "probability", "count", "total", "amount",
+    )
+    start = _record_field(rows, data.get("start"), "start", "before", "previous", "baseline", "initial")
+    end = _record_field(rows, data.get("end"), "end", "after", "current", "final")
+    low = _record_field(rows, data.get("low"), "low", "lower", "minimum", "min", "q1", "p10")
+    high = _record_field(rows, data.get("high"), "high", "upper", "maximum", "max", "q3", "p90")
+    x = _record_field(rows, data.get("x"), chart.get("x"), "x", "column", "dimension_x", "category_x")
+    y = _record_field(rows, data.get("y"), chart.get("y"), "y", "row", "dimension_y", "category_y")
+    source = _record_field(rows, data.get("source"), "source", "origin", "from")
+    target = _record_field(rows, data.get("target"), "target", "destination", "to")
+    time_field = _record_field(rows, data.get("time"), "time", "date", "timestamp", "period", "year")
+    detail = _record_field(rows, data.get("detail"), "detail", "description", "note")
+
+    visual: dict[str, Any] | None = None
+    if intent in {"flow", "path", "transition", "funnel", "network", "journey"} and source and target:
+        visual = {"type": "flow", "source": source, "target": target}
+        if value and value not in {source, target}:
+            visual["value"] = value
+    elif intent in {"bracket", "tournament", "elimination"} and source and target:
+        visual = {"type": "bracket", "source": source, "target": target}
+        if value and value not in {source, target}:
+            visual["value"] = value
+    elif label and start and end:
+        visual = {"type": "slopegraph", "label": label, "start": start, "end": end}
+    elif label and low and high:
+        visual = {"type": "range_band", "label": label, "low": low, "high": high}
+        if value and value not in {low, high}:
+            visual["value"] = value
+    elif intent in {"matrix", "heatmap", "cross_tab", "crosstab"} and x and y and value:
+        visual = {"type": "matrix", "x": x, "y": y, "value": value}
+    elif intent in {"timeline", "sequence", "milestone", "history"} and label and time_field:
+        visual = {"type": "timeline", "label": label, "time": time_field}
+        if detail:
+            visual["detail"] = detail
+    elif (
+        label and value
+        and not any(data.get(key) for key in ("filters", "controls", "columns"))
+        and not any(chart.get(key) for key in ("color", "group", "series", "facet", "size"))
+    ):
+        chart_type = clean_text(chart.get("type") or "").lower()
+        if not chart or chart_type in {"bar", "column", "horizontal_bar", ""} or intent in {
+            "ranking", "ranked", "leaderboard", "magnitude", "comparison",
+        }:
+            visual = {
+                "type": "lollipop" if len(rows) <= 12 else "dot_plot",
+                "label": label,
+                "value": value,
+                "sort": "descending" if intent in {"ranking", "ranked", "leaderboard"} else "source",
+            }
+    if visual is None:
+        return None
+
+    for key in ("unit", "start_label", "end_label", "legend_title", "scale", "zero_baseline", "stages"):
+        if key in data:
+            visual[key] = copy.deepcopy(data[key])
+    return visual
+
+
+def _promote_inferred_advanced_visuals(analyses: list[dict[str, Any]]) -> None:
+    """Promote only untyped, unambiguous aggregate assets to advanced visuals."""
+    for index, analysis in enumerate(analyses):
+        explicit = clean_text(analysis.get("section_type") or analysis.get("kind") or "")
+        if explicit:
+            continue
+        data = analysis.get("data") if isinstance(analysis.get("data"), dict) else analysis
+        visual = data.get("visual", data.get("visual_spec"))
+        if isinstance(visual, dict):
+            promoted = copy.deepcopy(analysis)
+            promoted["section_type"] = "advanced_visual"
+            analyses[index] = promoted
+            continue
+        inferred = _inferred_advanced_visual(data)
+        if inferred is None:
+            continue
+        promoted = copy.deepcopy(analysis)
+        target = promoted.get("data") if isinstance(promoted.get("data"), dict) else promoted
+        target["visual"] = inferred
+        promoted["section_type"] = "advanced_visual"
+        analyses[index] = promoted
+
+
 def _storyboard_section_from_analysis(analysis: dict[str, Any], index: int) -> dict[str, Any] | None:
     explicit = clean_text(analysis.get("section_type") or analysis.get("kind") or "")
     data = analysis.get("data") if isinstance(analysis.get("data"), dict) else dict(analysis)
@@ -5289,7 +6368,7 @@ def _storyboard_section_from_analysis(analysis: dict[str, Any], index: int) -> d
 
     renderable = (
         STORY_SECTION_KINDS
-        | CHART_SECTION_KINDS
+        | VISUAL_SECTION_KINDS
         | {"table", "callout", "text", "comparison", "checklist", "explanation", "metric_row"}
     )
     if explicit in renderable:
@@ -5346,6 +6425,58 @@ def _storyboard_section_from_analysis(analysis: dict[str, Any], index: int) -> d
             "rationale": "Render declared status items as a scan-friendly checklist.",
             "data": data,
         }
+    if semantic_role in {"metrics", "metric", "kpi", "scorecard", "summary_metrics"} and isinstance(data.get("metrics", data.get("items")), list):
+        if "metrics" not in data:
+            data["metrics"] = data.get("items", [])
+        return {
+            "section_type": "metric_row",
+            "layout_role": f"analysis_{index + 1}_metrics",
+            "rationale": "Render declared headline measures as a compact metric row.",
+            "data": data,
+        }
+    if semantic_role in {"findings", "insights", "conclusions", "takeaways"} and isinstance(data.get("findings", data.get("insights", data.get("items"))), list):
+        if "items" not in data:
+            data["items"] = data.get("findings", data.get("insights", []))
+        return {
+            "section_type": "findings",
+            "layout_role": f"analysis_{index + 1}_findings",
+            "rationale": "Render declared conclusions as an editorial findings list.",
+            "data": data,
+        }
+    if semantic_role in {"hypotheses", "hypothesis", "validation_ledger"} and isinstance(data.get("hypotheses", data.get("items")), list):
+        return {
+            "section_type": "hypothesis_ledger",
+            "layout_role": f"analysis_{index + 1}_hypotheses",
+            "rationale": "Render supplied hypothesis dispositions as a traceable ledger.",
+            "data": data,
+        }
+    if semantic_role in {"process", "procedure", "explanation", "mechanism", "steps"} and isinstance(data.get("steps", data.get("points", data.get("items"))), list):
+        if "steps" not in data:
+            data["steps"] = data.get("points", data.get("items", []))
+        return {
+            "section_type": "explanation",
+            "layout_role": f"analysis_{index + 1}_explanation",
+            "rationale": "Render supplied stages or reasoning steps as a sequential explanation.",
+            "data": data,
+        }
+    if semantic_role in {"comparison", "comparative", "side_by_side", "tradeoffs"} and isinstance(data.get("groups", data.get("items")), list):
+        return {
+            "section_type": "comparison",
+            "layout_role": f"analysis_{index + 1}_comparison",
+            "rationale": "Render supplied peers or trade-offs as a direct comparison.",
+            "data": data,
+        }
+    if semantic_role in {"lookup", "data_table", "records", "catalog"} and isinstance(data.get("rows", data.get("records")), list):
+        rows = data.get("rows", data.get("records", []))
+        data.setdefault("rows", rows)
+        data.setdefault("columns", _columns_from_records(rows)[:12])
+        data.setdefault("filters", data.get("controls") or _infer_filters(rows))
+        return {
+            "section_type": "interactive_table",
+            "layout_role": f"analysis_{index + 1}_interactive_table",
+            "rationale": "Render supplied record-shaped evidence as a searchable exact-value table.",
+            "data": data,
+        }
 
     if isinstance(data.get("groups"), list) and data.get("groups"):
         return {
@@ -5368,8 +6499,45 @@ def _storyboard_section_from_analysis(analysis: dict[str, Any], index: int) -> d
             "rationale": "Chronological events render as a timeline.",
             "data": data,
         }
+    if isinstance(data.get("metrics"), list) and data.get("metrics"):
+        return {
+            "section_type": "metric_row",
+            "layout_role": f"analysis_{index + 1}_metrics",
+            "rationale": "Metric-shaped assets render as a compact scorecard.",
+            "data": data,
+        }
+    if isinstance(data.get("hypotheses"), list) and data.get("hypotheses"):
+        return {
+            "section_type": "hypothesis_ledger",
+            "layout_role": f"analysis_{index + 1}_hypotheses",
+            "rationale": "Hypothesis-shaped assets render as a disposition ledger.",
+            "data": data,
+        }
+    if isinstance(data.get("findings") or data.get("insights"), list) and (data.get("findings") or data.get("insights")):
+        data.setdefault("items", data.get("findings") or data.get("insights"))
+        return {
+            "section_type": "findings",
+            "layout_role": f"analysis_{index + 1}_findings",
+            "rationale": "Finding-shaped assets render as an editorial list.",
+            "data": data,
+        }
+    if isinstance(data.get("steps") or data.get("points"), list) and (data.get("steps") or data.get("points")):
+        return {
+            "section_type": "explanation",
+            "layout_role": f"analysis_{index + 1}_explanation",
+            "rationale": "Step-shaped assets render as a sequential explanation.",
+            "data": data,
+        }
 
     records = data.get("records", data.get("rows"))
+    visual = data.get("visual", data.get("visual_spec"))
+    if isinstance(records, list) and isinstance(visual, dict):
+        return {
+            "section_type": "advanced_visual",
+            "layout_role": f"analysis_{index + 1}_advanced_visual",
+            "rationale": "Use a handcrafted visual form matched to the supplied aggregate structure and keep its interpretation adjacent.",
+            "data": data,
+        }
     chart = data.get("chart")
     if isinstance(records, list) and isinstance(chart, dict):
         filters = data.get("filters", data.get("controls"))
@@ -5432,7 +6600,7 @@ def _storyboard_section_from_analysis(analysis: dict[str, Any], index: int) -> d
 
     raise ValueError(
         f"analyses[{index}] ('{clean_text(data.get('title') or '')}') has no renderable shape; "
-        "provide records+chart, rows+columns, figure, items, groups, checks, events, or an explicit section_type"
+        "provide records, records+visual, records+chart, rows+columns, figure, items, metrics, findings, hypotheses, steps, groups, checks, events, or an explicit section_type"
     )
 
 
@@ -5605,6 +6773,8 @@ def _storyboard_layout(section_plan: list[dict[str, Any]]) -> list[dict[str, str
             pattern = "reader-facing story arc divider"
         elif section_type in {"chart_interpretation", "chart_table_explorer", "filterable_chart"}:
             pattern = "chart plus interpretation rail"
+        elif section_type == "advanced_visual":
+            pattern = "handcrafted visual plus interpretation rail"
         elif section_type in {"interactive_table", "selector_panel"}:
             pattern = "controls adjacent to evidence"
         elif section_type == "entity_card_grid":
@@ -5626,6 +6796,35 @@ def _section_attrs(typed: dict[str, Any]) -> str:
     return artifact_section_attrs(typed)
 
 
+def _stable_dom_id(prefix: str, typed: dict[str, Any]) -> str:
+    raw = clean_text(typed.get("section_id") or prefix).strip()
+    slug = re.sub(r"[^A-Za-z0-9_-]+", "-", raw).strip("-") or prefix
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:8]
+    return f"{prefix}-{slug}-{digest}"
+
+
+def _render_advanced_data_table(records: list[dict[str, Any]], visual: dict[str, Any]) -> str:
+    columns = list(dict.fromkeys(
+        clean_text(visual.get(role) or "")
+        for role in (*ADVANCED_VISUAL_FIELDS.get(clean_text(visual.get("type") or ""), ()), "value", "detail")
+        if clean_text(visual.get(role) or "")
+    ))
+    if not columns:
+        return ""
+    head = "".join(f"<th scope=\"col\">{_esc(column.replace('_', ' '))}</th>" for column in columns)
+    body = "".join(
+        "<tr>" + "".join(f"<td>{_esc(record.get(column, ''))}</td>" for column in columns) + "</tr>"
+        for record in records
+    )
+    return (
+        '<details class="r-advanced-data-summary">'
+        '<summary>Accessible data table</summary>'
+        '<div class="r-interactive-table-wrap"><table>'
+        f'<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
+        '</details>'
+    )
+
+
 def _section_meta_script(typed: dict[str, Any]) -> str:
     return artifact_section_meta_script(typed)
 
@@ -5635,7 +6834,7 @@ QUIET_SECTION_KINDS = {
     "explanation", "comparison", "entity_card_grid", "ledger_timeline",
 }
 TRUST_SECTION_KINDS = {"methodology_block", "hypothesis_ledger", "evidence_trace", "evidence_rail", "checklist"}
-EVIDENCE_SURFACE_KINDS = CHART_SECTION_KINDS | INTERACTIVE_SECTION_KINDS | {"table"}
+EVIDENCE_SURFACE_KINDS = VISUAL_SECTION_KINDS | INTERACTIVE_SECTION_KINDS | {"table"}
 
 
 def render_report_section(section_type: str, data: dict[str, Any], typed: dict[str, Any] | None = None) -> str:
@@ -5643,7 +6842,7 @@ def render_report_section(section_type: str, data: dict[str, Any], typed: dict[s
     st = str(typed.get("kind") or section_type).strip().lower()
     html = _render_section_body(section_type, data, typed)
     classes = []
-    if clean_text(data.get("emphasis") or "") == "hero" and st in (CHART_SECTION_KINDS | INTERACTIVE_SECTION_KINDS):
+    if clean_text(data.get("emphasis") or "") == "hero" and st in (VISUAL_SECTION_KINDS | INTERACTIVE_SECTION_KINDS):
         classes.append("is-hero")
     width = clean_text(data.get("layout_width") or data.get("width") or "content").lower().replace("-", "_")
     if width not in {"full", "content", "reading"}:
@@ -5665,6 +6864,8 @@ def render_report_section(section_type: str, data: dict[str, Any], typed: dict[s
         classes.append("is-report-epilogue")
     if st == "narrative_band" and variant == "story_arc":
         classes.append("is-story-arc")
+    if bool(data.get("story_arc_primary")):
+        classes.append("is-story-arc-primary")
     if st == "header" and clean_text(data.get("visual_treatment") or "") == "editorial_dark":
         classes.append("is-editorial-dark")
     composition = _desktop_composition_for({"section_type": st, "data": data})
@@ -5683,9 +6884,11 @@ def render_report_section(section_type: str, data: dict[str, Any], typed: dict[s
         classes.append(f"is-composition-{composition.replace('_', '-')}")
     if classes:
         wrapper = "r-hero" if st == "header" else "r-section"
+        arc_group = clean_text(data.get("story_arc_group") or "")
+        arc_attr = f' data-dc-story-arc="{_esc(arc_group)}"' if arc_group else ""
         html = html.replace(
             f'class="{wrapper}"',
-            f'class="{wrapper} {" ".join(classes)}" data-dc-composition="{_esc(composition)}"'
+            f'class="{wrapper} {" ".join(classes)}"{arc_attr} data-dc-composition="{_esc(composition)}"'
             + (f' data-dc-layout-exception="true"' if layout_exception else ""),
             1,
         )
@@ -5741,7 +6944,7 @@ def _render_section_body(section_type: str, data: dict[str, Any], typed: dict[st
     </section>"""
 
     if st in {"chart", "chart_interpretation"}:
-        chart_id = f"chart-{clean_text(typed.get('section_id') or uuid.uuid4().hex[:10])}"
+        chart_id = _stable_dom_id("chart", typed)
         figure = copy.deepcopy(data.get("figure"))
         if not figure and data.get("figure_json"):
             figure = json.loads(str(data["figure_json"]))
@@ -5795,8 +6998,54 @@ def _render_section_body(section_type: str, data: dict[str, Any], typed: dict[st
       {meta}
     </section>"""
 
+    if st == "advanced_visual":
+        shell_id = _stable_dom_id("advanced", typed)
+        records, visual, _ = prepare_advanced_visual_data(data)
+        config = _json_for_script({"records": records, "visual": visual})
+        title = _esc(data.get("title", "Advanced visual"))
+        caption = clean_text(data.get("caption") or "")
+        interpretation = clean_text(data.get("interpretation") or data.get("insight") or data.get("summary") or "")
+        caveat = clean_text(data.get("caveat") or data.get("limitation") or "")
+        next_action = clean_text(data.get("next_action") or data.get("action") or "")
+        evidence = data.get("evidence", data.get("evidence_refs", []))
+        rail = _render_context_evidence(
+            evidence,
+            presentation=data.get("evidence_presentation", "none"),
+        ) if isinstance(evidence, list) and evidence else ""
+        context_data = {
+            key: value
+            for key, value in data.items()
+            if key not in {
+                "records", "rows", "visual", "visual_spec", "caption", "summary",
+                "interpretation", "insight", "caveat", "limitation", "next_action",
+                "action", "evidence", "evidence_refs",
+                "claim_source",
+            }
+        }
+        accessible_table = _render_advanced_data_table(records, visual)
+        return f"""    <section class="r-section" {attrs}>
+      <h2>{title}</h2>
+      {_section_context(context_data)}
+      <div class="r-chart-story-grid r-advanced-visual-grid">
+        <div class="r-chart-main">
+          <div id="{shell_id}" class="r-advanced-visual-target" data-dc-advanced-visual-target></div>
+          <p class="r-caption">{_esc(caption)}</p>
+          {accessible_table}
+        </div>
+        <aside class="r-interpretation-panel">
+          <h3>Interpretation</h3>
+          <p>{_esc(interpretation)}</p>
+          {f'<p class="r-finding-meta"><strong>Caveat:</strong> {_esc(caveat)}</p>' if caveat else ''}
+          {f'<p class="r-finding-meta"><strong>Next:</strong> {_esc(next_action)}</p>' if next_action else ''}
+          {rail}
+        </aside>
+      </div>
+      <script>(window.__DataClawReportQueue=window.__DataClawReportQueue||[]).push({{fn:"initAdvancedVisual",id:"{shell_id}",config:{config}}});</script>
+      {meta}
+    </section>"""
+
     if st == "filterable_chart":
-        shell_id = f"interactive-{uuid.uuid4().hex[:10]}"
+        shell_id = _stable_dom_id("interactive", typed)
         title = _esc(data.get("title", "Filterable chart"))
         records = data.get("records", data.get("rows", []))
         if not isinstance(records, list):
@@ -5832,7 +7081,7 @@ def _render_section_body(section_type: str, data: dict[str, Any], typed: dict[st
     </section>"""
 
     if st == "interactive_table":
-        shell_id = f"interactive-{uuid.uuid4().hex[:10]}"
+        shell_id = _stable_dom_id("interactive", typed)
         rows = data.get("rows", [])
         if not isinstance(rows, list):
             raise ValueError("interactive_table section requires list 'rows'")
@@ -5859,7 +7108,7 @@ def _render_section_body(section_type: str, data: dict[str, Any], typed: dict[st
     </section>"""
 
     if st == "chart_table_explorer":
-        shell_id = f"interactive-{uuid.uuid4().hex[:10]}"
+        shell_id = _stable_dom_id("interactive", typed)
         records = data.get("records", data.get("rows", []))
         if not isinstance(records, list):
             raise ValueError("chart_table_explorer section requires list 'records' or 'rows'")
@@ -5907,7 +7156,7 @@ def _render_section_body(section_type: str, data: dict[str, Any], typed: dict[st
     </section>"""
 
     if st == "selector_panel":
-        shell_id = f"interactive-{uuid.uuid4().hex[:10]}"
+        shell_id = _stable_dom_id("interactive", typed)
         items = data.get("items", data.get("options", []))
         if items is None:
             items = []

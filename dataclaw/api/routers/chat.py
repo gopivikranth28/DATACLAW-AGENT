@@ -43,6 +43,14 @@ APP_CELL_OUTPUT_TOOLS = {"execute_cell", "display_cell_output", "execute_code"}
 APP_REPORT_TOOLS = {"build_report", "report_design_report", "report_add_section", "report_publish"}
 
 
+def _max_turns_notice(max_turns: int) -> str:
+    return (
+        f"The configured limit of {max_turns} agent turns was reached before the task "
+        "finished. Your progress has been saved. Send \"Continue from where you "
+        "stopped\" to resume."
+    )
+
+
 def _stable_app_payload_key(payload: Any) -> str:
     raw = json.dumps(payload, sort_keys=True, default=str)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
@@ -646,7 +654,25 @@ async def _run_agent_loop(
                 if message_started:
                     emit(emitter.text_message_end(msg_id))
 
-        # Max turns reached
+        # Max turns reached. Persist a non-LLM notice so the reason remains
+        # visible after a refresh, then stream the same notice to live clients.
+        # This is an execution limit, not an API failure, so the run still ends
+        # with RUN_FINISHED rather than RUN_ERROR.
+        notice_id = f"run-notice-{run_id}"
+        notice_message = _max_turns_notice(max_turns)
+        await sessions.append_message(thread_id, {
+            "role": "run_notice",
+            "reason": "max_turns",
+            "content": notice_message,
+            "messageId": notice_id,
+            "maxTurns": max_turns,
+        })
+        emit(emitter.custom("agent:max_turns_reached", {
+            "messageId": notice_id,
+            "reason": "max_turns",
+            "message": notice_message,
+            "maxTurns": max_turns,
+        }))
         emit(emitter.run_finished())
         tracker.finish_run(thread_id)
 
@@ -813,6 +839,28 @@ def _session_messages_to_agui(raw_messages: list[dict[str, Any]]) -> list[dict[s
                 "id": m.get("messageId", str(uuid.uuid4())),
                 "role": "system",
                 "content": f"[COMPACTION:{count}:{kept}]\n{summary}",
+            })
+        elif role == "run_notice":
+            # A max-turn notice can follow tool calls without an assistant
+            # message. Flush those calls first so replay preserves the live
+            # transcript order: tool activity, then the stop explanation.
+            if pending_tool_calls:
+                agui.append({
+                    "id": str(uuid.uuid4()),
+                    "role": "assistant",
+                    "content": "",
+                    "toolCalls": pending_tool_calls,
+                })
+                agui.extend(pending_tool_results)
+                pending_tool_calls.clear()
+                pending_tool_results.clear()
+            reason = m.get("reason", "unknown")
+            max_turns = m.get("maxTurns", 0)
+            content = m.get("content", "")
+            agui.append({
+                "id": m.get("messageId", str(uuid.uuid4())),
+                "role": "system",
+                "content": f"[RUN_NOTICE:{reason}:{max_turns}]\n{content}",
             })
         # Skip other roles (system, etc.)
 

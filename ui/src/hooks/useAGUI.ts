@@ -21,11 +21,13 @@ import { API } from '../api'
 
 export interface AGUIMessage {
   id: string
-  role: 'user' | 'assistant' | 'compaction'
+  role: 'user' | 'assistant' | 'compaction' | 'run_notice'
   content: string
   order: number
   compactedCount?: number
   keptCount?: number
+  stopReason?: string
+  maxTurns?: number
   sentFromQueue?: boolean
   queuedAt?: number
 }
@@ -136,6 +138,17 @@ function snapshotToState(messages: Message[]): { msgs: AGUIMessage[]; tcs: ToolC
       }
       order++
       msgs.push({ id: m.id, role: 'assistant', content: contentToString(m.content), order })
+    } else if (m.role === 'system' && typeof m.content === 'string' && m.content.startsWith('[RUN_NOTICE:')) {
+      const match = m.content.match(/^\[RUN_NOTICE:([^:\]]+):(\d+)\]\n?([\s\S]*)$/)
+      order++
+      msgs.push({
+        id: m.id,
+        role: 'run_notice',
+        content: match ? match[3] : m.content,
+        order,
+        stopReason: match ? match[1] : 'unknown',
+        maxTurns: match ? parseInt(match[2], 10) : undefined,
+      })
     } else if (m.role === 'system' && typeof m.content === 'string' && m.content.startsWith('[COMPACTION:')) {
       // Parse compaction metadata from content prefix: [COMPACTION:count:kept]\nsummary
       const match = m.content.match(/^\[COMPACTION:(\d+)(?::(\d+))?\]\n?([\s\S]*)$/)
@@ -329,6 +342,26 @@ export function useAGUI(options?: { onRunFinished?: () => void }) {
         const name = (e as any).name as string | undefined
         const value = (e as any).value as any
         if (!name) break
+
+        if (name === 'agent:max_turns_reached') {
+          const messageId = value?.messageId || `run-notice-${Date.now()}`
+          setState(prev => {
+            if (prev.messages.some(message => message.id === messageId)) return prev
+            orderRef.current++
+            return {
+              ...prev,
+              messages: [...prev.messages, {
+                id: messageId,
+                role: 'run_notice' as const,
+                content: value?.message || 'The configured agent-turn limit was reached before the task finished.',
+                order: orderRef.current,
+                stopReason: value?.reason || 'max_turns',
+                maxTurns: typeof value?.maxTurns === 'number' ? value.maxTurns : undefined,
+              }],
+            }
+          })
+          break
+        }
 
         // Handle compaction events
         if (name === 'compaction') {

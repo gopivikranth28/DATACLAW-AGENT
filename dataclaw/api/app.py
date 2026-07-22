@@ -244,7 +244,7 @@ def create_app() -> FastAPI:
 
     # Core routers — all under /api
     from dataclaw.api.routers import chat, config, skills, skill_library, tools, providers, files, terminal
-    from dataclaw.api.routers import plugins_router, codex_auth, guardrails
+    from dataclaw.api.routers import plugins_router, codex_auth, guardrails, models
     from dataclaw.api.routers.chat import agent_router
 
     app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
@@ -259,6 +259,7 @@ def create_app() -> FastAPI:
     app.include_router(files.router, prefix="/api/workspace", tags=["workspace-files"])
     app.include_router(terminal.router, prefix="/api/terminal", tags=["terminal"])
     app.include_router(codex_auth.router, prefix="/api/codex", tags=["codex-auth"])
+    app.include_router(models.router, prefix="/api/models", tags=["models"])
 
     return app
 

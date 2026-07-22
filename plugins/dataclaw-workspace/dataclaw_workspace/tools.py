@@ -18,6 +18,11 @@ from typing import Any
 
 from dataclaw.config.paths import workspaces_dir
 from dataclaw.storage.skill_library import stale_installed_library_skills
+from dataclaw_artifacts.validator import (
+    ArtifactValidationError,
+    strip_dataclaw_runtime_scripts,
+    validate_and_prepare_html,
+)
 from dataclaw_workspace.config import WorkspaceConfig
 from dataclaw_workspace.report_renderer import (
     CHART_SECTION_KINDS,
@@ -28,6 +33,7 @@ from dataclaw_workspace.report_renderer import (
     REPORT_SHELL_CSS_ATTR as _REPORT_SHELL_CSS_ATTR,
     REPORT_SHELL_SCRIPT_ATTR as _REPORT_SHELL_SCRIPT_ATTR,
     analyze_report_quality as _analyze_report_quality,
+    build_evidence_registry as _build_evidence_registry,
     critique_report_storyboard as _critique_report_storyboard,
     design_report_storyboard as _design_report_storyboard,
     ensure_plotly_runtime as _ensure_plotly_runtime,
@@ -405,7 +411,7 @@ def _attach_rendered_layout_review(design_review: dict[str, Any], runtime_smoke:
             "id": "rendered_layout_smoke_failed",
             "severity": "warning",
             "claim": "Desktop/webview layout checks found a rendered report defect.",
-            "recommendation": "Fix the named desktop/webview layout check, redesign the report, and publish the regenerated artifact.",
+            "recommendation": "Fix the named desktop/mobile layout check, redesign the report, and publish the regenerated artifact.",
             "sections": [],
             "checks": checks,
         })
@@ -415,7 +421,7 @@ def _attach_rendered_layout_review(design_review: dict[str, Any], runtime_smoke:
             "id": "rendered_layout_review_skipped",
             "severity": "info",
             "claim": "Desktop/webview layout review was not available in this publish environment.",
-            "recommendation": "Run publication where Playwright Chromium is available before relying on the desktop/webview layout evidence.",
+            "recommendation": "Run publication where Playwright Chromium is available before relying on the desktop/mobile layout evidence.",
             "sections": [],
         })
     return review
@@ -452,12 +458,15 @@ def _classify_runtime_smoke_result(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def _visual_review_required(storyboard: dict[str, Any], override: bool | None) -> bool:
-    if override is not None:
-        return override
     source_context = storyboard.get("source_context") if isinstance(storyboard.get("source_context"), dict) else {}
     requirements = source_context.get("requirements") if isinstance(source_context.get("requirements"), dict) else {}
     publication = requirements.get("publication") if isinstance(requirements.get("publication"), dict) else {}
-    return bool(publication.get("require_visual_review", requirements.get("require_visual_review", False)))
+    declared = bool(publication.get("require_visual_review", requirements.get("require_visual_review", False)))
+    if declared:
+        return True
+    if override is not None:
+        return override
+    return False
 
 
 def _display_facts_required(storyboard: dict[str, Any]) -> bool:
@@ -487,7 +496,7 @@ def _require_completed_visual_review(runtime_smoke: dict[str, Any]) -> None:
     if runtime_smoke.get("status") != "passed":
         reason = str(runtime_smoke.get("reason") or "browser review did not pass")
         raise ValueError(
-            "Report publish visual-review gate failed: final release requires a passed browser review with full-page and key-section screenshots. "
+            "Report publish visual-review gate failed: final release requires a passed browser review with desktop/mobile full-page and desktop key-section screenshots. "
             f"{reason}"
         )
     artifacts = runtime_smoke.get("screenshots") if isinstance(runtime_smoke.get("screenshots"), list) else []
@@ -501,9 +510,9 @@ def _require_completed_visual_review(runtime_smoke: dict[str, Any]) -> None:
         for item in artifacts
         if isinstance(item, dict) and item.get("kind") == "key_section" and item.get("path") and item.get("sha256")
     )
-    if "desktop" not in full_page_viewports or key_section_count < 1:
+    if not {"desktop", "mobile"}.issubset(full_page_viewports) or key_section_count < 1:
         raise ValueError(
-            "Report publish visual-review gate failed: browser review is missing required desktop full-page or key-section screenshot artifacts."
+            "Report publish visual-review gate failed: browser review is missing required desktop/mobile full-page or desktop key-section screenshot artifacts."
         )
     semantic = runtime_smoke.get("semantic_visual") if isinstance(runtime_smoke.get("semantic_visual"), dict) else {}
     if semantic.get("visual_semantic_schema") != 1 or semantic.get("status") != "pass":
@@ -611,6 +620,11 @@ const target = process.argv[1];
   }
   browser.on('disconnected', () => { browserDisconnected = true; });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  await page.route('**/*', route => {
+    const url = route.request().url();
+    if (/^https?:/i.test(url)) return route.abort('blockedbyclient');
+    return route.continue();
+  });
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push('pageerror: ' + error.message));
   page.on('console', message => { if (message.type() === 'error') pageErrors.push('console: ' + message.text()); });
@@ -638,6 +652,19 @@ const target = process.argv[1];
           failures.push({check: 'chart_mount', detail: 'chart target ' + index + ' did not mount'});
         }
       });
+      document.querySelectorAll('.r-advanced-visual-target').forEach((target, index) => {
+        if (!target.querySelector('.r-advanced-svg')) {
+          failures.push({check: 'advanced_visual_mount', detail: 'advanced visual target ' + index + ' did not mount'});
+        }
+        const marks = target.querySelectorAll('[data-dc-advanced-mark]').length;
+        if (!marks || Number(target.getAttribute('data-dc-advanced-mark-count') || 0) !== marks) {
+          failures.push({check: 'advanced_visual_marks', detail: 'advanced visual target ' + index + ' has no verified rendered marks'});
+        }
+        const section = target.closest('[data-dc-section="advanced_visual"]');
+        if (!section || !section.querySelector('.r-advanced-data-summary table')) {
+          failures.push({check: 'advanced_visual_fallback', detail: 'advanced visual target ' + index + ' has no accessible data table'});
+        }
+      });
       document.querySelectorAll('[data-dc-section="filterable_chart"], [data-dc-section="interactive_table"], [data-dc-section="selector_panel"], [data-dc-section="chart_table_explorer"]').forEach(section => {
         if (!section.querySelector('[data-dc-control-bar]')) failures.push({check: 'interactive_controls', detail: 'interactive section missing controls'});
       });
@@ -653,9 +680,21 @@ const target = process.argv[1];
     const semanticVisual = await page.evaluate(() => {
       const findings = [];
       const text = node => (node && node.textContent || '').trim();
-      const heroHeadings = Array.from(document.querySelectorAll('.r-hero h1'));
+      const authoredDocument = document.documentElement.hasAttribute('data-dc-authored-document');
+      const heroHeadings = Array.from(document.querySelectorAll(authoredDocument ? 'h1' : '.r-hero h1'));
       if (heroHeadings.length !== 1) {
         findings.push({id: 'hero_heading_count', detail: 'report should expose exactly one hero H1; found ' + heroHeadings.length});
+      }
+      if (authoredDocument) {
+        document.querySelectorAll('figure').forEach((figure, index) => {
+          const caption = figure.querySelector('figcaption');
+          if (!caption || !text(caption)) {
+            findings.push({id: 'evidence_context_missing', section: 'authored_figure', detail: 'authored figure ' + index + ' has no visible caption'});
+          }
+          if (!figure.closest('[data-evidence]') && figure.getAttribute('data-decoration') !== 'true') {
+            findings.push({id: 'evidence_context_missing', section: 'authored_figure', detail: 'authored figure ' + index + ' has no evidence binding'});
+          }
+        });
       }
       document.querySelectorAll('.r-section').forEach((section, index) => {
         const kind = section.getAttribute('data-dc-section') || 'section';
@@ -665,7 +704,7 @@ const target = process.argv[1];
         } else if (/^(section|analysis|chart)\\s*\\d*$/i.test(text(heading))) {
           findings.push({id: 'section_heading_generic', section: kind, detail: 'section ' + index + ' uses a generic heading: ' + text(heading)});
         }
-        if (/^(chart|chart_interpretation|filterable_chart|chart_table_explorer)$/.test(kind)) {
+        if (/^(chart|chart_interpretation|filterable_chart|chart_table_explorer|advanced_visual)$/.test(kind)) {
           const hasContext = !!section.querySelector('.r-section-dek, .r-caption, .r-interpretation-panel, .r-conclusion');
           if (!hasContext) findings.push({id: 'evidence_context_missing', section: kind, detail: 'visual evidence has no visible conclusion, caption, or interpretation context'});
         }
@@ -705,12 +744,16 @@ const target = process.argv[1];
     }
     async function captureKeySections(viewport) {
       const selectors = [
+        '[data-source]',
+        'html[data-dc-authored-document] main section',
+        'html[data-dc-authored-document] figure',
         '.r-hero',
         '[data-dc-section="insight_grid"]',
         '[data-dc-section="entity_card_grid"]',
         '[data-dc-section="chart_interpretation"]',
         '[data-dc-section="chart_table_explorer"]',
         '[data-dc-section="filterable_chart"]',
+        '[data-dc-section="advanced_visual"]',
         '[data-dc-section="methodology_block"]',
         '[data-dc-section="evidence_trace"]',
         '.r-section',
@@ -722,7 +765,7 @@ const target = process.argv[1];
         for (const handle of handles) {
           if (ordinal >= 8) return;
           const identity = await handle.evaluate(node => (
-            node.getAttribute('data-dc-section-id') || node.getAttribute('data-dc-section') || node.className || 'section'
+            node.getAttribute('data-dc-section-id') || node.getAttribute('data-dc-section') || node.getAttribute('data-source') || node.className || 'section'
           ));
           const slug = String(identity).replace(/[^a-z0-9_-]+/ig, '-').replace(/^-+|-+$/g, '') || 'section';
           const name = viewport + '-section-' + String(ordinal + 1).padStart(2, '0') + '-' + slug;
@@ -749,13 +792,13 @@ const target = process.argv[1];
         if (document.documentElement.scrollWidth > viewportWidth + 1) {
           failures.push({check: 'horizontal_overflow', detail: name + ' viewport scrolls horizontally (' + document.documentElement.scrollWidth + 'px > ' + viewportWidth + 'px)'});
         }
-        document.querySelectorAll('.r-section, .r-hero').forEach((section, index) => {
+        document.querySelectorAll('.r-section, .r-hero, html[data-dc-authored-document] main > section, html[data-dc-authored-document] main > article, html[data-dc-authored-document] figure').forEach((section, index) => {
           const rect = section.getBoundingClientRect();
           if (rect.left < -1 || rect.right > viewportWidth + 1) {
             failures.push({check: 'section_viewport_clip', detail: name + ' section ' + index + ' extends outside the viewport'});
           }
         });
-        document.querySelectorAll('.r-hero h1, .r-hero-abstract, .r-section h2, .r-section-dek, .r-data-note').forEach((node, index) => {
+        document.querySelectorAll('.r-hero h1, .r-hero-abstract, .r-section h2, .r-section-dek, .r-data-note, html[data-dc-authored-document] h1, html[data-dc-authored-document] h2, html[data-dc-authored-document] h3, html[data-dc-authored-document] p, html[data-dc-authored-document] figcaption').forEach((node, index) => {
           const style = getComputedStyle(node);
           if (node.scrollWidth > node.clientWidth + 1 && style.overflowX !== 'auto' && style.overflowX !== 'scroll') {
             failures.push({check: 'text_viewport_clip', detail: name + ' narrative node ' + index + ' clips its text'});
@@ -765,6 +808,12 @@ const target = process.argv[1];
           const rect = target.getBoundingClientRect();
           if (rect.left < -1 || rect.right > viewportWidth + 1) {
             failures.push({check: 'chart_viewport_clip', detail: name + ' chart target ' + index + ' extends outside the viewport'});
+          }
+        });
+        document.querySelectorAll('.r-advanced-visual-target').forEach((target, index) => {
+          const rect = target.getBoundingClientRect();
+          if (rect.left < -1 || rect.right > viewportWidth + 1) {
+            failures.push({check: 'advanced_visual_viewport_clip', detail: name + ' advanced visual target ' + index + ' extends outside the viewport'});
           }
         });
         document.querySelectorAll('.r-diagnostic-pair').forEach((pair, index) => {
@@ -859,6 +908,7 @@ const target = process.argv[1];
       return layoutChecks;
     }
     checks.push(...await inspectViewport('desktop', 1440, 900));
+    checks.push(...await inspectViewport('mobile', 390, 844));
     checks.push(...pageErrors.map(detail => ({check: 'browser_error', detail})));
     console.log(JSON.stringify({status: checks.length ? 'failed' : 'passed', checks, screenshots, semantic_visual: semanticVisual}));
   } catch (error) {
@@ -1104,6 +1154,7 @@ async def build_report(
     title: str = "",
     audience: str = "",
     quality_gate: str = "warn",
+    presentation_mode: str = "standard",
     workspace_id: str = "default",
     **_: Any,
 ) -> dict[str, Any]:
@@ -1126,6 +1177,14 @@ async def build_report(
     assert html is not None
     if quality_gate not in {"warn", "fail", "off"}:
         raise ValueError("quality_gate must be one of: warn, fail, off")
+    normalized_presentation_mode = str(presentation_mode or "standard").strip().lower().replace("-", "_")
+    if normalized_presentation_mode not in {"standard", "handcrafted"}:
+        raise ValueError("presentation_mode must be 'standard' or 'handcrafted'")
+    if normalized_presentation_mode == "handcrafted":
+        raise ValueError(
+            "build_report cannot safely infer handcrafted visual mappings or claim bindings from rendered HTML. "
+            "Use report_design_report(presentation_mode='handcrafted') with the existing validated aggregate outputs."
+        )
 
     # Ensure output ends with .html
     if not output_path.endswith(".html"):
@@ -1467,7 +1526,22 @@ async def report_publish(
 
     docx_export: dict[str, Any]
     docx_path: str | None = None
-    if export_docx:
+    has_advanced_visuals = any(
+        isinstance(section, dict)
+        and str(section.get("section_type") or section.get("kind") or "").strip() == "advanced_visual"
+        for section in storyboard.get("section_plan", [])
+    )
+    has_authored_document = isinstance(storyboard.get("authored_document"), dict)
+    if export_docx and (has_advanced_visuals or has_authored_document):
+        docx_export = {
+            "requested": True,
+            "status": "unsupported",
+            "reason": (
+                "DOCX conversion cannot preserve the report's authored HTML/CSS/SVG/Canvas presentation; "
+                "publish the single-file HTML or add validated static snapshots first."
+            ),
+        }
+    elif export_docx:
         proposed_docx_path = report_path.rsplit(".", 1)[0] + ".docx"
         resolved_docx = _resolve_path(workspace_id, proposed_docx_path)
 
@@ -1569,6 +1643,7 @@ async def report_design_report(
     title: str = "Analysis Report",
     quality_gate: str = "fail",
     design_passes: int = 5,
+    presentation_mode: str | None = None,
     visual_author: dict[str, Any] | None = None,
     llm: Any = None,
     workspace_id: str = "default",
@@ -1593,6 +1668,13 @@ async def report_design_report(
         raise ValueError("requirements.analysis_review must be a dictionary")
     if visual_author is not None and not isinstance(visual_author, dict):
         raise ValueError("visual_author must be a dictionary when supplied")
+    supplied_presentation = requirements.get("presentation") if isinstance(requirements, dict) and isinstance(requirements.get("presentation"), dict) else {}
+    nested_mode = supplied_presentation.get("mode") if isinstance(supplied_presentation, dict) else None
+    normalized_presentation_mode = str(
+        presentation_mode if presentation_mode is not None else (nested_mode or "handcrafted")
+    ).strip().lower().replace("-", "_")
+    if normalized_presentation_mode not in {"standard", "handcrafted"}:
+        raise ValueError("presentation_mode must be 'standard' or 'handcrafted'")
     if quality_gate not in {"warn", "fail", "off"}:
         raise ValueError("quality_gate must be one of: warn, fail, off")
     if not isinstance(design_passes, int) or not 1 <= design_passes <= 5:
@@ -1603,22 +1685,55 @@ async def report_design_report(
     if not storyboard_path.endswith(".json"):
         storyboard_path = storyboard_path.rsplit(".", 1)[0] + ".json"
 
+    resolved_requirements = dict(requirements or {})
+    presentation = resolved_requirements.get("presentation") if isinstance(resolved_requirements.get("presentation"), dict) else {}
+    presentation = dict(presentation)
+    presentation["mode"] = normalized_presentation_mode
+    resolved_requirements["presentation"] = presentation
+
     storyboard = _design_report_storyboard(
         report_goal=report_goal,
         insights=insights,
         analyses=analyses or [],
         audience=audience,
         title=title,
-        requirements=requirements or {},
+        requirements=resolved_requirements,
         max_design_passes=design_passes,
     )
     # Finish deterministic structure and evidence critique before the runtime
     # author sees the page. The model then composes the final, validated plan
     # rather than choosing a treatment for a structure that later mutates.
     storyboard, critique = _critique_report_storyboard(storyboard)
-    visual_author_cfg = visual_author_config(requirements or {}, visual_author)
-    # Store the resolved, bounded contract so authoring-coverage checks at
-    # publication can validate the same source facts without replaying an LLM.
+    visual_author_cfg = visual_author_config(resolved_requirements, visual_author)
+    visual_author_was_explicit = visual_author is not None or "visual_author" in resolved_requirements
+    evidence_ledger = _build_evidence_registry(storyboard)
+    storyboard["evidence_registry"] = evidence_ledger
+    evidence_targets = [
+        item for item in evidence_ledger.get("targets", [])
+        if isinstance(item, dict)
+    ]
+    if visual_author_cfg.get("mode") == "creative" and not evidence_targets:
+        raise ValueError(
+            "Creative report authoring requires a non-empty evidence ledger. "
+            "Supply stable finding/evidence ids and registered evidence targets, or use visual_author.mode='runtime'."
+        )
+    if (
+        not visual_author_was_explicit
+        and normalized_presentation_mode == "handcrafted"
+        and llm is not None
+    ):
+        # With a ledger, give the configured model a bounded-data dossier and
+        # full-document authorship. Reports without a ledger retain the legacy
+        # bounded visual-plan contract.
+        visual_author_cfg = visual_author_config(
+            resolved_requirements,
+            {
+                "mode": "creative" if evidence_targets else "runtime",
+                "allow_story_reorder": False,
+            },
+        )
+    # Persist the resolved contract and ledger so publication can validate the
+    # final artifact without replaying the LLM authoring call.
     storyboard["visual_author_config"] = visual_author_cfg
     resolved_storyboard = _resolve_path(workspace_id, storyboard_path)
     try:
@@ -1639,9 +1754,20 @@ async def report_design_report(
             f"Failure audit: {audit_path}"
         ) from exc
 
-    # The visual author may select evidence-bound display facts and, only when
-    # source-declared zones permit it, reorder whole story blocks. It never
-    # creates evidence, so follow-up reviews confirm the final plan read-only.
+    authoring_dossier_path: Path | None = None
+    authored_document = storyboard.get("authored_document") if isinstance(storyboard.get("authored_document"), dict) else {}
+    dossier = authored_document.pop("dossier", None) if isinstance(authored_document, dict) else None
+    if isinstance(dossier, str) and dossier:
+        authoring_dossier_path = resolved_storyboard.with_name(f"{resolved_storyboard.stem}.author-dossier.md")
+        authoring_dossier_path.parent.mkdir(parents=True, exist_ok=True)
+        authoring_dossier_path.write_text(dossier, encoding="utf-8")
+        authored_document["dossier_path"] = str(authoring_dossier_path)
+        authored_document["dossier_sha256"] = hashlib.sha256(dossier.encode("utf-8")).hexdigest()
+        storyboard["authored_document"] = authored_document
+
+    # Creative mode supplies a separately reviewed full document; bounded modes
+    # still select display facts and declared story blocks. The storyboard
+    # remains the analytical source and publication audit record for both.
     final_design_review = _review_storyboard_design(storyboard)
     final_authoring_review = _review_storyboard_authoring(storyboard)
     initial_design_review = critique.get("design_review") if isinstance(critique.get("design_review"), dict) else {}
@@ -1656,6 +1782,21 @@ async def report_design_report(
     critique["authoring_review"] = final_authoring_review
     critique["analytical_review"] = final_analytical_review
     doc = _render_report_from_storyboard(storyboard, title=title)
+    try:
+        validate_and_prepare_html(
+            strip_dataclaw_runtime_scripts(doc),
+            session_id=workspace_id,
+        )
+    except ArtifactValidationError as exc:
+        raise ValueError(
+            f"Report artifact-safety validation failed: {exc.code}: {exc}"
+        ) from exc
+    artifact_safety = {
+        "status": "pass",
+        "validator": "dataclaw_artifacts.validate_and_prepare_html",
+        "workspace_plotly_runtime_excluded": True,
+    }
+    storyboard["artifact_safety"] = artifact_safety
     stale_skills = [] if quality_gate == "off" else stale_installed_library_skills()
     quality = (
         _analyze_report_quality(
@@ -1701,7 +1842,7 @@ async def report_design_report(
         html_sha256=storyboard["rendered_html_sha256"],
     )
 
-    return {
+    result = {
         "type": "report_design",
         "publication_status": "designed",
         "publish_required": True,
@@ -1712,6 +1853,8 @@ async def report_design_report(
         "section_count": len(storyboard.get("section_plan", [])),
         "interaction_count": len(storyboard.get("interaction_plan", [])),
         "visual_author": visual_author_result,
+        "presentation_mode": normalized_presentation_mode,
+        "artifact_safety": artifact_safety,
         "quality": quality,
         "html_sha256": storyboard["rendered_html_sha256"],
         "critique": critique,
@@ -1722,6 +1865,9 @@ async def report_design_report(
         "size": resolved_html.stat().st_size,
         "updated": True,
     }
+    if authoring_dossier_path is not None:
+        result["authoring_dossier_path"] = str(authoring_dossier_path)
+    return result
 
 
 async def report_add_section(

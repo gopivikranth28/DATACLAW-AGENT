@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Alert, Card, Select, Input, InputNumber, Switch, Button, Modal, Tag, Space, Divider, message } from 'antd'
-import { SaveOutlined, CheckCircleOutlined, CloseCircleOutlined, QuestionCircleOutlined, LoadingOutlined, DownloadOutlined, CodeOutlined, LoginOutlined } from '@ant-design/icons'
+import { SaveOutlined, CheckCircleOutlined, CloseCircleOutlined, QuestionCircleOutlined, LoadingOutlined, DownloadOutlined, CodeOutlined, LoginOutlined, ReloadOutlined } from '@ant-design/icons'
 import { API } from '../api'
 import WebTerminal from '../components/WebTerminal'
 
@@ -32,6 +32,18 @@ interface ProviderInfo {
   }
 }
 
+interface ModelOption {
+  id: string
+  label: string
+}
+
+interface ModelCatalogResponse {
+  backend: string
+  authenticated: boolean
+  models: ModelOption[]
+  message?: string | null
+}
+
 interface Props {
   plugins: PluginInfo[]
 }
@@ -40,6 +52,12 @@ export default function ConfigPage({ plugins }: Props) {
   const [config, setConfig] = useState<any>({})
   const [saving, setSaving] = useState(false)
   const [providers, setProviders] = useState<ProviderInfo[]>([])
+  const [availableModels, setAvailableModels] = useState<ModelOption[]>([])
+  const [modelsLoading, setModelsLoading] = useState(false)
+  const [modelsAuthenticated, setModelsAuthenticated] = useState<boolean | null>(null)
+  const [modelsMessage, setModelsMessage] = useState<string | null>(null)
+  const [modelsError, setModelsError] = useState<string | null>(null)
+  const modelRequestRef = useRef(0)
 
   useEffect(() => {
     fetch(`${API}/config`)
@@ -64,6 +82,7 @@ export default function ConfigPage({ plugins }: Props) {
         message.success('Configuration saved')
         // Re-fetch providers so config schemas reflect the new backend selections
         fetch(`${API}/providers`).then(r => r.json()).then(setProviders).catch(() => {})
+        await loadModels()
       }
       else message.error('Failed to save')
     } catch {
@@ -79,6 +98,59 @@ export default function ConfigPage({ plugins }: Props) {
   const pluginsConfig = config.plugins || {}
   const openclawConfig = pluginsConfig.openclaw || {}
   const agentBackend = backend === 'openclaw' ? 'openclaw' : backend
+
+  async function loadModels() {
+    const selectedBackend = (config.llm?.backend || 'openclaw') as string
+    if (!['anthropic', 'openai', 'gemini', 'codex'].includes(selectedBackend)) {
+      setAvailableModels([])
+      setModelsAuthenticated(null)
+      setModelsMessage(null)
+      setModelsError(null)
+      return
+    }
+
+    const selectedConfig = config.llm?.[selectedBackend] || {}
+    const payload: Record<string, string> = { backend: selectedBackend }
+    const apiKey = selectedConfig.api_key || ''
+    if (apiKey && apiKey !== '***' && !apiKey.includes('...')) payload.api_key = apiKey
+    if (selectedBackend === 'openai') payload.base_url = selectedConfig.base_url || ''
+    if (selectedBackend === 'codex') payload.auth_mode = selectedConfig.auth_mode || 'default'
+
+    const requestId = ++modelRequestRef.current
+    setModelsLoading(true)
+    setModelsError(null)
+    try {
+      const res = await fetch(`${API}/models`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.detail || 'Failed to load models')
+      if (requestId !== modelRequestRef.current) return
+
+      const catalog = data as ModelCatalogResponse
+      setAvailableModels(catalog.models || [])
+      setModelsAuthenticated(catalog.authenticated)
+      setModelsMessage(catalog.message || null)
+    } catch (error) {
+      if (requestId !== modelRequestRef.current) return
+      setAvailableModels([])
+      setModelsAuthenticated(false)
+      setModelsMessage(null)
+      setModelsError(error instanceof Error ? error.message : 'Failed to load models')
+    } finally {
+      if (requestId === modelRequestRef.current) setModelsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!config.llm) return
+    loadModels()
+    // Credentials are deliberately omitted: API-key fields trigger loading on
+    // blur/Enter so we do not send a request for every character typed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentBackend, backendConfig.auth_mode])
 
   const updateBackendConfig = (field: string, value: any) => {
     setConfig((prev: any) => ({
@@ -162,6 +234,7 @@ export default function ConfigPage({ plugins }: Props) {
         setCodexLoginResult({ success: true })
         setCodexLoggingIn(false)
         setCodexRedirectUrl('')
+        loadModels()
       } else {
         message.success('Redirect replayed — waiting for Codex to confirm…')
         setCodexRedirectUrl('')
@@ -212,7 +285,10 @@ export default function ConfigPage({ plugins }: Props) {
             const evt = JSON.parse(line.slice(6))
             if (evt.status === 'completed' || evt.status === 'failed') {
               setCodexLoginResult({ success: evt.success, error: evt.error })
-              if (evt.success) message.success('Codex login successful')
+              if (evt.success) {
+                message.success('Codex login successful')
+                loadModels()
+              }
               else message.error(evt.error || 'Codex login failed')
             }
           } catch { /* skip */ }
@@ -476,21 +552,28 @@ export default function ConfigPage({ plugins }: Props) {
                 value={backendConfig.api_key || ''}
                 onChange={e => updateBackendConfig('api_key', e.target.value)}
                 placeholder="Enter API key"
+                onBlur={loadModels}
+                onPressEnter={loadModels}
               />
             </Field>
-            <Field label="Model">
-              <Input
-                value={backendConfig.model || ''}
-                onChange={e => updateBackendConfig('model', e.target.value)}
-                placeholder={agentBackend === 'anthropic' ? 'claude-sonnet-4-20250514' : agentBackend === 'openai' ? 'gpt-4o' : 'gemini-2.5-flash'}
-              />
-            </Field>
+            <ModelSelector
+              value={backendConfig.model || ''}
+              onChange={value => updateBackendConfig('model', value)}
+              models={availableModels}
+              loading={modelsLoading}
+              authenticated={modelsAuthenticated}
+              statusMessage={modelsMessage}
+              error={modelsError}
+              onReload={loadModels}
+            />
             {agentBackend === 'openai' && (
               <Field label="Base URL (optional)">
                 <Input
                   value={backendConfig.base_url || ''}
                   onChange={e => updateBackendConfig('base_url', e.target.value)}
                   placeholder="https://api.openai.com/v1"
+                  onBlur={loadModels}
+                  onPressEnter={loadModels}
                 />
               </Field>
             )}
@@ -517,6 +600,8 @@ export default function ConfigPage({ plugins }: Props) {
                   value={backendConfig.api_key || ''}
                   onChange={e => updateBackendConfig('api_key', e.target.value)}
                   placeholder="Enter OpenAI API key"
+                  onBlur={loadModels}
+                  onPressEnter={loadModels}
                 />
               </Field>
             )}
@@ -584,13 +669,16 @@ export default function ConfigPage({ plugins }: Props) {
                 </Space>
               </Field>
             )}
-            <Field label="Model">
-              <Input
-                value={backendConfig.model || ''}
-                onChange={e => updateBackendConfig('model', e.target.value)}
-                placeholder="gpt-5.5"
-              />
-            </Field>
+            <ModelSelector
+              value={backendConfig.model || ''}
+              onChange={value => updateBackendConfig('model', value)}
+              models={availableModels}
+              loading={modelsLoading}
+              authenticated={modelsAuthenticated}
+              statusMessage={modelsMessage}
+              error={modelsError}
+              onReload={loadModels}
+            />
           </>
         )}
 
@@ -963,6 +1051,71 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <div style={{ fontSize: 13, color: '#666', marginBottom: 4 }}>{label}</div>
       {children}
     </div>
+  )
+}
+
+function ModelSelector({
+  value,
+  onChange,
+  models,
+  loading,
+  authenticated,
+  statusMessage,
+  error,
+  onReload,
+}: {
+  value: string
+  onChange: (value: string) => void
+  models: ModelOption[]
+  loading: boolean
+  authenticated: boolean | null
+  statusMessage: string | null
+  error: string | null
+  onReload: () => void
+}) {
+  const configuredModelMissing = !!value && authenticated === true && !models.some(model => model.id === value)
+  const helpText = error
+    || statusMessage
+    || (loading ? 'Loading models from the authenticated provider…' : null)
+    || (authenticated && models.length === 0 ? 'The provider returned no available models.' : null)
+
+  return (
+    <Field label="Model">
+      <Space.Compact style={{ width: '100%' }}>
+        <Select
+          value={value || undefined}
+          onChange={onChange}
+          options={models.map(model => ({ value: model.id, label: model.label }))}
+          loading={loading}
+          disabled={authenticated !== true || models.length === 0}
+          placeholder={loading ? 'Loading models…' : 'Authenticate to choose a model'}
+          showSearch
+          optionFilterProp="label"
+          style={{ width: '100%' }}
+          notFoundContent={loading ? <LoadingOutlined /> : 'No models available'}
+        />
+        <Button
+          icon={<ReloadOutlined />}
+          loading={loading}
+          onClick={onReload}
+          title="Reload available models"
+          aria-label="Reload available models"
+        />
+      </Space.Compact>
+      {helpText && (
+        <div style={{ fontSize: 11, color: error ? '#cf1322' : '#999', marginTop: 2 }}>
+          {helpText}
+        </div>
+      )}
+      {configuredModelMissing && (
+        <Alert
+          type="warning"
+          showIcon
+          title={`The configured model “${value}” is not in the provider's current model list. Choose an available model before saving.`}
+          style={{ marginTop: 8, fontSize: 12 }}
+        />
+      )}
+    </Field>
   )
 }
 

@@ -223,6 +223,7 @@ async def test_report_design_report_storyboards_then_renders_cohesive_html(cfg):
     html = Path(result["html_path"]).read_text()
     storyboard = Path(result["storyboard_path"]).read_text()
     assert result["type"] == "report_design"
+    assert result["presentation_mode"] == "handcrafted"
     assert result["publication_status"] == "designed"
     assert result["publish_required"] is True
     assert result["section_count"] >= 6
@@ -233,7 +234,7 @@ async def test_report_design_report_storyboards_then_renders_cohesive_html(cfg):
     assert "data-dc-section=\"chart_table_explorer\"" in html
     assert "initChartTableExplorer" in html
     assert "report_design" in result["type"]
-    assert "\"mode\": \"whole_report\"" in storyboard
+    assert "\"mode\": \"handcrafted_report\"" in storyboard
     assert "section_plan" in storyboard
     assert result["design_review"]["passes"] == 5
     assert result["design_review"]["status"] == "pass"
@@ -242,6 +243,115 @@ async def test_report_design_report_storyboards_then_renders_cohesive_html(cfg):
         finding["id"] for finding in result["analytical_review"]["findings"]
     }
     assert "\"analytical_review\"" in storyboard
+
+
+@pytest.mark.asyncio
+async def test_report_design_report_handcrafted_mode_uses_safe_advanced_visuals(cfg):
+    result = await report_design_report(
+        cfg=cfg,
+        report_goal="Explain how the validated contender probabilities changed.",
+        title="Contender Movement",
+        report_path="reports/handcrafted.html",
+        storyboard_path="reports/handcrafted.storyboard.json",
+        presentation_mode="handcrafted",
+        insights=[{
+            "title": "The ordering changed",
+            "detail": "The supplied update moves A ahead of B.",
+            "finding_id": "finding-movement",
+            "evidence": [{"kind": "notebook_cell", "ref": "cell-movement"}],
+        }],
+        analyses=[{
+            "section_type": "advanced_visual",
+            "title": "Before and after contender odds",
+            "caption": "Before and after probabilities from the validated aggregate output.",
+            "records": [
+                {"team": "A", "before": 18.2, "after": 23.4},
+                {"team": "B", "before": 20.1, "after": 17.8},
+            ],
+            "visual": {
+                "type": "slopegraph",
+                "label": "team",
+                "start": "before",
+                "end": "after",
+                "unit": "%",
+            },
+            "interpretation": "The supplied update moves A ahead of B.",
+            "story_arc": "movement",
+            "evidence": [{"kind": "notebook_cell", "ref": "cell-movement"}],
+        }],
+        requirements={
+            "story_arcs": [{
+                "id": "movement",
+                "title": "What changed?",
+                "reader_question": "Which validated movements change the ordering?",
+            }],
+            "evidence_registry": {
+                "targets": [{"id": "cell-movement", "kind": "notebook_cell", "present": True}],
+            },
+        },
+    )
+
+    html = Path(result["html_path"]).read_text()
+    storyboard = json.loads(Path(result["storyboard_path"]).read_text())
+    assert result["presentation_mode"] == "handcrafted"
+    assert result["artifact_safety"]["status"] == "pass"
+    assert result["quality"]["status"] == "pass"
+    assert storyboard["designer"]["mode"] == "handcrafted_report"
+    assert storyboard["source_context"]["requirements"].get("publication", {}).get("require_visual_review") is not True
+    assert 'data-dc-presentation-mode="handcrafted"' in html
+    assert 'data-dc-section="advanced_visual"' in html
+    assert 'data-dc-story-arc-group="movement"' in html
+    assert "initAdvancedVisual" in html
+    assert 'data-dc-runtime="plotly"' not in html
+
+
+def test_visual_review_is_explicit_and_declared_requirement_cannot_be_disabled():
+    storyboard = {"presentation": {"mode": "handcrafted"}, "source_context": {"requirements": {}}}
+    assert workspace_tools._visual_review_required(storyboard, False) is False
+    required = {
+        "presentation": {"mode": "handcrafted"},
+        "source_context": {"requirements": {"publication": {"require_visual_review": True}}},
+    }
+    assert workspace_tools._visual_review_required(required, False) is True
+
+
+@pytest.mark.asyncio
+async def test_build_report_fails_closed_for_handcrafted_upgrade(cfg):
+    with pytest.raises(ValueError, match="cannot safely infer handcrafted visual mappings"):
+        await build_report(
+            cfg=cfg,
+            html="<html><body><h1>Legacy report</h1></body></html>",
+            presentation_mode="handcrafted",
+        )
+
+
+@pytest.mark.asyncio
+async def test_report_design_report_preserves_nested_handcrafted_mode(cfg):
+    result = await report_design_report(
+        cfg=cfg,
+        report_goal="Explain the supplied aggregate.",
+        report_path="reports/nested-handcrafted.html",
+        storyboard_path="reports/nested-handcrafted.storyboard.json",
+        insights=[{"finding_id": "finding-a", "title": "A leads", "detail": "A has the supplied leading value."}],
+        analyses=[{
+            "section_type": "advanced_visual",
+            "title": "Supplied values",
+            "caption": "Validated aggregate values.",
+            "records": [{"label": "A", "value": 2}],
+            "visual": {"type": "dot_plot", "label": "label", "value": "value"},
+            "interpretation": "A has the supplied leading value.",
+            "finding_id": "finding-a",
+            "story_arc": "signal",
+        }],
+        requirements={
+            "presentation": {"mode": "handcrafted"},
+            "story_arcs": [{
+                "id": "signal", "title": "What leads?",
+                "reader_question": "Which supplied value leads?",
+            }],
+        },
+    )
+    assert result["presentation_mode"] == "handcrafted"
 
 
 @pytest.mark.asyncio
@@ -280,7 +390,7 @@ async def test_report_publish_regates_and_writes_receipt(cfg):
     assert published["docx_export"] == {"requested": False, "status": "skipped"}
     assert published["runtime_smoke"]["status"] in {"passed", "skipped"}
     assert receipt["status"] == "published"
-    assert receipt["quality"]["rubric_version"] == 7
+    assert receipt["quality"]["rubric_version"] == 12
     assert receipt["analytical_review"] == published["analytical_review"]
     assert published["analytical_review"]["status"] == "pass"
     assert receipt["runtime_smoke"] == published["runtime_smoke"]
@@ -362,6 +472,7 @@ async def test_report_publish_can_require_browser_visual_review_artifacts(cfg, m
         artifacts = []
         for name, kind, viewport in (
             ("desktop-full-page", "full_page", "desktop"),
+            ("mobile-full-page", "full_page", "mobile"),
             ("desktop-hero", "key_section", "desktop"),
         ):
             artifact_path = review_dir / f"{name}.png"
@@ -1316,6 +1427,66 @@ async def test_runtime_smoke_emits_passing_semantic_review_for_a_designed_report
 
 
 @pytest.mark.asyncio
+async def test_runtime_smoke_mounts_every_advanced_visual_type_with_accessible_fallback(cfg):
+    specs = [
+        ("dot_plot", {"label": "label", "value": "value"}, [{"label": "A", "value": 2}]),
+        ("lollipop", {"label": "label", "value": "value"}, [{"label": "A", "value": 2}]),
+        ("slopegraph", {"label": "label", "start": "start", "end": "end"}, [{"label": "A", "start": 1, "end": 2}]),
+        ("range_band", {"label": "label", "low": "low", "high": "high"}, [{"label": "A", "low": 1, "high": 3}]),
+        ("matrix", {"x": "x", "y": "y", "value": "value"}, [{"x": "A", "y": "B", "value": 2}]),
+        ("timeline", {"label": "label", "time": "time", "scale": "time"}, [{"label": "A", "time": "2026-07-18"}]),
+        ("flow", {"source": "source", "target": "target"}, [{"source": "A", "target": "B"}, {"source": "B", "target": "C"}]),
+        ("bracket", {"source": "source", "target": "target", "stages": ["Round", "Final"]}, [{"source": "A", "target": "B"}]),
+    ]
+    insights = []
+    analyses = []
+    targets = []
+    for index, (visual_type, mapping, records) in enumerate(specs, start=1):
+        finding_id = f"finding-{visual_type}"
+        evidence_id = f"cell-{visual_type}"
+        interpretation = f"The supplied {visual_type} aggregate is rendered without a new claim."
+        evidence = [{"kind": "notebook_cell", "ref": evidence_id}]
+        insights.append({"finding_id": finding_id, "title": visual_type, "detail": interpretation, "evidence": evidence})
+        analyses.append({
+            "section_type": "advanced_visual",
+            "title": visual_type.replace("_", " ").title(),
+            "caption": f"Validated aggregate input for {visual_type}.",
+            "records": records,
+            "visual": {"type": visual_type, **mapping},
+            "interpretation": interpretation,
+            "finding_id": finding_id,
+            "evidence": evidence,
+            "story_arc": "visuals",
+        })
+        targets.append({"id": evidence_id, "kind": "notebook_cell", "present": True})
+
+    designed = await report_design_report(
+        cfg=cfg,
+        report_goal="Verify all governed advanced visual grammars.",
+        report_path="reports/runtime-advanced.html",
+        storyboard_path="reports/runtime-advanced.storyboard.json",
+        presentation_mode="handcrafted",
+        quality_gate="warn",
+        insights=insights,
+        analyses=analyses,
+        requirements={
+            "story_arcs": [{
+                "id": "visuals", "title": "How are the supplied relationships encoded?",
+                "reader_question": "Does each governed visual preserve its validated aggregate relationship?",
+            }],
+            "evidence_registry": {"targets": targets},
+        },
+    )
+    smoke = await workspace_tools._run_report_runtime_smoke(Path(designed["html_path"]))
+    assert smoke["status"] in {"passed", "skipped"}, smoke
+    if smoke["status"] == "passed":
+        assert not [
+            check for check in smoke["checks"]
+            if check["check"] in {"advanced_visual_mount", "advanced_visual_marks", "advanced_visual_fallback"}
+        ]
+
+
+@pytest.mark.asyncio
 async def test_runtime_smoke_honors_a_documented_desktop_layout_exception(cfg):
     designed = await report_design_report(
         cfg=cfg,
@@ -1395,9 +1566,9 @@ async def test_report_add_section_normalizes_array_table_rows_and_safe_narrative
     assert smoke["status"] in {"passed", "skipped"}
     if smoke["status"] == "passed":
         assert not [check for check in smoke["checks"] if check["check"] == "table_content"]
-        assert {shot["viewport"] for shot in smoke["screenshots"]} == {"desktop"}
+        assert {shot["viewport"] for shot in smoke["screenshots"]} == {"desktop", "mobile"}
         assert all(Path(shot["path"]).is_file() and shot["bytes"] >= 1024 for shot in smoke["screenshots"])
-        assert {shot["viewport"] for shot in smoke["screenshots"] if shot["kind"] == "full_page"} == {"desktop"}
+        assert {shot["viewport"] for shot in smoke["screenshots"] if shot["kind"] == "full_page"} == {"desktop", "mobile"}
         assert any(shot["kind"] == "key_section" for shot in smoke["screenshots"])
 
 

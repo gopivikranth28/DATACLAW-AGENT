@@ -14,7 +14,7 @@
 # promotion to `fail`, except a versioned criterion that closes a material
 # publish-gate bypass. rubric_version bumps on any criteria/threshold change.
 
-rubric_version: 7
+rubric_version: 12
 
 # Gate thresholds — every value matches the live gate (analyze_report_quality).
 thresholds:
@@ -40,7 +40,7 @@ criteria:
     status: live
     since_version: 3
     scope: section
-    applies_to: [findings, insight_grid, chart_interpretation, hypothesis_ledger, evidence_trace, evidence_rail]
+    applies_to: [findings, insight_grid, chart_interpretation, advanced_visual, hypothesis_ledger, evidence_trace, evidence_rail]
     signal: >-
       Every evidence ref on an item dereferences to a registered target that is
       present in the artifact bundle (or a stable external ref).
@@ -96,7 +96,7 @@ criteria:
     status: live
     since_version: 7
     scope: section
-    applies_to: [metric_row, findings, insight_grid, chart_interpretation]
+    applies_to: [metric_row, findings, insight_grid, chart_interpretation, advanced_visual]
     signal: Quantitative headline claims show CI / confidence / n where applicable.
     remediable: partial
     on_fail: warn
@@ -108,12 +108,25 @@ criteria:
     severity: warn
     status: live
     scope: section
-    applies_to: [chart_interpretation]
+    applies_to: [chart_interpretation, advanced_visual]
     signal: A chart_interpretation with a narrative conclusion has >=1 evidence ref.
     remediable: false
     on_fail: warn
     remediation: request_evidence     # flag if absent
     rationale: A conclusion beside a chart still needs a trace to its source.
+
+  - id: handcrafted_claim_source_missing
+    axis: rigor
+    severity: fail
+    status: live
+    since_version: 8
+    scope: section
+    applies_to: [advanced_visual]
+    signal: Every handcrafted advanced interpretation is digest-bound to exactly one supplied completed finding.
+    remediable: false
+    on_fail: block
+    remediation: bind_to_completed_finding
+    rationale: A visual redesign may preserve a completed claim, but it may not create a new one.
 
   - id: missing_recipe
     axis: rigor
@@ -170,7 +183,7 @@ criteria:
     severity: fail
     status: live
     scope: report
-    applies_to: [chart, filterable_chart, chart_table_explorer, interactive_table, selector_panel]
+    applies_to: [chart, advanced_visual, filterable_chart, chart_table_explorer, interactive_table, selector_panel]
     signal: >-
       >= explorer_required_min_sections sections with >= explorer_required_min_charts
       chart-like sections include at least one explorer/selector/filterable/table.
@@ -184,7 +197,7 @@ criteria:
     severity: warn                    # v3 evaluator launch; promotes per A.10
     status: live
     scope: section
-    applies_to: [chart, chart_interpretation, filterable_chart]
+    applies_to: [chart, chart_interpretation, advanced_visual, filterable_chart]
     signal: Every chart states what it shows, not just its axes.
     remediable: true
     on_fail: warn
@@ -257,10 +270,11 @@ criteria:
     severity: fail
     status: live
     scope: report
-    applies_to: [findings, insight_grid]
+    applies_to: [findings, insight_grid, advanced_visual]
     signal: >-
       Reports with >= insight_required_min_sections sections carry at least one
-      findings/insight-grid section with completed insight items.
+      findings/insight-grid section with completed insight items, or a source-bound
+      advanced interpretation that is already adjacent to its evidence.
     remediable: partial
     on_fail: block
     remediation: promote_intake_insights_into_insight_grid   # block only if intake has none (§5.5)
@@ -292,6 +306,60 @@ criteria:
     on_fail: warn
     remediation: rerun_pairing_or_flag_evidence_orphaned
     rationale: Insight–evidence anchors are the readable form of the evidence graph.
+
+  - id: handcrafted_story_arc_incomplete
+    axis: narrative
+    severity: fail
+    status: live
+    since_version: 8
+    scope: report
+    applies_to: [advanced_visual, section]
+    signal: Handcrafted reports declare reader-question story arcs and group every analytical section or document a narrow exemption.
+    remediable: true
+    on_fail: block
+    remediation: assign_story_arcs
+    rationale: Grouped analysis is the report's reader path, not optional decoration.
+
+  - id: handcrafted_advanced_visual_missing
+    axis: narrative
+    severity: fail
+    status: deferred
+    since_version: 8
+    scope: report
+    applies_to: [advanced_visual]
+    signal: Handcrafted mode includes at least one governed advanced visual over validated aggregate records.
+    remediable: true
+    on_fail: block
+    remediation: add_advanced_visual
+    rationale: Advanced visuals can improve a report, but they are not a valid quota for adaptive editorial composition.
+
+  - id: handcrafted_conventional_chart_unapproved
+    axis: narrative
+    severity: fail
+    status: deferred
+    since_version: 8
+    scope: section
+    applies_to: [chart, chart_interpretation, filterable_chart, chart_table_explorer]
+    signal: Conventional charts in handcrafted mode carry a narrow, auditable exception rationale.
+    remediable: true
+    on_fail: block
+    remediation: replace_or_document_exception
+    rationale: A familiar chart can be the clearest faithful form; component choice should follow the supplied relationship rather than a handcrafted-mode ban.
+
+  - id: advanced_visual_semantics
+    axis: integrity
+    severity: fail
+    status: live
+    since_version: 8
+    scope: section
+    applies_to: [advanced_visual]
+    signal: >-
+      Mapped aggregate fields are projected before embedding; all records pass type-specific
+      numeric, cardinality, uniqueness, range, time-scale, and acyclic-flow validation.
+    remediable: false
+    on_fail: block
+    remediation: repair_aggregate_visual_input
+    rationale: A mounted SVG is not evidence that its values or visual structure are valid.
 
   # ── Integrity axis ─────────────────────────────────────────────────────────
   - id: unstructured_report
@@ -381,6 +449,45 @@ criteria:
     remediation: inspect_runtime_author_or_use_provided_spec
     rationale: A safe fallback protects content integrity but is not evidence that the requested runtime composition ran.
 
+  - id: creative_evidence_ledger_missing
+    axis: integrity
+    severity: fail
+    status: live
+    since_version: 10
+    scope: report
+    applies_to: [report]
+    signal: A creatively authored document retains a non-empty embedded evidence ledger.
+    remediable: true
+    on_fail: block
+    remediation: restore_evidence_ledger_or_disable_creative_authoring
+    rationale: Creative layout freedom is acceptable only while the report preserves a durable path from reader-facing findings to supplied evidence.
+
+  - id: authored_evidence_coverage_missing
+    axis: integrity
+    severity: fail
+    status: live
+    since_version: 11
+    scope: report
+    applies_to: [report]
+    signal: A fully authored report records every supplied finding and analytical asset as used or intentionally omitted.
+    remediable: true
+    on_fail: block
+    remediation: restore_source_coverage_manifest
+    rationale: Free-form editorial synthesis may merge or omit inputs, but it must make that coverage decision explicit.
+
+  - id: authored_evidence_review_failed
+    axis: rigor
+    severity: fail
+    status: live
+    since_version: 11
+    scope: report
+    applies_to: [report]
+    signal: An independent evidence pass confirms that authored prose and quantitative visuals remain supported by the dossier.
+    remediable: true
+    on_fail: block
+    remediation: repair_authored_claims_or_visuals
+    rationale: Ledger presence establishes provenance; an entailment review checks that the final wording and visual encoding use it faithfully.
+
   - id: visual_plan_budget
     axis: narrative
     severity: warn
@@ -403,7 +510,7 @@ criteria:
     status: live
     since_version: 5
     scope: report
-    applies_to: [insight_grid, chart_interpretation, filterable_chart, chart_table_explorer, entity_card_grid]
+    applies_to: [insight_grid, chart_interpretation, advanced_visual, filterable_chart, chart_table_explorer, entity_card_grid]
     signal: >-
       When runtime visual composition or explicit display-fact coverage is requested,
       reader-facing pills, scan points, examples, and annotations originate from
@@ -455,12 +562,13 @@ criteria:
 
   - id: stale_installed_skills
     axis: integrity
-    severity: fail
+    severity: warn
     status: live
     scope: report
     applies_to: [report]
     signal: Installed library skills match the bundled skill-library instructions.
-    remediable: false
-    on_fail: block
+    remediable: true
+    on_fail: warn
     remediation: refresh_skills_out_of_band
-    rationale: A report generated by a stale standard is not reproducible against the current one.
+    rationale: Skill freshness helps authoring, but publication is governed by the report's
+               evidence ledger, review results, artifact safety, and hash-bound receipt.

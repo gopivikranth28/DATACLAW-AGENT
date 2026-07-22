@@ -33,7 +33,7 @@ PLUGIN_MANIFEST_FILENAME = "openclaw.plugin.json"
 # so fail before modifying OpenClaw when the in-process registry is internally
 # inconsistent.
 _REPORT_TOOL_REQUIRED_PROPERTIES: dict[str, set[str]] = {
-    "report_design_report": {"design_passes", "visual_author"},
+    "report_design_report": {"design_passes", "presentation_mode", "visual_author"},
     "report_publish": {"require_visual_review"},
     "publish_artifact": {"report_receipt_path"},
 }
