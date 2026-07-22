@@ -615,3 +615,24 @@ def test_storyboard_quality_plan_derives_from_rubric():
     plan = storyboard["quality_plan"]
     assert plan["rubric_version"] == 15
     assert plan["checks"] == live_criterion_ids()
+
+
+def test_kind_qualified_evidence_references_resolve_to_bare_id_targets():
+    # Regression: notebook cells are registered by bare id ("153f2202") with a
+    # kind field, while insight citations arrive kind-qualified
+    # ("notebook_cell:153f2202"). The resolver must match the two spellings, or
+    # every citation reads as unresolved and a redesign loop can never clear it.
+    registry = {
+        "153f2202": {"id": "153f2202", "kind": "notebook_cell", "present": True},
+        "1f938fd9": {"id": "1f938fd9", "kind": "notebook_cell", "present": True},
+    }
+    references = [
+        {"section_id": "sec-primary-insights", "kind": "unknown", "ref": "notebook_cell:153f2202"},
+        {"section_id": "sec-primary-insights", "kind": "unknown", "ref": "1f938fd9"},  # bare still works
+    ]
+    assert report_renderer._unresolved_evidence_refs([], registry, references) == []
+
+    # A citation to a genuinely unregistered cell is still reported unresolved.
+    missing = [{"section_id": "s", "kind": "unknown", "ref": "notebook_cell:deadbeef"}]
+    unresolved = report_renderer._unresolved_evidence_refs([], registry, missing)
+    assert len(unresolved) == 1 and unresolved[0]["ref"] == "notebook_cell:deadbeef"

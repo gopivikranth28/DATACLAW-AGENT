@@ -700,8 +700,25 @@ def _unresolved_evidence_refs(
             sources = [payload, *_as_list(payload.get("items")), *_as_list(payload.get("findings")), *_as_list(payload.get("hypotheses"))]
             for source in sources:
                 references.extend({"section_id": section_id, **reference} for reference in _source_evidence_refs(source))
+    # Evidence ids are written two ways: targets are registered by bare id
+    # ("153f2202") with a separate kind field, while references frequently arrive
+    # kind-qualified as one string ("notebook_cell:153f2202"). Resolve a target
+    # under both its bare id and its "kind:id" form so the two spellings of the
+    # same evidence match — otherwise every kind-qualified citation reads as
+    # unresolved even though the cell is registered, and a redesign loop cannot
+    # ever clear it.
+    resolver: dict[str, dict[str, Any]] = {}
+    for target_id, target in registry.items():
+        resolver.setdefault(target_id, target)
+        target_kind = clean_text(target.get("kind") or target.get("type") or "")
+        if target_kind:
+            resolver.setdefault(f"{target_kind}:{target_id}", target)
     for reference in references:
-        target = registry.get(reference["ref"])
+        ref_id = reference["ref"]
+        target = resolver.get(ref_id)
+        if target is None and ":" in ref_id:
+            # A kind-qualified reference whose target is registered bare.
+            target = resolver.get(ref_id.split(":", 1)[1])
         target_kind = clean_text(target.get("kind") or target.get("type") or "") if target else ""
         is_external = bool(target and clean_text(target.get("external_url") or target.get("url") or ""))
         is_present = bool(target and target.get("present", True))
