@@ -1627,7 +1627,12 @@ def _render_authored_document(storyboard: dict[str, Any], *, title: str | None =
         flags=re.IGNORECASE,
     )
     csp = f'<meta http-equiv="Content-Security-Policy" content="{STORED_ARTIFACT_CSP}">'
-    html = re.sub(r"</head\s*>", csp + "\n</head>", html, count=1, flags=re.IGNORECASE)
+    # Use function replacements for every injected string below. The injected
+    # host scripts are JSON (ensure_ascii escapes like — for an em dash, plus
+    # the <\/ guard against </script> breakout), and re.sub interprets backslash
+    # sequences in a plain-string replacement — so a title with a Unicode char
+    # would raise "bad escape \u". A callable returns the text literally.
+    html = re.sub(r"</head\s*>", lambda _m: csp + "\n</head>", html, count=1, flags=re.IGNORECASE)
     if not re.search(r"<html\b[^>]*data-dc-authored-document=", html, re.IGNORECASE):
         html = re.sub(
             r"<html\b([^>]*)>",
@@ -1636,7 +1641,7 @@ def _render_authored_document(storyboard: dict[str, Any], *, title: str | None =
             count=1,
             flags=re.IGNORECASE,
         )
-    html = re.sub(r"</body\s*>", host_scripts + "\n</body>", html, count=1, flags=re.IGNORECASE)
+    html = re.sub(r"</body\s*>", lambda _m: host_scripts + "\n</body>", html, count=1, flags=re.IGNORECASE)
     authored["coverage"] = validation["coverage"]
     storyboard["authored_document"] = authored
     return html

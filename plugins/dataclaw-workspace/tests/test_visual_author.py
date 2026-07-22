@@ -562,6 +562,32 @@ def test_full_document_validator_enforces_source_coverage_evidence_and_safe_java
         validate_authored_document(unsafe, contract)
 
 
+@pytest.mark.asyncio
+async def test_render_injects_host_scripts_when_metadata_has_unicode():
+    # A title/goal with a Unicode em dash is serialized as — in the injected
+    # JSON host scripts. The injection must treat that string literally, not as a
+    # regex replacement (which raised re.error: "bad escape \\u").
+    storyboard = design_report_storyboard(
+        report_goal="F1 dominance — eras, money, and the 2023 peak — a résumé.",
+        title="F1 Driver Trends — Eras, Dominance, and the 2023 Peak",
+        insights=[{
+            "finding_id": "find-new-customers",
+            "title": "New customers have the weakest renewal rate",
+            "detail": "The first-90-day cohort has the lowest renewal rate.",
+        }],
+    )
+    storyboard["evidence_registry"] = build_evidence_registry(storyboard)
+    llm = _JSONLLM((_authored_html(), {"status": "pass", "findings": []}))
+    authored, _ = await author_report_visuals(storyboard, llm=llm)
+
+    html = render_report_from_storyboard(authored)  # must not raise "bad escape \\u"
+
+    assert "data-dc-section-meta" in html
+    assert "data-dc-evidence-registry" in html
+    # The em dash survives into the injected JSON as an escaped code point.
+    assert "\\u2014" in html
+
+
 def test_safe_modern_css_is_not_flagged_as_executable_but_legacy_vectors_are():
     dossier, contract = build_creative_author_dossier(_ledger_backed_storyboard())
 
@@ -582,28 +608,21 @@ def test_safe_modern_css_is_not_flagged_as_executable_but_legacy_vectors_are():
         validate_authored_document(unsafe, contract)
 
 
-def test_generated_claim_text_blocks_smuggled_stats_but_allows_decorative_content():
+def test_css_content_is_not_gated_evidence_discipline_lives_elsewhere():
     dossier, contract = build_creative_author_dossier(_ledger_backed_storyboard())
 
-    # Decorative content: and the justify-content/align-content layout properties
-    # are allowed — they carry no evidence-bearing text.
-    decorative = _authored_html().replace(
-        "body{margin:0",
+    # There is no `content:` gate: decorative content, the justify-content /
+    # align-content layout properties, and even textual content: all validate.
+    # A surface CSS scan cannot soundly tell a decorative label from a smuggled
+    # claim (CSS escapes defeat it), and evidence discipline is enforced on the
+    # DOM claims, not the decorative CSS layer.
+    for snippet in (
         'body{display:flex;justify-content:space-between;align-content:center;margin:0',
-        1,
-    ).replace(
-        "</style>",
-        '.tick::before{content:"\\25b8"}.q::after{content:""}.n::before{content:"Figure " counter(step)}</style>',
-        1,
-    )
-    validate_authored_document(decorative, contract)  # does not raise
-
-    # A fabricated statistic painted through CSS content: is still forbidden.
-    smuggled = _authored_html().replace(
-        "body{margin:0", 'body{margin:0}.k::after{content:"43% lift vs prior"', 1
-    )
-    with pytest.raises(ValueError, match="forbidden generated claim text"):
-        validate_authored_document(smuggled, contract)
+        '.tick::before{content:"\\25b8"}.q::after{content:""}.n::before{content:"Figure " counter(step)}\nbody{margin:0',
+        '.k::after{content:"43% lift vs prior"}body{margin:0',
+    ):
+        html = _authored_html().replace("body{margin:0", snippet, 1)
+        validate_authored_document(html, contract)  # does not raise
 
 
 def test_full_document_validator_preserves_explicitly_required_visual_assets():
