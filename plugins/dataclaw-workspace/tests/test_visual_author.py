@@ -314,6 +314,42 @@ def test_lean_storyboard_shape_and_enriched_dossier():
         assert token in dossier, f"dossier missing {token}"
 
 
+@pytest.mark.asyncio
+async def test_creative_author_repairs_a_structurally_invalid_first_draft():
+    """A malformed first draft (e.g. two <h1>) is repaired, not fatal."""
+    storyboard = _ledger_backed_storyboard()
+    bad = _authored_html().replace("<h1>", "<h1>Stray</h1><h1>", 1)  # two h1 -> structural fail
+    good = _authored_html()
+    llm = _JSONLLM((bad, good, {"status": "pass", "findings": []}))
+
+    authored, record = await author_report_visuals(storyboard, config={"mode": "creative"}, llm=llm)
+
+    assert record["status"] == "applied"
+    assert record["repair_count"] == 1
+    assert authored["authored_document"]["html"] == good
+    # author draft + structural repair + evidence review
+    assert llm.calls == 3
+
+
+@pytest.mark.asyncio
+async def test_creative_author_fails_closed_when_structure_never_recovers():
+    storyboard = _ledger_backed_storyboard()
+    bad = _authored_html().replace("<h1>", "<h1>Stray</h1><h1>", 1)
+    llm = _JSONLLM((bad, bad))  # budget=1 -> one repair, then give up
+    with pytest.raises(VisualAuthorRequiredError, match="structural validation"):
+        await author_report_visuals(storyboard, config={"mode": "creative", "max_repair_passes": 1}, llm=llm)
+
+
+def test_visual_author_config_clamps_out_of_range_tuning_instead_of_failing():
+    from dataclaw_workspace.visual_author import visual_author_config
+
+    # An out-of-range knob is clamped, not fatal (the production retry bug).
+    assert visual_author_config({}, {"mode": "creative", "max_repair_passes": 99})["max_repair_passes"] == 3
+    # A non-integer knob falls back to the default.
+    assert visual_author_config({}, {"mode": "creative", "max_repair_passes": "lots"})["max_repair_passes"] == 2
+    assert visual_author_config({}, {"mode": "creative", "timeout_seconds": 100000})["timeout_seconds"] == 900
+
+
 def test_data_decoration_is_not_inherited_and_cannot_cloak_a_data_visual():
     from dataclaw_workspace.visual_author import _AuthoredDocumentParser
 

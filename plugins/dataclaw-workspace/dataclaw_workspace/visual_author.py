@@ -85,9 +85,9 @@ def visual_author_config(requirements: dict[str, Any] | None, override: dict[str
     )
     config["max_repair_passes"] = _bounded_int(
         config.get("max_repair_passes"),
-        default=1,
+        default=2,
         minimum=0,
-        maximum=1,
+        maximum=3,
         field="visual_author.max_repair_passes",
     )
     # Input bound for the one repair pass, which restates the dossier plus the
@@ -958,55 +958,76 @@ async def _author_creative_document(
         )
     system, prompt = build_creative_author_prompt(dossier)
     record["prompt_sha256"] = hashlib.sha256((system + "\n" + prompt).encode("utf-8")).hexdigest()
-    try:
-        response = await _stream_text(
+    max_passes = int(cfg.get("max_repair_passes", 0) or 0)
+    max_prompt_chars = cfg["max_repair_prompt_chars"]
+
+    async def _generate(prompt_text: str) -> str:
+        return await _stream_text(
             llm,
             system=system,
-            prompt=prompt,
+            prompt=prompt_text,
             timeout_seconds=cfg["timeout_seconds"],
             max_output_chars=cfg["max_output_chars"],
             reasoning_effort="medium",
             text_verbosity="high",
         )
-        html = _parse_authored_html(response)
-        validation = validate_authored_document(html, contract)
-        evidence_review = await _review_authored_evidence(
-            llm,
-            dossier=dossier,
-            html=html,
-            validation=validation,
-            contract=contract,
-            timeout_seconds=cfg["timeout_seconds"],
-        )
+
+    try:
+        current = await _generate(prompt)
+        html: str | None = None
+        validation: dict[str, Any] | None = None
+        evidence_review: dict[str, Any] | None = None
         repair_count = 0
-        if evidence_review["status"] == "attention_required" and cfg.get("max_repair_passes", 0):
-            repair_prompt = _bounded_repair_prompt(
-                dossier,
-                evidence_review["findings"],
-                html,
-                max_chars=cfg["max_repair_prompt_chars"],
+        while True:
+            # Structural validation (parse + required elements + safety). A
+            # malformed document (missing/duplicate html/head/body/title/h1,
+            # markdown wrapper, truncated output) gets a bounded repair with the
+            # exact error fed back, rather than failing the whole report.
+            try:
+                candidate_html = _parse_authored_html(current)
+                candidate_validation = validate_authored_document(candidate_html, contract)
+            except ValueError as exc:
+                if repair_count >= max_passes:
+                    raise ValueError(
+                        f"authored HTML failed structural validation after {repair_count} repair pass(es): {exc}"
+                    ) from exc
+                repair = _bounded_repair_prompt(
+                    dossier,
+                    [{
+                        "issue": f"structural validation failed: {exc}",
+                        "recommendation": (
+                            "Return exactly ONE complete HTML document — one <html>, one <head>, one <body>, "
+                            "one <title>, and one <h1> — with nothing before <!doctype html> or after </html>, "
+                            "and no markdown code fences."
+                        ),
+                    }],
+                    current,
+                    max_chars=max_prompt_chars,
+                )
+                if repair is None:
+                    raise ValueError(
+                        f"authored HTML failed structural validation and is too large to repair: {exc}"
+                    ) from exc
+                current = await _generate(repair)
+                repair_count += 1
+                continue
+
+            html, validation = candidate_html, candidate_validation
+            evidence_review = await _review_authored_evidence(
+                llm,
+                dossier=dossier,
+                html=html,
+                validation=validation,
+                contract=contract,
+                timeout_seconds=cfg["timeout_seconds"],
             )
-            if repair_prompt is not None:
-                repaired_response = await _stream_text(
-                    llm,
-                    system=system,
-                    prompt=repair_prompt,
-                    timeout_seconds=cfg["timeout_seconds"],
-                    max_output_chars=cfg["max_output_chars"],
-                    reasoning_effort="medium",
-                    text_verbosity="high",
-                )
-                html = _parse_authored_html(repaired_response)
-                validation = validate_authored_document(html, contract)
-                evidence_review = await _review_authored_evidence(
-                    llm,
-                    dossier=dossier,
-                    html=html,
-                    validation=validation,
-                    contract=contract,
-                    timeout_seconds=cfg["timeout_seconds"],
-                )
-                repair_count = 1
+            if evidence_review["status"] != "attention_required" or repair_count >= max_passes:
+                break
+            repair = _bounded_repair_prompt(dossier, evidence_review["findings"], html, max_chars=max_prompt_chars)
+            if repair is None:
+                break
+            current = await _generate(repair)
+            repair_count += 1
     except Exception as exc:
         raise VisualAuthorRequiredError(
             f"{type(exc).__name__}: {exc}", storyboard=original, record=record
@@ -1075,15 +1096,20 @@ def _as_list(value: Any) -> list[Any]:
 
 
 def _bounded_int(value: Any, *, default: int, minimum: int, maximum: int, field: str) -> int:
+    """Resolve an optional integer tuning knob, forgivingly.
+
+    These are best-effort authoring bounds, not analytical inputs. A missing or
+    malformed value falls back to the default, and an out-of-range value is
+    clamped — a bad tuning knob (e.g. a retry that passes max_repair_passes=2)
+    must never fail the whole report before authoring even starts.
+    """
     if value is None:
         return default
     try:
         parsed = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{field} must be an integer") from exc
-    if not minimum <= parsed <= maximum:
-        raise ValueError(f"{field} must be between {minimum} and {maximum}")
-    return parsed
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, parsed))
 
 
 def _clean(value: Any) -> str:
