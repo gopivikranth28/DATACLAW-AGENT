@@ -1235,6 +1235,7 @@ async def _author_creative_document(
         validation: dict[str, Any] | None = None
         evidence_review: dict[str, Any] | None = None
         repair_count = 0
+        last_findings_signature: frozenset[tuple[str, str]] | None = None
         while True:
             emit_tool_progress(
                 "validating",
@@ -1295,9 +1296,23 @@ async def _author_creative_document(
             )
             if evidence_review["status"] != "attention_required" or repair_count >= max_passes:
                 break
+            # Non-progress guard. A repair pass re-generates the whole document to
+            # clear the review's findings; each pass costs a full model call and
+            # its wall-clock. If the previous repair left the finding set
+            # unchanged, another regeneration will not clear it either — the
+            # author cannot satisfy this review — so stop and ship with the
+            # current review rather than spending the remaining passes on an
+            # unfixable finding set.
+            findings_signature = frozenset(
+                (_clean(finding.get("anchor")), _clean(finding.get("issue")))
+                for finding in evidence_review["findings"]
+            )
+            if last_findings_signature is not None and findings_signature == last_findings_signature:
+                break
             repair = _bounded_repair_prompt(dossier, evidence_review["findings"], html, max_chars=max_prompt_chars)
             if repair is None:
                 break
+            last_findings_signature = findings_signature
             current = await _generate(
                 repair,
                 phase="repairing",

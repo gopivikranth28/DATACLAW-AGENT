@@ -92,6 +92,37 @@ def cfg():
     return WorkspaceConfig()
 
 
+def test_cited_notebook_cell_ids_parses_string_and_dict_refs():
+    sources = [
+        {"finding_id": "f1", "evidence_refs": ["notebook_cell:aaaa1111", "artifact:chart-1"]},
+        {"finding_id": "f2", "evidence_refs": [{"kind": "notebook_cell", "ref": "bbbb2222"}]},
+        {"finding_id": "f3", "evidence": [{"kind": "notebook_cell", "ref": "notebook_cell:cccc3333"}]},
+        {"finding_id": "f4", "evidence_refs": ["finding:f1"]},  # unrelated kind ignored
+    ]
+    assert workspace_tools._cited_notebook_cell_ids(sources) == {
+        "aaaa1111",
+        "bbbb2222",
+        "cccc3333",
+    }
+
+
+def test_present_notebook_cell_ids_reads_workspace_notebooks(cfg):
+    base = workspace_tools._base_dir("default")
+    (base / "eda").mkdir(parents=True, exist_ok=True)
+    (base / "eda" / "analysis.ipynb").write_text(
+        json.dumps({"cells": [
+            {"id": "aaaa1111", "cell_type": "code", "source": []},
+            {"id": "bbbb2222", "cell_type": "code", "source": []},
+        ]}),
+        encoding="utf-8",
+    )
+    present = workspace_tools._present_notebook_cell_ids("default")
+    assert {"aaaa1111", "bbbb2222"} <= present
+    # Only cells that exist are eligible to register; a fabricated citation is not.
+    cited = {"aaaa1111", "bbbb2222", "deadbeef"}
+    assert sorted(cited & present) == ["aaaa1111", "bbbb2222"]
+
+
 @pytest.mark.asyncio
 async def test_write_and_read(cfg):
     result = await ws_write_file(cfg=cfg, path="hello.txt", content="Hello world\nLine 2\n")
