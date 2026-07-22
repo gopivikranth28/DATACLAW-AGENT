@@ -62,7 +62,6 @@ IMPLEMENTED_GATE_CHECKS = {
     "missing_uncertainty",
     "missing_recipe",
     "plaintext_where_component_warranted",
-    "not_self_contained",
     "contrast_below_aa",
     "advanced_visual_semantics",
     "handcrafted_claim_source_missing",
@@ -71,7 +70,7 @@ IMPLEMENTED_GATE_CHECKS = {
 
 def test_rubric_loads_and_matches_implemented_checks():
     rubric = load_report_rubric()
-    assert rubric_version() == 14
+    assert rubric_version() == 15
     assert set(live_criterion_ids()) == IMPLEMENTED_GATE_CHECKS
     for value in rubric_thresholds().values():
         assert isinstance(value, int)
@@ -616,5 +615,5 @@ def test_storyboard_quality_plan_derives_from_rubric():
         requirements={},
     )
     plan = storyboard["quality_plan"]
-    assert plan["rubric_version"] == 14
+    assert plan["rubric_version"] == 15
     assert plan["checks"] == live_criterion_ids()

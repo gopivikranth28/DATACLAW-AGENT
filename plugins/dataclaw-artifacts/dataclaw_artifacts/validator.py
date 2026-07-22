@@ -31,6 +31,22 @@ FORBIDDEN_JS_PATTERNS = [
     (re.compile(r"\b(?:window\.)?location(?:\.[A-Za-z_$][\w$]*)?\s*=", re.I), "location_assignment"),
     (re.compile(r"\b(?:window\.)?location\.(?:assign|replace)\s*\(", re.I), "location_navigation"),
 ]
+
+# Extra patterns rejected only in fully authored (LLM-written) report documents,
+# which are held to a stricter standard than hand-published artifacts. The base
+# FORBIDDEN_JS_PATTERNS above apply to every artifact; authored documents are
+# validated against both lists. This is the single home for forbidden-JS policy.
+AUTHORED_EXTRA_FORBIDDEN_JS = [
+    (re.compile(r"\beval\s*\(", re.I), "eval"),
+    (re.compile(r"\bnew\s+Function\s*\(|\bFunction\s*\("), "function_constructor"),
+    (re.compile(r"\bimport\b", re.I), "module_import"),
+    (re.compile(r"\b(?:localStorage|sessionStorage|indexedDB)\b", re.I), "browser_storage"),
+    (re.compile(r"\bdocument\.cookie\b", re.I), "document_cookie"),
+    (re.compile(r"\b(?:SharedWorker|Worker)\s*\(", re.I), "worker"),
+    (re.compile(r"\bnavigator\.serviceWorker\b", re.I), "service_worker"),
+    (re.compile(r"\bdocument\.write(?:ln)?\s*\(", re.I), "document_write"),
+    (re.compile(r"\bhistory\.(?:pushState|replaceState)\s*\(", re.I), "history_navigation"),
+]
 CSS_URL_RE = re.compile(r"url\(\s*(['\"]?)([^'\"\)]+)\1\s*\)", re.I)
 DATACLAW_RUNTIME_SCRIPT_RE = re.compile(
     r"<script\b(?=[^>]*\bdata-dc-runtime=(['\"])plotly\1)[^>]*>.*?</script>",

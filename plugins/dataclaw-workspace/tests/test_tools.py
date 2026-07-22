@@ -263,7 +263,7 @@ async def test_report_publish_regates_and_writes_receipt(cfg):
     assert published["docx_export"] == {"requested": False, "status": "skipped"}
     assert published["runtime_smoke"]["status"] in {"passed", "skipped"}
     assert receipt["status"] == "published"
-    assert receipt["quality"]["rubric_version"] == 14
+    assert receipt["quality"]["rubric_version"] == 15
     assert receipt["analytical_review"] == published["analytical_review"]
     assert published["analytical_review"]["status"] == "pass"
     assert receipt["runtime_smoke"] == published["runtime_smoke"]

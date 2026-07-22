@@ -535,7 +535,7 @@ async def test_full_document_authored_report_survives_publication_revalidation(c
     )
 
     assert published["publication_status"] == "published"
-    assert published["quality"]["rubric_version"] == 14
+    assert published["quality"]["rubric_version"] == 15
     assert published["quality"]["status"] in {"pass", "warn"}
     receipt = json.loads(Path(published["receipt_path"]).read_text(encoding="utf-8"))
     assert designed["html_sha256"] == receipt["html_sha256"]

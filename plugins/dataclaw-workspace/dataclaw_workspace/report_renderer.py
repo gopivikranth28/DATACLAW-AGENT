@@ -13,6 +13,7 @@ from dataclaw_artifacts.sections import (
     clean_text,
     prepare_advanced_visual_data,
 )
+from dataclaw_artifacts.wrapper import STORED_ARTIFACT_CSP
 
 from dataclaw_workspace.report_rubric import (
     live_criterion_ids,
@@ -351,13 +352,10 @@ def analyze_report_quality(
             details={"sections": theme_failures},
         )
 
-    external_assets = _external_asset_refs(doc)
-    if external_assets:
-        warn(
-            "not_self_contained",
-            "Report references external assets that will not be available in a self-contained artifact.",
-            details={"assets": external_assets[:20], "count": len(external_assets)},
-        )
+    # External/remote-asset detection is owned by the artifact validator
+    # (dataclaw_artifacts.validate_and_prepare_html), which runs fail-closed
+    # before this gate in the design and publish paths. The gate no longer
+    # re-checks it with a weaker regex.
 
     static_smoke_failures = _runtime_smoke_failures(doc, sections)
     smoke_result = runtime_smoke or {
@@ -1215,18 +1213,6 @@ def _chart_theme_failures(sections: list[dict[str, Any]]) -> list[dict[str, str]
     return failures
 
 
-def _external_asset_refs(doc: str) -> list[str]:
-    refs: list[str] = []
-    patterns = (
-        r"<script[^>]+\bsrc=[\"']([^\"']+)",
-        r"<link[^>]+\bhref=[\"']([^\"']+)",
-        r"<(?:img|iframe|video|audio|object)[^>]+\bsrc=[\"']([^\"']+)",
-    )
-    for pattern in patterns:
-        refs.extend(match.group(1) for match in re.finditer(pattern, doc, re.IGNORECASE))
-    return [ref for ref in refs if re.match(r"(?:https?:)?//", ref)]
-
-
 def _runtime_smoke_failures(doc: str, sections: list[dict[str, Any]]) -> list[dict[str, str]]:
     failures: list[dict[str, str]] = []
     authored_document = bool(re.search(r"<html\b[^>]*data-dc-authored-document=", doc, re.IGNORECASE))
@@ -1898,12 +1884,7 @@ def _render_authored_document(storyboard: dict[str, Any], *, title: str | None =
         html,
         flags=re.IGNORECASE,
     )
-    csp = (
-        '<meta http-equiv="Content-Security-Policy" '
-        'content="default-src \'none\'; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'; '
-        'img-src data:; font-src data:; connect-src \'none\'; object-src \'none\'; '
-        'base-uri \'none\'; form-action \'none\'">'
-    )
+    csp = f'<meta http-equiv="Content-Security-Policy" content="{STORED_ARTIFACT_CSP}">'
     html = re.sub(r"</head\s*>", csp + "\n</head>", html, count=1, flags=re.IGNORECASE)
     if not re.search(r"<html\b[^>]*data-dc-authored-document=", html, re.IGNORECASE):
         html = re.sub(

@@ -18,7 +18,11 @@ import re
 from html.parser import HTMLParser
 from typing import Any
 
-from dataclaw_artifacts.validator import ArtifactValidationError, validate_and_prepare_html
+from dataclaw_artifacts.validator import (
+    AUTHORED_EXTRA_FORBIDDEN_JS,
+    ArtifactValidationError,
+    validate_and_prepare_html,
+)
 from dataclaw.providers.llm.provider import LLMProvider, TextDeltaEvent
 from dataclaw.schema import Message
 
@@ -38,19 +42,6 @@ _CREATIVE_MAX_COLUMNS_PER_ASSET = 24
 _CREATIVE_MAX_INLINE_JS_CHARS = 60_000
 _CREATIVE_MAX_INLINE_SCRIPTS = 8
 _CREATIVE_REVIEW_MAX_OUTPUT_CHARS = 20_000
-
-_AUTHORED_FORBIDDEN_JS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"\beval\s*\(", re.I), "eval"),
-    (re.compile(r"\bnew\s+Function\s*\(|\bFunction\s*\("), "function_constructor"),
-    (re.compile(r"\bimport\b", re.I), "module_import"),
-    (re.compile(r"\b(?:localStorage|sessionStorage|indexedDB)\b", re.I), "browser_storage"),
-    (re.compile(r"\bdocument\.cookie\b", re.I), "document_cookie"),
-    (re.compile(r"\b(?:SharedWorker|Worker)\s*\(", re.I), "worker"),
-    (re.compile(r"\bnavigator\.serviceWorker\b", re.I), "service_worker"),
-    (re.compile(r"\bdocument\.write(?:ln)?\s*\(", re.I), "document_write"),
-    (re.compile(r"\bhistory\.(?:pushState|replaceState)\s*\(", re.I), "history_navigation"),
-)
-
 
 class VisualAuthorRequiredError(ValueError):
     """A required visual-author run failed after producing an audit record."""
@@ -544,7 +535,7 @@ class _AuthoredDocumentParser(HTMLParser):
             else:
                 self.script_count += 1
                 self.script_chars += len(payload)
-                for pattern, name in _AUTHORED_FORBIDDEN_JS:
+                for pattern, name in AUTHORED_EXTRA_FORBIDDEN_JS:
                     if pattern.search(payload):
                         raise ValueError(f"authored JavaScript contains forbidden {name}")
             self._script = None

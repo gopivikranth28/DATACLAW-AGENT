@@ -12,7 +12,7 @@
 # A deferred criterion enters as `warn` for one version before any promotion to
 # `fail`. rubric_version bumps on any criteria/threshold change.
 
-rubric_version: 14
+rubric_version: 15
 
 # Gate thresholds — every value matches the live gate (analyze_report_quality).
 thresholds:
@@ -413,18 +413,6 @@ criteria:
     on_fail: warn
     remediation: generate_static_fallbacks_and_disclose
     rationale: The export pipeline must detect an omission before it can disclose one (§5.2).
-
-  - id: not_self_contained
-    axis: integrity
-    severity: warn
-    status: live
-    scope: report
-    applies_to: [report]
-    signal: No external asset the CSP/offline artifact can't load.
-    remediable: true
-    on_fail: warn
-    remediation: inline_or_replace_external_ref
-    rationale: Open-source audience implies self-contained portable artifacts (§3).
 
   - id: contrast_below_aa
     axis: integrity
