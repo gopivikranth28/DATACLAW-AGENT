@@ -45,10 +45,21 @@ class LangChainLLM:
         *,
         system: str,
         tools: list[dict[str, Any]],
+        reasoning_effort: str | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[BrokerEvent]:
         lc_tools = _to_lc_tools(tools)
         bound = self._model.bind_tools(lc_tools) if lc_tools else self._model
+        # Translate the provider-agnostic reasoning effort to each SDK's native
+        # thinking control, so "run with lower reasoning" is effective on every
+        # backend, not only the OpenAI/codex path. Applied as a bind kwarg (a
+        # typed field on each model); a bind failure must never break the call.
+        native = _native_reasoning_kwargs(self._model, reasoning_effort)
+        if native:
+            try:
+                bound = bound.bind(**native)
+            except Exception:  # pragma: no cover - defensive
+                logger.warning("Could not apply reasoning effort %r via %s", reasoning_effort, native)
 
         lc_messages: list[BaseMessage] = [SystemMessage(content=system)]
         lc_messages.extend(_to_lc_messages(messages))
@@ -132,6 +143,27 @@ class LangChainLLM:
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
+
+def _native_reasoning_kwargs(model: Any, effort: str | None) -> dict[str, Any]:
+    """Map a provider-agnostic reasoning effort to a model's native thinking knob.
+
+    Each LangChain chat model exposes a semantic level field:
+      - ChatOpenAI            -> reasoning_effort (minimal|low|medium|high)
+      - ChatAnthropic         -> effort (low|medium|high; no 'minimal')
+      - ChatGoogleGenerativeAI-> thinking_level (minimal|low|medium|high)
+    Returns {} for an unknown model or no effort, so the call is unchanged.
+    """
+    if not effort:
+        return {}
+    name = type(model).__name__
+    if name == "ChatOpenAI":
+        return {"reasoning_effort": effort}
+    if name == "ChatAnthropic":
+        return {"effort": "low" if effort == "minimal" else effort}
+    if name in ("ChatGoogleGenerativeAI", "ChatVertexAI"):
+        return {"thinking_level": effort}
+    return {}
 
 
 def _to_lc_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
