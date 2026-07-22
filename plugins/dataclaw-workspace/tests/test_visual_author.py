@@ -334,6 +334,80 @@ def test_lean_storyboard_shape_and_enriched_dossier():
         assert token in dossier, f"dossier missing {token}"
 
 
+class _StreamLLM:
+    """Streams a scripted sequence per call; an exception entry is raised mid-stream."""
+
+    def __init__(self, *scripts):
+        # each script is a list of str deltas or an Exception to raise after them
+        self.scripts = list(scripts)
+        self.calls = 0
+
+    async def stream_turn(self, messages, *, system, tools, **kwargs):
+        script = self.scripts[self.calls]
+        self.calls += 1
+        for item in script:
+            if isinstance(item, Exception):
+                yield TextDeltaEvent(text="<partial-that-must-be-discarded>")
+                raise item
+            yield TextDeltaEvent(text=item)
+        yield TurnCompleteEvent()
+
+
+class _DroppedConnection(Exception):
+    """Named to match the transient-stream classifier (like httpx.RemoteProtocolError)."""
+
+
+RemoteProtocolError = type("RemoteProtocolError", (Exception,), {})
+
+
+@pytest.mark.asyncio
+async def test_stream_text_retries_transient_drop_and_discards_partial(monkeypatch):
+    from dataclaw_workspace import visual_author as va
+
+    monkeypatch.setattr(va, "_STREAM_RETRY_BACKOFF_SECONDS", 0)
+    # Attempt 1 drops mid-stream with a transient error; attempt 2 completes.
+    llm = _StreamLLM([RemoteProtocolError("peer closed connection")], ["FINAL-DOC"])
+    out = await va._stream_text(
+        llm, system="s", prompt="p", timeout_seconds=30, max_output_chars=1000,
+        reasoning_effort="medium", text_verbosity="high",
+        progress_phase="drafting", progress_label="x",
+    )
+    assert out == "FINAL-DOC"  # the discarded partial does not leak in
+    assert llm.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_stream_text_does_not_retry_deterministic_errors(monkeypatch):
+    from dataclaw_workspace import visual_author as va
+
+    monkeypatch.setattr(va, "_STREAM_RETRY_BACKOFF_SECONDS", 0)
+    # A non-transport error is not retried — it raises on the first attempt.
+    llm = _StreamLLM([ValueError("bad request")], ["never reached"])
+    with pytest.raises(ValueError, match="bad request"):
+        await va._stream_text(
+            llm, system="s", prompt="p", timeout_seconds=30, max_output_chars=1000,
+            reasoning_effort="medium", text_verbosity="high",
+            progress_phase="drafting", progress_label="x",
+        )
+    assert llm.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_text_gives_up_after_exhausting_transient_retries(monkeypatch):
+    from dataclaw_workspace import visual_author as va
+
+    monkeypatch.setattr(va, "_STREAM_RETRY_BACKOFF_SECONDS", 0)
+    drops = [[RemoteProtocolError("drop")] for _ in range(va._STREAM_RETRY_ATTEMPTS)]
+    llm = _StreamLLM(*drops)
+    with pytest.raises(RemoteProtocolError):
+        await va._stream_text(
+            llm, system="s", prompt="p", timeout_seconds=30, max_output_chars=1000,
+            reasoning_effort="medium", text_verbosity="high",
+            progress_phase="drafting", progress_label="x",
+        )
+    assert llm.calls == va._STREAM_RETRY_ATTEMPTS
+
+
 @pytest.mark.asyncio
 async def test_creative_author_repairs_a_structurally_invalid_first_draft():
     """A malformed first draft (e.g. no <h1>) is repaired, not fatal."""

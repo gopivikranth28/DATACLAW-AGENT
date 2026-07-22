@@ -45,6 +45,45 @@ _CREATIVE_MAX_INLINE_JS_CHARS = 60_000
 _CREATIVE_MAX_INLINE_SCRIPTS = 8
 _CREATIVE_REVIEW_MAX_OUTPUT_CHARS = 20_000
 
+# Bounded retry for TRANSIENT streaming failures only — a dropped connection or
+# incomplete chunked read mid-stream, which throws away an otherwise-fine multi
+# minute authoring run. Deterministic failures (an over-long response, a real
+# timeout, or any validation error) are never retried here; those are the repair
+# loop's job or a genuine stop.
+_STREAM_RETRY_ATTEMPTS = 3
+_STREAM_RETRY_BACKOFF_SECONDS = 3
+# Transient transport/SDK errors, matched by type name so this plugin needs no
+# direct dependency on httpx or the model SDK. Names cover httpx transport errors
+# and the OpenAI/Anthropic connection/timeout wrappers.
+_TRANSIENT_STREAM_ERROR_NAMES = frozenset({
+    "RemoteProtocolError", "ReadError", "ReadTimeout", "WriteError", "WriteTimeout",
+    "ConnectError", "ConnectTimeout", "PoolTimeout", "ProtocolError", "NetworkError",
+    "IncompleteRead", "ChunkedEncodingError", "ConnectionResetError", "ConnectionError",
+    "APIConnectionError", "APITimeoutError", "InternalServerError", "ServiceUnavailableError",
+})
+
+
+def _is_transient_stream_error(exc: BaseException) -> bool:
+    """True for a dropped-connection / incomplete-read error worth retrying.
+
+    Walks the exception's cause/context chain and matches by type name, so a
+    transient transport error wrapped by the SDK is still recognized without
+    importing the transport or SDK exception types. Deterministic errors
+    (ValueError, real timeouts) are intentionally excluded.
+    """
+    seen: set[int] = set()
+    stack: list[BaseException | None] = [exc]
+    while stack:
+        current = stack.pop()
+        if current is None or id(current) in seen:
+            continue
+        seen.add(id(current))
+        if type(current).__name__ in _TRANSIENT_STREAM_ERROR_NAMES:
+            return True
+        stack.append(current.__cause__)
+        stack.append(current.__context__)
+    return False
+
 
 class VisualAuthorRequiredError(ValueError):
     """A required visual-author run failed after producing an audit record."""
@@ -963,32 +1002,49 @@ async def _stream_text(
                 heartbeat=True,
             )
 
-    progress("waiting")
-    heartbeat_task = asyncio.create_task(heartbeat())
-    try:
-        async with asyncio.timeout(timeout_seconds):
-            async for event in llm.stream_turn(
-                [Message.user(prompt)],
-                system=system,
-                tools=[],
-                reasoning_effort=reasoning_effort,
-                text_verbosity=text_verbosity,
-            ):
-                if isinstance(event, TextDeltaEvent):
-                    chunks.append(event.text)
-                    size += len(event.text)
-                    last_output_monotonic = time.monotonic()
-                    last_output_at = datetime.now(timezone.utc).isoformat()
-                    if last_output_monotonic - last_emit_monotonic >= 1:
-                        progress("receiving")
-                        last_emit_monotonic = last_output_monotonic
-                    if size > max_output_chars:
-                        raise ValueError(f"model output exceeded {max_output_chars} characters")
-    finally:
-        heartbeat_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await heartbeat_task
-    progress("received")
+    # A dropped stream cannot be resumed, so each attempt discards any partial
+    # output and re-issues the whole request. Only transient transport errors
+    # retry; a real timeout or an over-long response falls straight through.
+    for stream_attempt in range(1, _STREAM_RETRY_ATTEMPTS + 1):
+        chunks = []
+        size = 0
+        last_output_at = None
+        last_output_monotonic = None
+        last_emit_monotonic = 0.0
+        progress("reconnecting" if stream_attempt > 1 else "waiting")
+        heartbeat_task = asyncio.create_task(heartbeat())
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                async for event in llm.stream_turn(
+                    [Message.user(prompt)],
+                    system=system,
+                    tools=[],
+                    reasoning_effort=reasoning_effort,
+                    text_verbosity=text_verbosity,
+                ):
+                    if isinstance(event, TextDeltaEvent):
+                        chunks.append(event.text)
+                        size += len(event.text)
+                        last_output_monotonic = time.monotonic()
+                        last_output_at = datetime.now(timezone.utc).isoformat()
+                        if last_output_monotonic - last_emit_monotonic >= 1:
+                            progress("receiving")
+                            last_emit_monotonic = last_output_monotonic
+                        if size > max_output_chars:
+                            raise ValueError(f"model output exceeded {max_output_chars} characters")
+            progress("received")
+            return "".join(chunks)
+        except Exception as exc:
+            if _is_transient_stream_error(exc) and stream_attempt < _STREAM_RETRY_ATTEMPTS:
+                progress("reconnecting", heartbeat=True)
+                await asyncio.sleep(_STREAM_RETRY_BACKOFF_SECONDS * stream_attempt)
+                continue
+            raise
+        finally:
+            heartbeat_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await heartbeat_task
+    # The loop always returns on success or raises on the final failed attempt.
     return "".join(chunks)
 
 
