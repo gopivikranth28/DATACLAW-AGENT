@@ -267,6 +267,54 @@ def test_bespoke_visual_intent_reaches_dossier_without_governed_vocabulary():
     assert '"visual_medium": "svg"' in dossier
 
 
+def test_lean_storyboard_shape_and_enriched_dossier():
+    """The storyboard is a lean evidence contract; the dossier is detail-rich."""
+    requirements = {
+        "evidence_registry": {"targets": [{"id": "ev-1", "kind": "notebook_cell"}]},
+        "rigor": {"require_methodology": True, "require_uncertainty": True},
+        "decision": "Which cohort to prioritize for intervention.",
+        "hypotheses": [{"statement": "New cohort churns first", "disposition": "confirmed"}],
+    }
+    storyboard = design_report_storyboard(
+        report_goal="Prioritize the intervention.",
+        title="Cohort report",
+        requirements=requirements,
+        insights=[{
+            "finding_id": "f1", "title": "New cohort churns first",
+            "detail": "The first-90-day cohort has the lowest renewal.",
+            "confidence": "high", "importance": 1,
+            "recommendation": "Prioritize onboarding fixes.", "hypothesis_id": "hyp-1",
+            "evidence": [{"kind": "notebook_cell", "ref": "ev-1"}],
+        }],
+        analyses=[{
+            "title": "Renewal by cohort", "caption": "c", "interpretation": "i",
+            "records": [{"cohort": "0-90", "rate": 0.4}],
+            "baseline": "prior year", "time_window": "2025", "aggregation": "mean",
+            "evidence": [{"kind": "notebook_cell", "ref": "ev-1"}],
+        }],
+    )
+
+    # Lean storyboard: only the evidence/requirements contract, no page furniture.
+    assert storyboard["storyboard_schema"] == 2
+    assert set(storyboard) == {
+        "storyboard_schema", "title", "report_goal", "audience", "presentation",
+        "source_context", "analysis_contract", "evidence_registry", "quality_plan", "section_plan",
+    }
+    roles = [s["layout_role"] for s in storyboard["section_plan"]]
+    assert "primary_insights" in roles
+    assert not any(r in roles for r in ("opening_context", "executive_kpis", "executive_readout",
+                                        "methodology", "data_quality", "uncertainty", "evidence_trace"))
+
+    storyboard["evidence_registry"] = build_evidence_registry(storyboard)
+    dossier, _ = build_creative_author_dossier(storyboard, {"mode": "creative"})
+    # Detail-rich: decision, required disclosures, per-finding + per-asset analytics.
+    for token in ('"decision"', "required_disclosures", "methodology: grain",
+                  "uncertainty: intervals", '"confidence"', '"importance"',
+                  '"recommendation"', '"hypothesis"', '"baseline"', '"time_window"',
+                  '"aggregation"', "coverage_instruction"):
+        assert token in dossier, f"dossier missing {token}"
+
+
 def test_full_document_validator_enforces_source_coverage_evidence_and_safe_javascript():
     dossier, contract = build_creative_author_dossier(_ledger_backed_storyboard())
     assert dossier

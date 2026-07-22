@@ -243,14 +243,34 @@ def build_creative_author_dossier(
                 insight.get("detail") or insight.get("summary") or insight.get("statement"), 2_000
             ),
             "status": _prompt_text(insight.get("status") or insight.get("confidence"), 200),
+            "confidence": _prompt_text(insight.get("confidence") or insight.get("confidence_level"), 200),
+            "importance": _prompt_value(
+                insight.get("importance") or insight.get("priority") or insight.get("story_priority") or ""
+            ),
             "claim_scope": claim_scope,
             "causal_language_allowed": claim_scope in {"causal", "experimental_causal", "validated_causal"},
             "metrics": _prompt_value(insight.get("metrics") or []),
+            "comparison": _prompt_value(
+                insight.get("comparison") or insight.get("baseline") or insight.get("delta") or ""
+            ),
             "supporting_points": _prompt_value(
                 insight.get("bullets") or insight.get("scan_points") or insight.get("supporting_points") or []
             ),
             "representative_examples": _prompt_value(
                 insight.get("representative_examples") or insight.get("examples") or []
+            ),
+            "hypothesis": _prompt_value(
+                insight.get("hypothesis")
+                or insight.get("hypothesis_statement")
+                or insight.get("hypothesis_id")
+                or ""
+            ),
+            "recommendation": _prompt_value(
+                insight.get("recommendation")
+                or insight.get("next_action")
+                or insight.get("action")
+                or insight.get("implication")
+                or ""
             ),
             "display_facts": _prompt_value(insight.get("display_facts") or []),
             "caveat": _prompt_value(insight.get("caveat") or insight.get("limitations") or ""),
@@ -300,6 +320,20 @@ def build_creative_author_dossier(
             "grain": _prompt_value(material.get("grain") or material.get("data_grain") or ""),
             "units": _prompt_value(material.get("units") or material.get("unit") or ""),
             "denominator": _prompt_value(material.get("denominator") or material.get("population") or ""),
+            "baseline": _prompt_value(
+                material.get("baseline") or material.get("comparison_baseline") or material.get("reference") or ""
+            ),
+            "time_window": _prompt_value(
+                material.get("time_window") or material.get("period") or material.get("timeframe") or ""
+            ),
+            "aggregation": _prompt_value(
+                material.get("aggregation") or material.get("aggregation_method") or material.get("agg") or ""
+            ),
+            "comparison_group": _prompt_value(material.get("comparison_group") or ""),
+            "diagnostic_group": _prompt_value(material.get("diagnostic_group") or ""),
+            "importance": _prompt_value(
+                material.get("importance") or material.get("story_priority") or material.get("priority") or ""
+            ),
             "field_definitions": _prompt_value(
                 material.get("field_definitions") or material.get("definitions") or material.get("columns") or []
             ),
@@ -329,9 +363,30 @@ def build_creative_author_dossier(
         })
         dossier_blocks.append((f"Aggregate or analytical asset {alias}", payload))
 
+    # Surface which trust disclosures the rigor contract requires, so the author
+    # writes them into the document (there is no deterministic disclosure section
+    # anymore — the report is authored end to end).
+    rigor_req = requirements.get("rigor") if isinstance(requirements.get("rigor"), dict) else {}
+    analysis_review = requirements.get("analysis_review") if isinstance(requirements.get("analysis_review"), dict) else {}
+    predictive = _clean(analysis_review.get("mode")).lower() in {"predictive", "forecast"}
+    required_disclosures: list[str] = []
+    if rigor_req.get("require_methodology"):
+        required_disclosures.append("methodology: grain, denominator, and validation")
+    if rigor_req.get("require_data_quality"):
+        required_disclosures.append("data-quality and coverage limitations")
+    if rigor_req.get("require_uncertainty") or predictive:
+        required_disclosures.append("uncertainty: intervals, confidence, or sample size")
+
     brief = {
         "title": _prompt_text(storyboard.get("title"), 500),
         "goal": _prompt_text(storyboard.get("report_goal"), 1_500),
+        "decision": _prompt_text(
+            requirements.get("decision")
+            or requirements.get("decision_question")
+            or requirements.get("question")
+            or storyboard.get("report_goal"),
+            1_500,
+        ),
         "audience": _prompt_text(storyboard.get("audience"), 500),
         "design_direction": _prompt_value(
             requirements.get("design_brief")
@@ -342,13 +397,20 @@ def build_creative_author_dossier(
         ),
         "story_arcs": _prompt_value(requirements.get("story_arcs") or []),
         "editorial_archetype": _prompt_value(requirements.get("editorial_archetype") or ""),
+        "required_disclosures": required_disclosures,
+        "coverage_instruction": (
+            "Present every finding and analytical asset below in full detail with its own "
+            "interpretation; do not drop findings for brevity. Place each chart or visual's "
+            "interpretation directly beside or below it, never in a separate section."
+        ),
     }
     trust_material = {
         key: _prompt_value(requirements.get(key))
         for key in (
             "kicker", "subtitle", "metrics", "filters", "definitions", "glossary", "brand",
-            "methodology", "methods", "checks", "data_quality", "coverage_risks",
+            "methodology", "methods", "checks", "validation", "data_quality", "coverage_risks",
             "uncertainty", "uncertainty_notes", "analysis_review", "assumptions", "limitations",
+            "hypotheses", "sample", "sample_size", "data_sources", "time_period",
         )
         if requirements.get(key) not in (None, "", [], {})
     }

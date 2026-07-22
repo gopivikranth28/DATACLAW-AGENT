@@ -190,10 +190,23 @@ def test_rigor_contract_materializes_required_disclosures_and_recipe():
             },
         },
     )
-    # The deterministic renderer was removed; the surviving design behavior is
-    # that the required trust disclosures are materialized as storyboard roles.
-    roles = {item["layout_role"] for item in storyboard["section_plan"]}
-    assert {"data_quality", "uncertainty"}.issubset(roles)
+    # The deterministic renderer and its section furniture were removed. The
+    # surviving behavior is that the declared rigor requirements are preserved in
+    # source_context + analysis_contract (they flow to the author dossier and the
+    # embedded report contract), and a regeneration recipe is still produced.
+    requirements = storyboard["source_context"]["requirements"]
+    assert requirements["methodology"]
+    assert requirements["data_quality"]
+    assert requirements["rigor"]["require_methodology"] is True
+    assert requirements["rigor"]["require_data_quality"] is True
+    # Predictive uncertainty is retained on the analysis contract.
+    assert storyboard["analysis_contract"]["mode"] == "predictive"
+    assert storyboard["analysis_contract"]["uncertainty"] == {"method": "Bootstrap", "result": "90% interval"}
+    # A source-bound regeneration recipe is still produced.
+    recipe = report_renderer.ensure_regeneration_recipe(storyboard)
+    assert recipe["recipe_schema"] == 1
+    assert recipe["source_context_sha256"]
+    assert recipe["section_plan_sha256"]
 
 
 def test_quality_reports_automated_visual_semantic_findings():
@@ -268,46 +281,8 @@ def test_storyboard_preserves_supplied_custom_chart_context():
     chart = next(item["data"] for item in storyboard["section_plan"] if item["section_type"] == "chart_interpretation")
     assert storyboard["source_context"]["analyses"][0]["custom_context"] == analyses[0]["custom_context"]
     assert chart["custom_context"] == analyses[0]["custom_context"]
-def test_storyboard_keeps_provenance_in_audit_by_default_and_can_expose_a_disclosure():
-    inputs = {
-        "report_goal": "Explain the completed relationship.",
-        "insights": [{
-            "title": "The relationship is positive",
-            "detail": "The supplied aggregate shows a positive relationship.",
-            "evidence": [{"kind": "notebook_cell", "ref": "cell-relationship"}],
-        }],
-        "analyses": [{
-            "title": "Relationship view",
-            "figure": {"data": [{"type": "scatter", "x": [1], "y": [2]}]},
-            "interpretation": "The supplied point sits on the positive trend.",
-            "evidence": [{"kind": "notebook_cell", "ref": "cell-relationship"}],
-        }],
-    }
-
-    audit_only = report_renderer.design_report_storyboard(**inputs)
-    audit_roles = [item["layout_role"] for item in audit_only["section_plan"]]
-    assert "evidence_trace" not in audit_roles
-    assert audit_only["source_context"]["insights"][0]["evidence"][0]["ref"] == "cell-relationship"
-
-    disclosed = report_renderer.design_report_storyboard(
-        **inputs,
-        requirements={"presentation": {"provenance": "disclosure"}},
-    )
-    trace = next(item for item in disclosed["section_plan"] if item["layout_role"] == "evidence_trace")
-    assert trace["data"]["title"] == "Sources & reproducibility"
-    assert trace["data"]["presentation"] == "disclosure"
-    assert [item.get("ref") for item in trace["data"]["evidence"]].count("cell-relationship") == 1
 
 
-def test_storyboard_uses_explicit_width_roles_instead_of_type_driven_narrow_sections():
-    storyboard = report_renderer.design_report_storyboard(
-        report_goal="Explain the completed relationship.",
-        insights=[{"title": "Result", "detail": "A completed result."}],
-        requirements={"data_quality": "Coverage is complete for the supplied rows."},
-    )
-    by_role = {item["layout_role"]: item["data"] for item in storyboard["section_plan"]}
-    assert by_role["executive_readout"]["layout_width"] == "reading"
-    assert by_role["data_quality"]["layout_width"] == "content"
 def _handcrafted_storyboard(**overrides):
     analysis = {
         "section_type": "advanced_visual",
@@ -354,7 +329,6 @@ def test_handcrafted_payload_is_minimized_and_source_bound():
     assert "secret@example.com" not in repr(storyboard["source_context"])
     assert set(advanced["data"]["records"][0]) == {"name", "before", "after"}
     assert advanced["data"]["claim_source"]["finding_id"] == "finding-movement"
-    assert not any(item["layout_role"] == "primary_insights" for item in storyboard["section_plan"])
     assert storyboard["source_context"]["requirements"]["publication"]["require_visual_review"] is False
 
 
@@ -419,43 +393,6 @@ def test_analysis_router_supports_more_semantic_asset_shapes():
 
     types = {item["section_type"] for item in storyboard["section_plan"]}
     assert {"metric_row", "findings", "hypothesis_ledger", "explanation", "interactive_table"}.issubset(types)
-def test_primary_insight_layout_defaults_to_editorial_list_but_keeps_card_grid_opt_in():
-    standard = report_renderer.design_report_storyboard(
-        report_goal="Explain observed retention.",
-        insights=[{"title": "New customers churn first", "detail": "The newest cohort has the lowest observed renewal."}],
-    )
-    standard_findings = next(item["data"] for item in standard["section_plan"] if item["layout_role"] == "primary_insights")
-    assert standard_findings["layout_variant"] == "editorial_list"
-
-    analysis = {
-        "section_type": "chart_interpretation",
-        "story_role": "decision_path",
-        "title": "Renewal paths",
-        "caption": "Routes from activation to renewal.",
-        "figure": {"data": [{"type": "scatter", "x": [0, 1], "y": [0, 1]}]},
-        "interpretation": "The guided path has the highest predicted renewal.",
-    }
-    editorial = report_renderer.design_report_storyboard(
-        report_goal="Forecast renewal along the customer journey.",
-        insights=[{"title": "Guided onboarding leads", "detail": "The guided route has the highest renewal forecast."}],
-        analyses=[analysis],
-        requirements={"editorial_archetype": "path_dependent_forecast"},
-    )
-    editorial_findings = next(item["data"] for item in editorial["section_plan"] if item["layout_role"] == "primary_insights")
-    assert editorial_findings["layout_variant"] == "editorial_list"
-    assert editorial_findings["evidence_presentation"] == "none"
-
-    explicit_grid = report_renderer.design_report_storyboard(
-        report_goal="Forecast renewal along the customer journey.",
-        insights=[{"title": "Guided onboarding leads", "detail": "The guided route has the highest renewal forecast."}],
-        analyses=[analysis],
-        requirements={
-            "editorial_archetype": "path_dependent_forecast",
-            "presentation": {"insight_layout": "card_grid"},
-        },
-    )
-    explicit_findings = next(item["data"] for item in explicit_grid["section_plan"] if item["layout_role"] == "primary_insights")
-    assert explicit_findings["layout_variant"] == "card_grid"
 
 
 def test_critique_requires_a_path_visual_for_a_customer_journey_forecast():

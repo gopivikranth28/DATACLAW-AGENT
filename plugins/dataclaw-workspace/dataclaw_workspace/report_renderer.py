@@ -1340,58 +1340,6 @@ def _presentation_options(requirements: dict[str, Any]) -> dict[str, str]:
     }
 
 
-def _desktop_composition_for(item: dict[str, Any]) -> str:
-    """Infer one intentional desktop composition for a planned section.
-
-    The composition is deliberately independent from a report archetype.  An
-    archetype decides *which supplied material appears when*; this small
-    vocabulary decides the stable desktop frame in which that material is
-    read.  It keeps a mixed report from degenerating into arbitrary full-width
-    cards, narrow floating prose, and one-off layout rules.
-    """
-    data = item.get("data") if isinstance(item.get("data"), dict) else {}
-    supplied = clean_text(data.get("desktop_composition") or "").lower().replace("-", "_")
-    if supplied:
-        if supplied not in DESKTOP_COMPOSITIONS:
-            allowed = ", ".join(sorted(DESKTOP_COMPOSITIONS))
-            raise ValueError(f"desktop_composition must be one of: {allowed}")
-        return supplied
-
-    section_type = clean_text(item.get("section_type") or item.get("kind") or "").lower()
-    role = clean_text(item.get("layout_role") or "").lower()
-    variant = clean_text(data.get("layout_variant") or "").lower().replace("-", "_")
-    if variant == "story_arc":
-        return "story_arc"
-    if clean_text(item.get("layout_group") or ""):
-        return "comparison"
-    if section_type == "header":
-        return "opening"
-    if section_type == "metric_row":
-        return "headline_metrics"
-    if role in {"executive_readout", "report_epilogue"}:
-        return "reader_readout"
-    if section_type == "insight_grid":
-        return "editorial_findings"
-    if section_type in INTERACTIVE_SECTION_KINDS:
-        return "interactive_explorer"
-    if section_type in VISUAL_SECTION_KINDS:
-        return "guided_visual"
-    if section_type in TRUST_SECTION_KINDS or role in {
-        "methodology", "data_quality", "uncertainty", "hypothesis_dispositions", "evidence_trace",
-    }:
-        return "trust_close"
-    if section_type in {"narrative_band", "text", "explanation"}:
-        return "reader_readout"
-    return "supporting"
-
-
-def _story_arc_id(value: Any, index: int) -> str:
-    """Return a stable, reader-neutral identifier for a supplied story arc."""
-    raw = clean_text(value or "").lower()
-    normalized = re.sub(r"[^a-z0-9]+", "_", raw).strip("_")
-    return normalized or f"arc_{index + 1}"
-
-
 _SELECTION_LINK_KEYS = (
     "archetype", "category", "segment", "persona", "cluster", "cohort",
     "type", "team", "entity", "player", "customer", "scenario",
@@ -1423,7 +1371,6 @@ def design_report_storyboard(
     analysis_contract = dict(analysis_contract)
     if "assumptions" not in analysis_contract and isinstance(requirements.get("assumptions"), list):
         analysis_contract["assumptions"] = requirements["assumptions"]
-    rigor = _rigor_contract(requirements, analysis_contract)
     analyses = analyses or []
     clean_goal = clean_text(report_goal or title)
     clean_audience = clean_text(audience or requirements.get("audience") or "decision-maker")
@@ -1461,194 +1408,54 @@ def design_report_storyboard(
         sanitized["visual"] = visual
         sanitized["section_type"] = "advanced_visual"
         normalized_analyses[index] = sanitized
-    section_plan: list[dict[str, Any]] = []
-
-    def add(section_type: str, role: str, rationale: str, data: dict[str, Any]) -> None:
-        data = dict(data)
-        data.setdefault("semantic_key", role)
-        section_plan.append({
-            "section_type": section_type,
-            "layout_role": role,
-            "rationale": rationale,
-            "data": data,
-        })
-
-    add("header", "opening_context", "Frame the goal and audience before the analytical detail.", {
-        "title": title,
-        "subtitle": clean_goal,
-        "kicker": requirements.get("kicker", "DataClaw report"),
-        "layout_width": "full",
-    })
-
-    metrics = _storyboard_metrics(normalized_insights, normalized_analyses, requirements)
-    if metrics:
-        add("metric_row", "executive_kpis", "Lead with 2-5 numbers that anchor the rest of the report.", {
-            "title": requirements.get("metrics_title", "Headline metrics"),
-            "kicker": "At a glance",
-            "metrics": metrics[:5],
-            "layout_width": "full",
-        })
-
-    # Plan analytical sections first so insights can retain an audit-only
-    # provenance mapping without turning source IDs into reader-facing copy.
+    # The storyboard is an evidence-and-requirements contract, not a deterministic
+    # page. The creative author writes the final document from the dossier; this
+    # section_plan carries only what the evidence registry, source-binding
+    # validation, the analytical/authoring reviews, and required-visual coverage
+    # read: one analytical section per supplied asset, plus one insight grid of
+    # the completed findings.
     planned_analyses: list[dict[str, Any]] = []
-    hero_assigned = False
     for index, analysis in enumerate(normalized_analyses):
         planned = _storyboard_section_from_analysis(analysis, index)
         if not planned:
             continue
         planned["data"]["section_id"] = f"sec-analysis-{index + 1}"
-        planned["data"].setdefault(
-            "layout_width",
-            "full" if planned["section_type"] in (VISUAL_SECTION_KINDS | INTERACTIVE_SECTION_KINDS) else "content",
-        )
-        if not hero_assigned and planned["section_type"] in (VISUAL_SECTION_KINDS | INTERACTIVE_SECTION_KINDS):
-            planned["data"]["emphasis"] = "hero"
-            hero_assigned = True
         planned_analyses.append(planned)
 
-    # Story, pacing, and layout belong to the creative author; the compiler no
-    # longer forces story arcs, explorer links, or an editorial archetype. It
-    # only preserves the evidence relationships the author must honor.
+    # Bind every completed insight to its evidence and to any advanced visual
+    # that carries its claim, then keep them all: the evidence ledger and the
+    # author dossier must see every finding, not a truncated subset.
     source_bound_insights = [_storyboard_insight_item(item, i) for i, item in enumerate(normalized_insights)]
     _pair_insights_with_evidence(source_bound_insights, planned_analyses)
     _bind_handcrafted_claim_sources(source_bound_insights, planned_analyses)
-    paired_insights = source_bound_insights[:7]
 
-    readout = _storyboard_readout(clean_goal, normalized_insights)
-    add("narrative_band", "executive_readout", "State the answer before the reader reaches supporting evidence.", {
-        "title": requirements.get("readout_title", "The answer"),
-        "kicker": "Executive readout",
-        "summary": readout,
-        "layout_width": "reading",
-        "bullets": [
-            _readout_bullet(item)
-            for item in normalized_insights[1:4]
-            if _readout_bullet(item)
-        ],
-    })
-
-    visible_insights = (
-        [item for item in paired_insights if not clean_text(item.get("advanced_visual_anchor") or "")]
-        if presentation["mode"] == "handcrafted"
-        else paired_insights
-    )
-    if visible_insights:
-        add("insight_grid", "primary_insights", "Separate the material conclusions from the notebook execution trail.", {
+    section_plan: list[dict[str, Any]] = [{
+        "section_type": "insight_grid",
+        "layout_role": "primary_insights",
+        "rationale": "Completed findings with caveats, evidence, and next actions.",
+        "data": {
             "title": requirements.get("insights_title", "Primary insights"),
-            "kicker": "What changed",
             "section_id": "sec-primary-insights",
+            "semantic_key": "primary_insights",
             "caption": "Findings promoted from completed analysis, with caveats and next actions where available.",
-            "layout_variant": (
-                "editorial_list"
-                if presentation["insight_layout"] == "auto"
-                else presentation["insight_layout"]
-            ),
-            "evidence_presentation": presentation["insight_evidence"],
-            "layout_width": "content",
-            "items": visible_insights,
-        })
-        insight_arcs = {
-            _story_arc_id(item.get("story_arc") or item.get("arc") or "", 0)
-            for item in visible_insights
-            if clean_text(item.get("story_arc") or item.get("arc") or "")
-        }
-        if len(insight_arcs) == 1:
-            section_plan[-1]["data"]["story_arc"] = next(iter(insight_arcs))
-
+            "items": source_bound_insights,
+        },
+    }]
     for planned in planned_analyses:
-        add(planned["section_type"], planned["layout_role"], planned["rationale"], planned["data"])
-
-    methodology = requirements.get("methodology") or requirements.get("methods") or _collect_named_items(normalized_analyses, "methodology")
-    if methodology:
-        methods = methodology if isinstance(methodology, list) else [{"title": "Analysis method", "detail": methodology}]
-        add("methodology_block", "methodology", "Show grain, denominator, validation, and assumptions after the evidence.", {
-            "title": requirements.get("methodology_title", "Methodology"),
-            "kicker": "Method & trust",
-            "methods": methods,
-            "checks": requirements.get("checks", []),
-            "semantic_role": "methodology",
-            "layout_width": "content",
+        planned["data"].setdefault("semantic_key", planned.get("layout_role"))
+        section_plan.append({
+            "section_type": planned["section_type"],
+            "layout_role": planned["layout_role"],
+            "rationale": planned["rationale"],
+            "data": planned["data"],
         })
-
-    data_quality = _disclosure_text(
-        requirements.get("data_quality", requirements.get("coverage_risks", analysis_contract.get("data_quality")))
-    )
-    if data_quality:
-        add("callout", "data_quality", "Disclose supplied data-quality and coverage limits beside the trust material.", {
-            "title": requirements.get("data_quality_title", "Data quality & coverage"),
-            "text": data_quality,
-            "caption": "Scope and coverage limitations supplied with the completed analysis.",
-            "semantic_role": "data_quality",
-            "status": "caution",
-            "layout_width": "content",
-        })
-
-    uncertainty = _disclosure_text(
-        requirements.get("uncertainty", requirements.get("uncertainty_notes", analysis_contract.get("uncertainty")))
-    )
-    if uncertainty:
-        add("callout", "uncertainty", "Make supplied uncertainty explicit rather than implying precision in the headline.", {
-            "title": requirements.get("uncertainty_title", "Uncertainty"),
-            "text": uncertainty,
-            "caption": "Uncertainty information supplied with the completed analysis.",
-            "semantic_role": "uncertainty",
-            "status": "caution",
-            "layout_width": "content",
-        })
-
-    hypotheses = requirements.get("hypotheses", [])
-    if isinstance(hypotheses, list) and hypotheses:
-        add("hypothesis_ledger", "hypothesis_dispositions", "Show how the analysis moved from open questions to dispositions.", {
-            "title": requirements.get("hypothesis_title", "Hypothesis ledger"),
-            "kicker": "Method & trust",
-            "hypotheses": hypotheses,
-            "layout_width": "content",
-        })
-
-    evidence = _storyboard_evidence(normalized_insights, normalized_analyses)
-    if evidence and presentation["provenance"] != "audit":
-        add("evidence_trace", "evidence_trace", "Make report claims traceable back to notebook cells, filters, and artifacts.", {
-            "title": requirements.get("provenance_title", requirements.get("evidence_title", "Sources & reproducibility")),
-            "kicker": "Provenance",
-            "presentation": presentation["provenance"],
-            "evidence": evidence,
-            "layout_width": "content",
-        })
-
-    interaction_plan = _storyboard_interactions(section_plan)
-    storyboard_steps = [
-        {"phase": "readout", "purpose": "Answer the report goal in one screen.", "sections": ["opening_context", "executive_kpis", "executive_readout"]},
-        {"phase": "insights", "purpose": "Promote only decision-changing findings.", "sections": ["primary_insights"]},
-        {"phase": "analysis", "purpose": "Use the supplied visuals, controls, tables, and interpretation to answer the question.", "sections": [item["layout_role"] for item in section_plan if item["layout_role"].startswith("analysis_")]},
-        {"phase": "trust", "purpose": "Close with methodology, limitations, and optional reproducibility material.", "sections": ["methodology", "hypothesis_dispositions", "evidence_trace"]},
-    ]
 
     storyboard = {
-        "storyboard_schema": 1,
+        "storyboard_schema": 2,
         "title": title,
         "report_goal": clean_goal,
         "audience": clean_audience,
-        "designer": {
-            "mode": "handcrafted_report",
-            "note": "Render from this storyboard after analysis is complete; the creative author owns the final story, layout, and visuals.",
-        },
         "presentation": presentation,
-        "storyboard": storyboard_steps,
-        "layout_plan": _storyboard_layout(section_plan),
-        "interaction_plan": interaction_plan,
-        "data_contract": {
-            "policy": "Embed aggregate, ranked, or sampled payloads only. Do not fetch live data or embed raw full datasets.",
-            "interactive_section_kinds": sorted(INTERACTIVE_SECTION_KINDS),
-            "advanced_visual_section_kinds": sorted(ADVANCED_VISUAL_SECTION_KINDS),
-        },
-        "intake": {
-            "methodology": requirements.get("methodology") or requirements.get("methods") or [],
-            "checks": requirements.get("checks") or [],
-            "data_quality": requirements.get("data_quality") or requirements.get("coverage_risks") or [],
-            "uncertainty": requirements.get("uncertainty") or requirements.get("uncertainty_notes") or [],
-            "rigor": rigor,
-        },
         "source_context": {
             "insights": copy.deepcopy(normalized_insights),
             "analyses": copy.deepcopy(normalized_analyses),
@@ -1919,60 +1726,6 @@ def render_report_from_storyboard(storyboard: dict[str, Any], *, title: str | No
     return _render_authored_document(storyboard, title=title)
 
 
-def _storyboard_metrics(
-    insights: list[dict[str, Any]],
-    analyses: list[dict[str, Any]],
-    requirements: dict[str, Any],
-) -> list[dict[str, Any]]:
-    metrics: list[dict[str, Any]] = []
-    sources: list[Any] = [requirements.get("metrics")]
-    sources.extend(item.get("metrics") for item in insights)
-    sources.extend(item.get("metrics") for item in analyses)
-    for source in sources:
-        if isinstance(source, dict):
-            for key, value in source.items():
-                metrics.append({"label": clean_text(key).replace("_", " ").title(), "value": value})
-        elif isinstance(source, list):
-            for metric in source:
-                if isinstance(metric, dict):
-                    label = metric.get("label") or metric.get("name") or metric.get("key")
-                    if label and metric.get("value") not in (None, ""):
-                        metrics.append(metric)
-    seen: set[str] = set()
-    unique: list[dict[str, Any]] = []
-    for metric in metrics:
-        key = clean_text(metric.get("label") or metric.get("name") or metric.get("key") or "")
-        if key and key not in seen:
-            seen.add(key)
-            unique.append(metric)
-    return unique
-
-
-def _storyboard_readout(goal: str, insights: list[dict[str, Any]]) -> str:
-    if not insights:
-        return goal
-    lead = _item_title(insights[0], "Primary finding")
-    detail = _item_detail(insights[0])
-    answer = f"{lead}. {detail}" if detail else f"{lead}."
-    caution = sum(
-        1 for item in insights
-        if _reader_status(item).lower().replace("-", "_")
-        in {"caution", "weakened", "unresolved", "blocked", "warning", "warn", "limited_sample", "estimated", "estimate", "implausible"}
-    )
-    coverage = f"This report brings together {len(insights)} material insight{'s' if len(insights) != 1 else ''}."
-    if caution:
-        coverage += f" {caution} should be read with the stated caveat{'s' if caution != 1 else ''}."
-    return f"{answer}\n\n{coverage}"
-
-
-def _readout_bullet(item: dict[str, Any]) -> str:
-    title = clean_text(item.get("title") or item.get("headline") or item.get("finding") or "")
-    if not title:
-        return ""
-    status = clean_text(item.get("status") or item.get("disposition") or item.get("severity") or "")
-    return f"{title} ({status})" if status else title
-
-
 def _evidence_ref_keys(source: dict[str, Any]) -> set[str]:
     keys: set[str] = set()
     for field in ("finding_id", "hypothesis_id"):
@@ -2126,17 +1879,6 @@ def _storyboard_insight_item(item: dict[str, Any], index: int) -> dict[str, Any]
         copied.setdefault("detail", _item_detail(item))
     copied.setdefault("status", item.get("status") or item.get("severity") or item.get("confidence") or "reviewed")
     return copied
-
-
-def _collect_named_items(items: list[dict[str, Any]], key: str) -> list[Any]:
-    out: list[Any] = []
-    for item in items:
-        value = item.get(key)
-        if isinstance(value, list):
-            out.extend(value)
-        elif value:
-            out.append(value)
-    return out
 
 
 def _disclosure_text(value: Any) -> str:
@@ -2712,121 +2454,6 @@ def _is_numberish(value: Any) -> bool:
     return False
 
 
-def _storyboard_evidence(insights: list[dict[str, Any]], analyses: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    evidence: list[dict[str, Any]] = []
-    seen: set[tuple[str, str]] = set()
-
-    def add(item: dict[str, Any]) -> None:
-        kind = clean_text(item.get("kind") or item.get("type") or "evidence_ref")
-        ref = clean_text(
-            item.get("ref")
-            or item.get("cell_id")
-            or item.get("artifact_id")
-            or item.get("finding_id")
-            or item.get("hypothesis_id")
-            or item.get("path")
-            or item.get("summary")
-            or ""
-        )
-        identity = (kind, ref)
-        if identity in seen:
-            return
-        seen.add(identity)
-        evidence.append(item)
-
-    for source in [*insights, *analyses]:
-        for key in ("evidence", "evidence_refs"):
-            value = source.get(key)
-            for item in _as_list(value):
-                if isinstance(item, dict):
-                    add(dict(item))
-                elif clean_text(item):
-                    add({"kind": "evidence_ref", "ref": clean_text(item), "summary": _item_title(source, "Evidence")})
-        if source.get("finding_id") or source.get("hypothesis_id"):
-            add({
-                "kind": "finding",
-                "finding_id": source.get("finding_id", ""),
-                "hypothesis_id": source.get("hypothesis_id", ""),
-                "summary": _item_title(source, "Finding"),
-            })
-    return evidence[:40]
-
-
-def _selection_contract(data: dict[str, Any]) -> dict[str, str]:
-    """Normalize the optional, reader-facing linked-selection contract."""
-    raw = data.get("selection", data.get("linked_selection", {}))
-    raw = raw if isinstance(raw, dict) else {}
-    group = clean_text(raw.get("group") or raw.get("id") or data.get("selection_group") or data.get("link_group") or "")
-    key = clean_text(raw.get("key") or raw.get("field") or data.get("selection_key") or data.get("link_key") or "")
-    if not group and not key:
-        return {}
-    if not group or not key:
-        raise ValueError("linked selection requires both a group and a key")
-    return {"group": group, "key": key}
-
-
-def _storyboard_interactions(section_plan: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    interactions: list[dict[str, Any]] = []
-    for item in section_plan:
-        section_type = item.get("section_type")
-        data = item.get("data") if isinstance(item.get("data"), dict) else {}
-        if section_type in INTERACTIVE_SECTION_KINDS:
-            interaction = {
-                "section": item.get("layout_role"),
-                "section_type": section_type,
-                "controls": data.get("filters", data.get("controls", [])),
-                "behavior": "Client-side filtering over embedded aggregate JSON; no live fetches.",
-            }
-            selection = _selection_contract(data)
-            if selection:
-                interaction["linked_selection"] = selection
-                interaction["behavior"] = (
-                    "Client-side filtering over embedded aggregate JSON; no live fetches. "
-                    "Selection changes are shared only with sections in the same linked-selection group."
-                )
-            interactions.append(interaction)
-    return interactions
-
-
-def _storyboard_layout(section_plan: list[dict[str, Any]]) -> list[dict[str, str]]:
-    layout: list[dict[str, str]] = []
-    for item in section_plan:
-        section_type = clean_text(item.get("section_type") or "")
-        role = clean_text(item.get("layout_role") or section_type)
-        variant = clean_text((item.get("data") or {}).get("layout_variant") or "") if isinstance(item.get("data"), dict) else ""
-        if clean_text(item.get("layout_group") or ""):
-            pattern = "two-column diagnostic pair"
-        elif variant == "floating_kpis":
-            pattern = "floating KPI row"
-        elif variant == "hero_visual":
-            pattern = "hero visualization"
-        elif variant == "reader_explorer":
-            pattern = "interactive reader explorer"
-        elif variant == "report_epilogue":
-            pattern = "methodology and limitations footer"
-        elif variant == "story_arc":
-            pattern = "reader-facing story arc divider"
-        elif section_type in {"chart_interpretation", "chart_table_explorer", "filterable_chart"}:
-            pattern = "chart plus interpretation rail"
-        elif section_type == "advanced_visual":
-            pattern = "handcrafted visual plus interpretation rail"
-        elif section_type in {"interactive_table", "selector_panel"}:
-            pattern = "controls adjacent to evidence"
-        elif section_type == "entity_card_grid":
-            pattern = "card grid"
-        elif section_type in {"methodology_block", "evidence_trace", "hypothesis_ledger"}:
-            pattern = "trust and provenance block"
-        else:
-            pattern = "narrative band"
-        layout.append({
-            "section": role,
-            "section_type": section_type,
-            "layout_pattern": pattern,
-            "desktop_composition": _desktop_composition_for(item),
-        })
-    return layout
-
-
 QUIET_SECTION_KINDS = {
     "narrative_band", "insight_grid", "findings", "callout", "text",
     "explanation", "comparison", "entity_card_grid", "ledger_timeline",
@@ -2837,25 +2464,6 @@ EVIDENCE_SURFACE_KINDS = VISUAL_SECTION_KINDS | INTERACTIVE_SECTION_KINDS | {"ta
 
 def _json_for_script(value: Any) -> str:
     return json.dumps(value, default=str).replace("</", "<\\/")
-
-
-def _reader_status(item: dict[str, Any]) -> str:
-    """Return only status information that changes a reader's interpretation.
-
-    Completion and validation are release-governance facts. They belong in the
-    audit record, not as a green badge on every finished report insight.
-    """
-    explicit = clean_text(item.get("reader_status") or "")
-    if explicit:
-        return explicit
-    for field in ("disposition", "status", "severity"):
-        value = clean_text(item.get(field) or "")
-        if value.lower().replace("-", "_") in {
-            "caution", "weakened", "unresolved", "blocked", "warning", "warn",
-            "limited_sample", "estimated", "estimate", "implausible",
-        }:
-            return value
-    return ""
 
 
 def _as_list(value: Any) -> list[Any]:
