@@ -480,6 +480,12 @@ def test_visual_author_config_clamps_out_of_range_tuning_instead_of_failing():
     assert visual_author_config({}, {"mode": "creative", "timeout_seconds": 1})["timeout_seconds"] == 60
     assert visual_author_config({}, {"mode": "creative", "max_output_chars": 100})["max_output_chars"] == 50_000
 
+    # Authoring reasoning effort defaults to fast ("low"), is tunable, and validated.
+    assert visual_author_config({}, {"mode": "creative"})["reasoning_effort"] == "low"
+    assert visual_author_config({}, {"mode": "creative", "reasoning_effort": "high"})["reasoning_effort"] == "high"
+    with pytest.raises(ValueError, match="reasoning_effort must be"):
+        visual_author_config({}, {"mode": "creative", "reasoning_effort": "turbo"})
+
 
 def test_disclosure_markers_require_visible_text_and_verified_semantics():
     from dataclaw_workspace.visual_author import _AuthoredDocumentParser

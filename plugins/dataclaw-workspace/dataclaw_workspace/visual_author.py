@@ -155,6 +155,16 @@ def visual_author_config(requirements: dict[str, Any] | None, override: dict[str
         maximum=3_000_000,
         field="visual_author.max_repair_prompt_chars",
     )
+    # Reasoning effort for the authoring draft. Authoring is composition from an
+    # already-validated dossier — the analytical reasoning is done upstream — so
+    # the default is "low": the bulk of a report's wall-clock time is the model's
+    # reasoning phase, not writing the ~16k-token document, and heavy reasoning
+    # here mostly adds latency (and stream time exposed to a dropped connection).
+    # Raise to "medium"/"high" for an unusually intricate narrative.
+    effort = _clean(config.get("reasoning_effort") or "low").lower()
+    if effort not in {"minimal", "low", "medium", "high"}:
+        raise ValueError("visual_author.reasoning_effort must be minimal, low, medium, or high")
+    config["reasoning_effort"] = effort
     return config
 
 
@@ -1196,7 +1206,7 @@ async def _author_creative_document(
             prompt=prompt_text,
             timeout_seconds=cfg["timeout_seconds"],
             max_output_chars=cfg["max_output_chars"],
-            reasoning_effort="medium",
+            reasoning_effort=cfg["reasoning_effort"],
             text_verbosity="high",
             progress_phase=phase,
             progress_label=label,
