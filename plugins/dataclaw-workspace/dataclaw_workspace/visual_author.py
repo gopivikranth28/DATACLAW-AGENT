@@ -566,12 +566,19 @@ class _AuthoredDocumentParser(HTMLParser):
         ]
         if unsupported_dc:
             raise ValueError(f"authored HTML cannot supply host-owned DataClaw attributes: {unsupported_dc}")
-        # Author-declared trust disclosures the quality gate can credit for an
-        # authored document (which has no deterministic disclosure sections).
-        self.disclosures.update(
+        # Author-declared trust disclosures the quality gate can later credit — but
+        # only when they sit on a visible, text-bearing element (not an inert
+        # <meta>/void tag) and carry the required semantic content. The actual
+        # crediting happens at end-tag time from the element's collected text.
+        disclosure_kinds = {
             value.lower().replace("-", "_")
             for value in self._aliases(attr.get("data-dc-disclosure", ""))
-        )
+        }
+        if disclosure_kinds and (
+            tag in self._VOID_TAGS
+            or tag in {"meta", "script", "style", "link", "head", "base", "title"}
+        ):
+            raise ValueError(f"data-dc-disclosure must be on a visible text-bearing element, not <{tag}>")
         if tag == "meta" and attr.get("http-equiv", "").lower() == "refresh":
             raise ValueError("authored HTML cannot use meta refresh")
         if tag == "form" or attr.get("action") or attr.get("formaction"):
@@ -617,6 +624,9 @@ class _AuthoredDocumentParser(HTMLParser):
             if not nested_visual and not evidence and not own_decoration:
                 self.visuals_without_evidence.append(tag)
         entry = {"tag": tag, "evidence": evidence, "source": source, "decoration": decoration}
+        if disclosure_kinds:
+            entry["disclosure"] = disclosure_kinds
+            entry["disclosure_text"] = []
         if tag not in self._VOID_TAGS:
             self._stack.append(entry)
         if tag in self._TEXT_BLOCKS:
@@ -652,6 +662,26 @@ class _AuthoredDocumentParser(HTMLParser):
             self._script["parts"].append(data)
         for block in self._text_blocks:
             block["parts"].append(data)
+        for entry in self._stack:
+            if "disclosure" in entry:
+                entry["disclosure_text"].append(data)
+
+    def _finalize_disclosures(self, kinds: set[str], raw_text: str) -> None:
+        """Credit a disclosure only when its visible text carries the semantics."""
+        text = re.sub(r"\s+", " ", raw_text).strip().lower()
+        if not text:
+            return
+        for kind in kinds:
+            if kind == "methodology":
+                # The three-part methodology contract must be visibly present.
+                if (
+                    "grain" in text
+                    and "denominator" in text
+                    and any(term in text for term in ("validat", "reconcil", "verif"))
+                ):
+                    self.disclosures.add("methodology")
+            elif kind in {"data_quality", "uncertainty"}:
+                self.disclosures.add(kind)
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
@@ -675,7 +705,9 @@ class _AuthoredDocumentParser(HTMLParser):
         if self._stack:
             if self._stack[-1]["tag"] != tag:
                 raise ValueError("authored HTML has unbalanced elements")
-            self._stack.pop()
+            entry = self._stack.pop()
+            if entry.get("disclosure"):
+                self._finalize_disclosures(entry["disclosure"], "".join(entry.get("disclosure_text", [])))
 
     def close(self) -> None:
         super().close()

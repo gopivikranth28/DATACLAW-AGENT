@@ -350,6 +350,31 @@ def test_visual_author_config_clamps_out_of_range_tuning_instead_of_failing():
     assert visual_author_config({}, {"mode": "creative", "timeout_seconds": 100000})["timeout_seconds"] == 900
 
 
+def test_disclosure_markers_require_visible_text_and_verified_semantics():
+    from dataclaw_workspace.visual_author import _AuthoredDocumentParser
+
+    def disclosures(html: str):
+        parser = _AuthoredDocumentParser()
+        try:
+            parser.feed(html)
+            parser.close()
+        except ValueError as exc:
+            return f"REJECTED: {exc}"
+        return sorted(parser.disclosures)
+
+    # An inert <meta> marker (no visible disclosure) is rejected outright.
+    assert "REJECTED" in disclosures('<meta data-dc-disclosure="methodology data_quality uncertainty">')
+    # Methodology is credited only when its three-part contract is visibly present.
+    assert disclosures(
+        '<p data-dc-disclosure="methodology">Grain is customer-month; denominator is eligible '
+        "renewals; validated against invoices.</p>"
+    ) == ["methodology"]
+    assert disclosures('<p data-dc-disclosure="methodology">We analyzed the data.</p>') == []
+    # Data-quality / uncertainty need visible text; an empty element is not credited.
+    assert disclosures('<p data-dc-disclosure="data_quality">Coverage excludes churned accounts.</p>') == ["data_quality"]
+    assert disclosures('<p data-dc-disclosure="uncertainty"></p>') == []
+
+
 def test_data_decoration_is_not_inherited_and_cannot_cloak_a_data_visual():
     from dataclaw_workspace.visual_author import _AuthoredDocumentParser
 
@@ -408,7 +433,11 @@ def test_publish_integrity_helpers_block_authored_tampering():
     with pytest.raises(ValueError, match="evidence review did not pass"):
         _require_authored_publish_integrity(full % "attention_required")
     _require_authored_publish_integrity(full % "pass")  # valid authored doc passes
-    _require_authored_publish_integrity("<html><body>x</body></html>")  # non-authored: skipped
+    # Enforcement is unconditional: it does NOT gate on a self-declared marker, so
+    # a doc missing the embedded evidence integrity is blocked regardless of any
+    # (spoofable) authoredness attribute or its quoting.
+    with pytest.raises(ValueError, match="evidence-ledger targets"):
+        _require_authored_publish_integrity("<html data-dc-authored-document='true'><body>x</body></html>")
 
 
 def test_repair_prompt_is_bounded_to_the_context_budget():
@@ -560,9 +589,9 @@ async def test_creative_author_fails_closed_without_llm_or_ledger():
         )
 
 
-def test_authoring_review_requires_typed_facts_when_creative_visuals_are_requested():
+def test_authoring_review_requires_typed_facts_when_display_facts_are_required():
     storyboard = _storyboard()
-    storyboard["visual_author_config"] = {"mode": "runtime", "facts": []}
+    storyboard["source_context"]["requirements"]["presentation"] = {"require_display_facts": True}
     review = review_storyboard_authoring(storyboard)
     assert review["status"] == "attention_recommended"
     assert {finding["id"] for finding in review["findings"]} == {"legacy_insight_display_semantics"}

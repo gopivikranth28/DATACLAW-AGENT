@@ -1304,10 +1304,11 @@ def _item_has_evidence_id(item: dict[str, Any]) -> bool:
 
 
 def _presentation_options(requirements: dict[str, Any]) -> dict[str, str]:
-    """Return the small, domain-neutral presentation contract for a report.
+    """Resolve the report's presentation mode — the only surviving control.
 
-    These choices control only how supplied findings and evidence are read. They
-    cannot create new claims, categories, or supporting facts.
+    Every report is handcrafted and authored end to end, so the former layout,
+    insight-evidence, provenance, and data-note controls are gone: the creative
+    author owns those decisions. Callers no longer supply them.
     """
     supplied = requirements.get("presentation")
     supplied = supplied if isinstance(supplied, dict) else {}
@@ -1318,45 +1319,7 @@ def _presentation_options(requirements: dict[str, Any]) -> dict[str, str]:
     ).lower().replace("-", "_")
     if mode not in {"standard", "handcrafted"}:
         raise ValueError("presentation.mode must be 'standard' or 'handcrafted'")
-    insight_layout = clean_text(
-        supplied.get("insight_layout")
-        or requirements.get("insight_layout")
-        or "auto"
-    ).lower().replace("-", "_")
-    if insight_layout not in {"auto", "editorial_list", "card_grid"}:
-        raise ValueError("presentation.insight_layout must be 'auto', 'editorial_list', or 'card_grid'")
-    insight_evidence = clean_text(
-        supplied.get("insight_evidence")
-        or requirements.get("insight_evidence")
-        or "none"
-    ).lower().replace("-", "_")
-    if insight_evidence not in {"none", "linked", "chips"}:
-        raise ValueError("presentation.insight_evidence must be 'none', 'linked', or 'chips'")
-    provenance = clean_text(
-        supplied.get("provenance")
-        or requirements.get("provenance_presentation")
-        # Backwards-compatible spelling for callers that deliberately asked
-        # for a reader-visible trace before the provenance/presentation split.
-        or supplied.get("evidence_trace")
-        or requirements.get("evidence_trace_presentation")
-        or "audit"
-    ).lower().replace("-", "_")
-    if provenance not in {"audit", "disclosure", "expanded"}:
-        raise ValueError("presentation.provenance must be 'audit', 'disclosure', or 'expanded'")
-    data_notes = clean_text(
-        supplied.get("data_notes")
-        or requirements.get("data_notes")
-        or "source_only"
-    ).lower().replace("-", "_")
-    if data_notes not in {"source_only", "automatic"}:
-        raise ValueError("presentation.data_notes must be 'source_only' or 'automatic'")
-    return {
-        "mode": mode,
-        "insight_layout": insight_layout,
-        "insight_evidence": insight_evidence,
-        "provenance": provenance,
-        "data_notes": data_notes,
-    }
+    return {"mode": mode}
 
 
 _SELECTION_LINK_KEYS = (
@@ -1525,10 +1488,11 @@ def review_storyboard_authoring(storyboard: dict[str, Any]) -> dict[str, Any]:
     visual_config = storyboard.get("visual_author_config")
     if not isinstance(visual_config, dict):
         visual_config = requirements.get("visual_author") if isinstance(requirements.get("visual_author"), dict) else {}
-    mode = clean_text(visual_config.get("mode") or "off").lower().replace("-", "_")
-    # Full-document creative authoring is reviewed against its evidence dossier;
-    # typed display facts remain the contract for bounded visual-plan modes.
-    requested = bool(presentation.get("require_display_facts")) or mode in {"runtime", "required", "provided"}
+    mode = clean_text(visual_config.get("mode") or "creative").lower().replace("-", "_")
+    # Display-fact coverage is reviewed only when the source explicitly requests
+    # it; full-document creative authoring is otherwise reviewed against its
+    # evidence dossier, not typed display facts.
+    requested = bool(presentation.get("require_display_facts"))
     declared: set[tuple[str, str]] = set()
     explicit_fact_count = 0
     legacy_fact_count = 0

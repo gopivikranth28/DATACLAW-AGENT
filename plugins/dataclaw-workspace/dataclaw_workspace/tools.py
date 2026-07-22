@@ -556,9 +556,6 @@ def _require_display_fact_coverage(authoring_review: dict[str, Any], *, required
     )
 
 
-_AUTHORED_MARKER_RE = re.compile(r'<html\b[^>]*\bdata-dc-authored-document="true"', re.IGNORECASE)
-
-
 def _extract_doc_json(doc: str, attr: str) -> Any:
     match = re.search(rf"<script[^>]*\b{re.escape(attr)}\b[^>]*>(.*?)</script>", doc, re.IGNORECASE | re.DOTALL)
     if not match:
@@ -591,13 +588,14 @@ def _scan_authored_extra_js(doc: str) -> None:
 def _require_authored_publish_integrity(doc: str) -> None:
     """Re-derive the creative-evidence gates from the hash-bound HTML at publish.
 
-    The published bytes carry, tamper-evident under the receipt hash, the authored
-    marker, the evidence ledger, the source-coverage manifest, and the independent
-    evidence-review verdict. Enforcing them here (rather than trusting the mutable
-    storyboard visual_author record) closes the hand-edited-storyboard bypass.
+    Every report_publish target is a creative-authored report, so this is enforced
+    unconditionally — it does not gate on a self-declared authoredness marker,
+    which a hand-edited pair could alter (e.g. change the attribute quoting) to
+    skip the checks. The published bytes carry, tamper-evident under the receipt
+    hash, the evidence ledger, the source-coverage manifest, and the independent
+    evidence-review verdict; enforcing them here rather than trusting the mutable
+    storyboard visual_author record closes the hand-edited-storyboard bypass.
     """
-    if not _AUTHORED_MARKER_RE.search(doc):
-        return
     registry = _extract_doc_json(doc, "data-dc-evidence-registry")
     targets = registry.get("targets") if isinstance(registry, dict) else None
     if not isinstance(targets, list) or not targets:
