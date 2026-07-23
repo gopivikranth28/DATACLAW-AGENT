@@ -481,7 +481,7 @@ def test_visual_author_config_clamps_out_of_range_tuning_instead_of_failing():
     assert visual_author_config({}, {"mode": "creative", "max_output_chars": 100})["max_output_chars"] == 50_000
 
     # Authoring reasoning effort defaults to fast ("low"), is tunable, and validated.
-    assert visual_author_config({}, {"mode": "creative"})["reasoning_effort"] == "low"
+    assert visual_author_config({}, {"mode": "creative"})["reasoning_effort"] == "medium"
     assert visual_author_config({}, {"mode": "creative", "reasoning_effort": "high"})["reasoning_effort"] == "high"
     with pytest.raises(ValueError, match="reasoning_effort must be"):
         visual_author_config({}, {"mode": "creative", "reasoning_effort": "turbo"})
@@ -551,6 +551,60 @@ def test_data_decoration_is_not_inherited_and_cannot_cloak_a_data_visual():
     parser = _AuthoredDocumentParser()
     with pytest.raises(ValueError, match="cannot also carry data-source"):
         parser.feed('<figure data-decoration="true" data-source="src-1"><svg></svg></figure>')
+
+
+def test_claim_collection_covers_headings_table_cells_and_definitions_but_not_nav():
+    from dataclaw_workspace.visual_author import _AuthoredDocumentParser
+
+    parser = _AuthoredDocumentParser()
+    parser.feed(
+        "<nav><h2>Skip navigation heading</h2></nav>"
+        "<h2>The harder test favors the simpler baseline</h2>"
+        "<table><caption>Renewal by cohort</caption>"
+        "<tr><th>Cohort label</th><td>0-90 days: 41% renewal</td></tr></table>"
+        "<dl><dt>Data grain</dt><dd>One row per customer-month</dd></dl>"
+        "<small>Rates exclude trial accounts.</small>"
+        "<p>Prose claim about the cohort.</p>"
+    )
+    parser.close()
+    texts = {claim["text"] for claim in parser.claims}
+    # Analytical headline, table caption/cells, definition term/detail, and small
+    # annotation are now claim candidates the evidence reviewer can see.
+    assert "The harder test favors the simpler baseline" in texts
+    assert "Renewal by cohort" in texts
+    assert "0-90 days: 41% renewal" in texts
+    assert "One row per customer-month" in texts
+    assert "Rates exclude trial accounts." in texts
+    assert "Prose claim about the cohort." in texts
+    # Navigation chrome is not an analytical claim.
+    assert "Skip navigation heading" not in texts
+
+
+def test_trust_material_becomes_a_bindable_src_methods_source():
+    from dataclaw_workspace.visual_author import build_creative_author_dossier
+
+    storyboard = _ledger_backed_storyboard()
+    storyboard["source_context"]["requirements"] = {
+        "methodology": "Each row is a customer-month; rates per eligible renewal; reconciled to billing.",
+        "limitations": "Coverage excludes trial accounts.",
+    }
+    dossier, contract = build_creative_author_dossier(storyboard, {"mode": "creative"})
+
+    # Supplied methodology/limitations are now a real, coverable source the author
+    # can bind to, rather than aliasless prose the model must leave unbound.
+    assert "src-methods" in {item["alias"] for item in contract["sources"]}
+    assert "src-methods" in dossier
+    assert "Methodology, limitations, metrics, filters, and review material" in dossier
+    assert "Coverage excludes trial accounts." in dossier
+
+
+def test_absent_trust_material_adds_no_src_methods_source():
+    from dataclaw_workspace.visual_author import build_creative_author_dossier
+
+    # A storyboard with no methodology/review requirements must not gain src-methods,
+    # so the author is not forced to cover a source that does not exist.
+    _, contract = build_creative_author_dossier(_ledger_backed_storyboard(), {"mode": "creative"})
+    assert "src-methods" not in {item["alias"] for item in contract["sources"]}
 
 
 def test_bespoke_visual_without_records_renders_instead_of_aborting():
