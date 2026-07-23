@@ -146,8 +146,31 @@ def theme_runtime(nonce: str) -> str:
     const link = target && target.closest ? target.closest('a[href]') : null;
     if (!link) return;
 
-    const href = link.getAttribute('href') || '';
-    if (!externalScheme.test(href.trim())) return;
+    const href = (link.getAttribute('href') || '').trim();
+
+    // Same-document fragment links (a table of contents, skip-nav, footnote
+    // backrefs) must not navigate. In a sandboxed srcdoc frame a fragment click
+    // is a frame navigation to about:srcdoc#..., which fires a second load event
+    // that the host reads as an escape attempt and replaces the document with the
+    // blocked-navigation page. Scroll to the target ourselves and leave the frame
+    // URL untouched so the guard never trips.
+    if (href.charAt(0) === '#') {
+      event.preventDefault();
+      const id = href.slice(1);
+      if (id) {
+        const dest = document.getElementById(id) || document.getElementsByName(id)[0] || null;
+        if (dest) {
+          dest.scrollIntoView();
+          if (typeof dest.focus === 'function') {
+            if (!dest.hasAttribute('tabindex')) dest.setAttribute('tabindex', '-1');
+            dest.focus({ preventScroll: true });
+          }
+        }
+      }
+      return;
+    }
+
+    if (!externalScheme.test(href)) return;
 
     event.preventDefault();
     window.parent && window.parent.postMessage({
