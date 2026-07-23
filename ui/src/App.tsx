@@ -150,7 +150,7 @@ export default function App() {
     ] : []),
     ...(hasTools ? [{ key: '/tools', icon: <ToolOutlined />, label: <Link to="/tools">Tools</Link> }] : []),
     { key: '/skills', icon: <BulbOutlined />, label: <Link to="/skills">Skills</Link> },
-    { key: '/config', icon: <SettingOutlined />, label: <Link to="/config">Config</Link> },
+    { key: '/config', icon: <SettingOutlined />, label: <Link to="/config">Settings</Link> },
   ]
 
   const selected = nav.map(n => n.key).filter(k => pathname.startsWith(k)).at(-1) ?? ''

@@ -110,7 +110,7 @@ function buildContext(message: DataclawInboundMessage, sessionKey: string, accou
     "- Use Dataclaw tools as the source of truth for plans, notebooks, data work, visual reports, and files.",
     "- Before running notebooks, code, or data tools for analysis, call dataclaw_propose_plan unless the user explicitly asks for a quick/no-plan answer. If Dataclaw auto mode is active the plan tool will auto-approve; otherwise wait for approval before execution.",
     "- Keep notebook work visible by using notebook/cell execution tools rather than hiding work in final prose.",
-    "- For analytical answers, build the in-app visual report with dataclaw_report_add_section; do not answer with raw media paths or OpenClaw canvas-pairing language.",
+    "- For analytical answers, build the in-app visual report with dataclaw_report_design_report (then dataclaw_report_publish); do not answer with raw media paths or OpenClaw canvas-pairing language.",
     "",
   ].join("\n");
   const scopedText = message.projectId

@@ -15,18 +15,19 @@ https://github.com/user-attachments/assets/25dc8181-bd14-41ad-a81c-5f9fe108e30a
 
 ## Release 3 — governed analysis and reporting
 
-Release 3 is the next major branch after `main`. It adds an evidence-backed path from exploratory analysis to a reviewed, versioned report, together with a redesigned session workspace.
+Release 3 adds an evidence-backed path from exploratory analysis to a reviewed, versioned report, together with a redesigned session workspace, a reworked reporting layer, a rebuilt configuration surface, and live run feedback. The governance model runs throughout: claims trace back to evidence, and publication is gated on the required reviews.
 
-[Compare `release3` with `main`](https://github.com/gopivikranth28/DATACLAW-AGENT/compare/main...release3)
+### Capabilities
 
-### What changed from `main`
-
-| Area | Release 3 change |
+| Area | Capability |
 |---|---|
 | Analysis | Adds a durable EDA ledger for hypotheses, findings, validation state, and notebook or structured-evidence anchors. Readiness checks now make unresolved data-quality and validation gaps visible before downstream work. |
 | Review and plans | Adds stable plan-step IDs, deterministic analysis-review checklists, validation gates, and an audited path for user-approved risk acceptance. A required sub-agent review remains unresolved until that reviewer has actually run. |
-| Reports | Adds storyboard-first HTML composition, a versioned report rubric, design and analytical review, optional runtime visual authoring, browser-based visual review when required, publish receipts, and optional DOCX export. |
+| Reports | Generates one handcrafted, evidence-bound HTML document per report: an LLM authors the prose, story, layout, original CSS, and bespoke SVG/Canvas visuals from a lean evidence-and-requirements storyboard. Every substantive claim and quantitative visual binds to its source or evidence alias, and methodology, limitations, and source coverage are tracked and gated. Authoring runs a validate → evidence-review → bounded-repair loop; a versioned rubric keeps every evidence and integrity gate; analytical and authoring-rigor reviews gate publication, with design/story review an author-owned stub. Reports are desktop-oriented, contrast-checked, and served as sandboxed artifacts with working in-document navigation; provenance and compaction boundaries are hardened so evidence and summary edges stay intact. Browser-based visual review runs when required, and publish receipts plus optional DOCX export remain. |
+| Authoring performance | Reasoning-effort control now takes effect on all direct backends (Anthropic, OpenAI, Gemini), not just Codex. Authoring defaults to medium reasoning effort for stronger prose, story, and visual design, with a per-report knob to raise or lower it; transient stream drops during a long author run are retried. |
 | Artifacts | Adds session-scoped HTML publication with validation, immutable version history, revision conflict checks, export, living-report notes, and sandboxed previews. Structured reports must have a current successful `report_publish` receipt before they can become an artifact version. |
+| Configuration | A redesigned Config page with a server-side authenticated model catalog — validate a newly entered key and pick a model before saving, while stored credentials stay masked. Conversation history is now counted and compacted by complete turns rather than by raw messages. |
+| Chat | The transcript streams live tool progress and run health during a turn, so long-running tools and stalled runs are visible as they happen. |
 | OpenClaw | Expands the bridge to snapshot the live Dataclaw tool manifest, validate the governed reporting toolchain, and surface manifest drift when the plugin needs to be reinstalled. |
 | Reliability and safety | Fixes project-kernel Python resolution, isolates independent and project sessions, tightens workspace path handling, serves workspace HTML/SVG as attachments by default, and adds CSP-constrained HTML previews. |
 
@@ -56,14 +57,14 @@ This chain improves traceability from a published claim back to its evidence and
 | `dataclaw-eda` (new) | Propose and update hypotheses; record, read, list, and supersede findings; summarize EDA readiness. |
 | `dataclaw-analysis-review` (new) | Request reviews, list review runs and findings, resolve findings, and inspect the review gate for plan steps, artifacts, living reports, or sessions. |
 | `dataclaw-artifacts` (new) | Publish, read, list, export, revise, and delete versioned HTML artifacts; append living-report notes. |
-| `dataclaw-workspace` (expanded) | Build or design storyboard-backed reports, add draft sections, capture visual-review evidence, and create hash-bound publish receipts. |
+| `dataclaw-workspace` (expanded) | Design storyboard-backed reports as handcrafted evidence-bound documents, capture visual-review evidence, and create hash-bound publish receipts. |
 | `dataclaw-plans` (expanded) | Track stable plan-step identity, validation readiness, gate state, and explicitly approved risk acceptance. |
 | `dataclaw-notebooks` (expanded) | Emits first-class metric output and improves isolated-kernel Python resolution. |
 
-### Skill library additions
+### Skill library
 
-- Added: `analysis_review`, `artifacts`, `dashboarding`, `insight_validation`, `report_design`, `structured_eda`, and `visualization`.
-- Updated: `dataclaw_data_science` now routes governed EDA, review, report, and artifact work; `data_profiling` remains the compact profiling path.
+- Governed workflow skills: `structured_eda`, `insight_validation`, `analysis_review`, `report_design`, `artifacts`, and `visualization`, alongside the `dataclaw_data_science` router (in `dataclaw.md`) and the compact `data_profiling`, `notebook_report`, and `sql_analyst` paths.
+- The reporting and analysis skills — `report_design`, `structured_eda`, `visualization`, `artifacts`, and `dataclaw_data_science` — are tuned for the governed workflow, and the standalone `dashboarding` skill is retired, its guidance folded into `report_design` and `visualization`.
 - Skills are installed from `skill-library/`. OpenClaw tool-manifest installation and skill synchronization are separate operations.
 
 ### Release scope
@@ -71,6 +72,22 @@ This chain improves traceability from a published claim back to its evidence and
 - Release 3 remains an experimental beta for local machines and trusted private servers.
 - Artifact versions and review records are stored by the local Dataclaw instance; this release does not add public hosting, authentication, or multi-user permissions.
 - Generic hand-authored HTML can use the artifact validator directly. Storyboard-backed structured reports have the stricter review-and-receipt publication path described above.
+
+### Visual report example
+
+The World Cup 2026 forecast shows the governed analysis-to-report workflow rendered as one complete, handcrafted document. The snapshots below are sections of that single report: a decision-first hero, evidence-bound figures with their interpretation beside them, a sensitivity view, and explicit data-quality limits.
+
+![Decision-first hero — "Spain has the shortest path" — with the selected-model title probability called out.](examples/Fifa%20WC%2026/snapshots/hero.png)
+
+![Champion probabilities as an evidence-bound bar chart, with its denominator and an interpretation reading the result as conditional, not certain.](examples/Fifa%20WC%2026/snapshots/champion-probabilities.png)
+
+![Model-sensitivity range plot — champion-probability spread across four specifications, with the 50% line marked.](examples/Fifa%20WC%2026/snapshots/model-sensitivity.png)
+
+![Data-quality audit — fixture-integrity tiles, result and status distributions, and a reconciliation count table.](examples/Fifa%20WC%2026/snapshots/data-quality.png)
+
+**[Open the standalone HTML report](examples/Fifa%20WC%2026/art-48c8874a-v1.html)** · [Source notebook](examples/Fifa%20WC%2026/fifa_wc_26.ipynb)
+
+> These are excerpts. GitHub renders the HTML file as source, so after cloning the repository open it locally in a browser for the full report.
 
 ## Quick Start
 
@@ -195,7 +212,7 @@ Navigate to **Projects** in the sidebar and create a new project. Each project g
 
 ### 4. Install the analysis and reporting skills you need
 
-Open **Skills** to browse the bundled Skill Library. For the governed Release 3 path, install `structured_eda`, `insight_validation`, and `analysis_review`; add `visualization`, `dashboarding`, `report_design`, and `artifacts` when the session will publish a report or dashboard.
+Open **Skills** to browse the bundled Skill Library. For the governed Release 3 path, install `structured_eda`, `insight_validation`, and `analysis_review`; add `report_design` and `artifacts` when the session will publish a report or report-like dashboard, and add `visualization` when notebook charting or visual-evidence preparation is needed.
 
 Installed skills become available to direct LLM sessions, subject to the project or session Scope selection. When OpenClaw is active, the Skills page also offers to synchronize each installed skill to the Dataclaw OpenClaw extension. Skill synchronization is separate from reinstalling the OpenClaw tool manifest.
 
@@ -334,7 +351,7 @@ Plugins are installed via pip and auto-discovered at startup:
 
 | Plugin | Tools | Routes | Key Dependencies |
 |---|---|---|---|
-| `dataclaw-workspace` | 11 (file I/O, shell exec, report build/design/review/publish/add-section) | — | dataclaw-artifacts, html-for-docx, PyYAML |
+| `dataclaw-workspace` | 9 (file I/O, shell exec, report design/review/publish) | — | dataclaw-artifacts, html-for-docx, PyYAML |
 | `dataclaw-data` | 6 (list, profile, preview, query, describe, docs) | `/api/data/*` | duckdb |
 | `dataclaw-notebooks` | 14 (open, close, read, edit, execute, display_metric, etc.) | `/api/notebooks` | nbformat, jupyter_client, Plotly |
 | `dataclaw-eda` | 8 (propose/update/list hypotheses, record/read/list/supersede findings, summarize readiness) | `/api/eda/*` | stdlib |

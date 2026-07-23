@@ -8,6 +8,7 @@ outside the base directory is prevented.
 from __future__ import annotations
 
 import asyncio
+import copy
 import difflib
 import hashlib
 import json
@@ -18,32 +19,25 @@ from typing import Any
 
 from dataclaw.config.paths import workspaces_dir
 from dataclaw.storage.skill_library import stale_installed_library_skills
+from dataclaw.tool_progress import emit_tool_progress
+from dataclaw_artifacts.validator import (
+    AUTHORED_EXTRA_FORBIDDEN_JS,
+    ArtifactValidationError,
+    strip_dataclaw_runtime_scripts,
+    validate_and_prepare_html,
+)
 from dataclaw_workspace.config import WorkspaceConfig
 from dataclaw_workspace.report_renderer import (
-    CHART_SECTION_KINDS,
-    BODY_CLOSE_RE as _BODY_CLOSE_RE,
-    BODY_OPEN_RE as _BODY_OPEN_RE,
-    REPORT_SECTION_END as _REPORT_SECTION_END,
-    REPORT_SECTION_START as _REPORT_SECTION_START,
-    REPORT_SHELL_CSS_ATTR as _REPORT_SHELL_CSS_ATTR,
-    REPORT_SHELL_SCRIPT_ATTR as _REPORT_SHELL_SCRIPT_ATTR,
+    VISUAL_SECTION_KINDS,
     analyze_report_quality as _analyze_report_quality,
+    build_evidence_registry as _build_evidence_registry,
     critique_report_storyboard as _critique_report_storyboard,
     design_report_storyboard as _design_report_storyboard,
-    ensure_plotly_runtime as _ensure_plotly_runtime,
     ensure_regeneration_recipe as _ensure_regeneration_recipe,
-    ensure_report_shell_context as _ensure_report_shell_context,
-    normalize_raw_html_report as _normalize_raw_html_report,
-    plotly_script_tag as _plotly_script_tag,
-    render_report_section as _render_report_section,
     render_report_from_storyboard as _render_report_from_storyboard,
-    report_shell as _report_shell,
-    report_shell_css as _report_shell_css,
-    report_shell_script as _report_shell_script,
     review_storyboard_design as _review_storyboard_design,
     review_storyboard_authoring as _review_storyboard_authoring,
     review_storyboard_analysis as _review_storyboard_analysis,
-    typed_report_section as _typed_report_section,
 )
 from dataclaw_workspace.visual_author import (
     VisualAuthorRequiredError,
@@ -138,37 +132,54 @@ def _write_regeneration_recipe(
     return recipe_path
 
 
-def _verify_regeneration_recipe(
+def _inspect_regeneration_recipe(
     report_path: Path,
     storyboard_path: Path,
     storyboard: dict[str, Any],
     *,
     html_sha256: str,
 ) -> dict[str, Any] | None:
-    """Verify the sidecar only for storyboards that declare the new recipe contract."""
+    """Inspect the optional rebuild sidecar without making it a publish gate."""
     expected = storyboard.get("regeneration_recipe")
     if not isinstance(expected, dict):
         return None
     recipe_path = report_path.with_name(f"{report_path.stem}.recipe.json")
     if not recipe_path.is_file():
-        raise ValueError("Report publish integrity gate failed: regeneration recipe sidecar is missing; redesign the report before publishing.")
+        return {
+            "status": "missing",
+            "path": None,
+            "expected_path": str(recipe_path),
+            "reason": "regeneration recipe sidecar is missing",
+        }
     try:
         record = json.loads(recipe_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ValueError("Report publish integrity gate failed: regeneration recipe sidecar is not valid JSON.") from exc
+    except json.JSONDecodeError:
+        return {
+            "status": "invalid",
+            "path": str(recipe_path),
+            "reason": "regeneration recipe sidecar is not valid JSON",
+        }
     if not isinstance(record, dict) or record.get("recipe_schema") != 1:
-        raise ValueError("Report publish integrity gate failed: regeneration recipe sidecar is invalid.")
+        return {
+            "status": "invalid",
+            "path": str(recipe_path),
+            "reason": "regeneration recipe sidecar is invalid",
+        }
     for key in ("source_context_sha256", "section_plan_sha256", "renderer"):
         if record.get(key) != expected.get(key):
-            raise ValueError(
-                "Report publish integrity gate failed: regeneration recipe no longer matches the storyboard; redesign the report before publishing."
-            )
+            return {
+                "status": "stale",
+                "path": str(recipe_path),
+                "reason": "regeneration recipe no longer matches the storyboard",
+            }
     artifact = record.get("artifact") if isinstance(record.get("artifact"), dict) else {}
     if artifact.get("html_sha256") != html_sha256 or artifact.get("storyboard_path") != str(storyboard_path):
-        raise ValueError(
-            "Report publish integrity gate failed: regeneration recipe is bound to a different artifact; redesign the report before publishing."
-        )
-    return {"path": str(recipe_path), **record}
+        return {
+            "status": "stale",
+            "path": str(recipe_path),
+            "reason": "regeneration recipe is bound to a different artifact",
+        }
+    return {"status": "verified", "path": str(recipe_path), **record}
 
 
 _REPORT_REVIEW_ACTOR = "report_critique"
@@ -405,7 +416,7 @@ def _attach_rendered_layout_review(design_review: dict[str, Any], runtime_smoke:
             "id": "rendered_layout_smoke_failed",
             "severity": "warning",
             "claim": "Desktop/webview layout checks found a rendered report defect.",
-            "recommendation": "Fix the named desktop/webview layout check, redesign the report, and publish the regenerated artifact.",
+            "recommendation": "Fix the named desktop layout check, redesign the report, and publish the regenerated artifact.",
             "sections": [],
             "checks": checks,
         })
@@ -415,7 +426,7 @@ def _attach_rendered_layout_review(design_review: dict[str, Any], runtime_smoke:
             "id": "rendered_layout_review_skipped",
             "severity": "info",
             "claim": "Desktop/webview layout review was not available in this publish environment.",
-            "recommendation": "Run publication where Playwright Chromium is available before relying on the desktop/webview layout evidence.",
+            "recommendation": "Run publication where Playwright Chromium is available before relying on desktop layout evidence.",
             "sections": [],
         })
     return review
@@ -424,7 +435,7 @@ def _attach_rendered_layout_review(design_review: dict[str, Any], runtime_smoke:
 def _classify_runtime_smoke_result(result: dict[str, Any]) -> dict[str, Any]:
     """Downgrade unavailable browser infrastructure to a transparent skip.
 
-    A report-layout failure remains fail-closed.  This only reclassifies a
+    A report-layout failure remains a visible report defect. This only reclassifies a
     failed result when *every* reported check is an infrastructure-only
     browser-close/crash error, which cannot identify a defect in the report
     being published.
@@ -452,12 +463,15 @@ def _classify_runtime_smoke_result(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def _visual_review_required(storyboard: dict[str, Any], override: bool | None) -> bool:
-    if override is not None:
-        return override
     source_context = storyboard.get("source_context") if isinstance(storyboard.get("source_context"), dict) else {}
     requirements = source_context.get("requirements") if isinstance(source_context.get("requirements"), dict) else {}
     publication = requirements.get("publication") if isinstance(requirements.get("publication"), dict) else {}
-    return bool(publication.get("require_visual_review", requirements.get("require_visual_review", False)))
+    declared = bool(publication.get("require_visual_review", requirements.get("require_visual_review", False)))
+    if declared:
+        return True
+    if override is not None:
+        return override
+    return False
 
 
 def _display_facts_required(storyboard: dict[str, Any]) -> bool:
@@ -465,6 +479,68 @@ def _display_facts_required(storyboard: dict[str, Any]) -> bool:
     requirements = source_context.get("requirements") if isinstance(source_context.get("requirements"), dict) else {}
     presentation = requirements.get("presentation") if isinstance(requirements.get("presentation"), dict) else {}
     return bool(presentation.get("require_display_facts", False))
+
+
+def _analysis_source_id(analysis: dict[str, Any], index: int) -> str:
+    nested = analysis.get("data") if isinstance(analysis.get("data"), dict) else {}
+    material = {**analysis, **nested}
+    for key in ("report_asset_source_id", "visual_author_section_id", "section_id", "slug", "id"):
+        value = str(material.get(key) or "").strip()
+        if value:
+            return value
+    return f"analysis-{index + 1}"
+
+
+def _required_visual_source_ids(storyboard: dict[str, Any]) -> set[str]:
+    source_context = storyboard.get("source_context") if isinstance(storyboard.get("source_context"), dict) else {}
+    analyses = source_context.get("analyses") if isinstance(source_context.get("analyses"), list) else []
+    return {
+        _analysis_source_id(analysis, index)
+        for index, analysis in enumerate(analyses)
+        if isinstance(analysis, dict)
+        and bool((analysis.get("data") if isinstance(analysis.get("data"), dict) else {}).get("required_visual", analysis.get("required_visual", False)))
+    }
+
+
+def _planned_visual_source_ids(storyboard: dict[str, Any]) -> set[str]:
+    planned_sources: set[str] = set()
+    for index, planned in enumerate(storyboard.get("section_plan", [])):
+        if not isinstance(planned, dict):
+            continue
+        section_type = str(planned.get("section_type") or planned.get("kind") or "").strip()
+        if section_type not in VISUAL_SECTION_KINDS:
+            continue
+        data = planned.get("data") if isinstance(planned.get("data"), dict) else {}
+        material = {**planned, **data}
+        for key in ("report_asset_source_id", "visual_author_section_id", "section_id", "slug", "id"):
+            value = str(material.get(key) or "").strip()
+            if value:
+                planned_sources.add(value)
+                break
+        else:
+            layout_role = str(planned.get("layout_role") or "")
+            match = re.match(r"analysis_(\d+)_", layout_role)
+            if match:
+                planned_sources.add(f"analysis-{match.group(1)}")
+    return planned_sources
+
+
+def _require_required_visual_coverage(storyboard: dict[str, Any]) -> None:
+    """Keep only explicitly requested analytical visuals fail-closed."""
+    required = _required_visual_source_ids(storyboard)
+    if not required:
+        return
+    # Creative authored documents are validated against source aliases before
+    # they reach this point, including figure/SVG/canvas use for required assets.
+    if isinstance(storyboard.get("authored_document"), dict):
+        return
+    missing = sorted(required - _planned_visual_source_ids(storyboard))
+    if missing:
+        raise ValueError(
+            "Report design required-visual gate failed: these explicitly required assets "
+            f"were not planned as reader-facing visuals: {', '.join(missing)}. "
+            "Supply the existing figure, a standard chart mapping, or a supported aggregate visual mapping."
+        )
 
 
 def _require_display_fact_coverage(authoring_review: dict[str, Any], *, required: bool) -> None:
@@ -482,12 +558,76 @@ def _require_display_fact_coverage(authoring_review: dict[str, Any], *, required
     )
 
 
+def _extract_doc_json(doc: str, attr: str) -> Any:
+    match = re.search(rf"<script[^>]*\b{re.escape(attr)}\b[^>]*>(.*?)</script>", doc, re.IGNORECASE | re.DOTALL)
+    if not match:
+        return None
+    try:
+        return json.loads(match.group(1))
+    except Exception:
+        return None
+
+
+def _scan_authored_extra_js(doc: str) -> None:
+    """Reject the authored-only forbidden-JS patterns in executable scripts.
+
+    The base validate_and_prepare_html only checks the network-API list; authored
+    documents are additionally held to the extra list (eval, storage, cookies,
+    workers, ...). Only non-JSON script bodies are scanned, so prose and inert
+    metadata never false-positive.
+    """
+    for match in re.finditer(r"<script\b([^>]*)>(.*?)</script>", doc, re.IGNORECASE | re.DOTALL):
+        attrs, body = match.group(1), match.group(2)
+        if re.search(r"""type\s*=\s*['"]application/json['"]""", attrs, re.IGNORECASE):
+            continue
+        for pattern, name in AUTHORED_EXTRA_FORBIDDEN_JS:
+            if pattern.search(body):
+                raise ValueError(
+                    f"Report publish artifact-safety gate failed: authored script contains forbidden {name}."
+                )
+
+
+def _require_authored_publish_integrity(doc: str) -> None:
+    """Re-derive the creative-evidence gates from the hash-bound HTML at publish.
+
+    Every report_publish target is a creative-authored report, so this is enforced
+    unconditionally — it does not gate on a self-declared authoredness marker,
+    which a hand-edited pair could alter (e.g. change the attribute quoting) to
+    skip the checks. The published bytes carry, tamper-evident under the receipt
+    hash, the evidence ledger, the source-coverage manifest, and the independent
+    evidence-review verdict; enforcing them here rather than trusting the mutable
+    storyboard visual_author record closes the hand-edited-storyboard bypass.
+    """
+    registry = _extract_doc_json(doc, "data-dc-evidence-registry")
+    targets = registry.get("targets") if isinstance(registry, dict) else None
+    if not isinstance(targets, list) or not targets:
+        raise ValueError(
+            "Report publish evidence gate failed: the authored report has no embedded evidence-ledger targets."
+        )
+    coverage = _extract_doc_json(doc, "data-dc-author-coverage")
+    if (
+        not isinstance(coverage, dict)
+        or coverage.get("coverage_schema") != 1
+        or not isinstance(coverage.get("used"), list)
+        or not isinstance(coverage.get("omitted"), list)
+    ):
+        raise ValueError(
+            "Report publish evidence gate failed: the authored report has no valid source-coverage manifest."
+        )
+    review = _extract_doc_json(doc, "data-dc-evidence-review")
+    status = str((review or {}).get("status") or "").strip().lower() if isinstance(review, dict) else ""
+    if status != "pass":
+        raise ValueError(
+            "Report publish evidence gate failed: the independent evidence review did not pass for this authored report."
+        )
+
+
 def _require_completed_visual_review(runtime_smoke: dict[str, Any]) -> None:
     """Enforce browser evidence when an author marks a release as final."""
     if runtime_smoke.get("status") != "passed":
         reason = str(runtime_smoke.get("reason") or "browser review did not pass")
         raise ValueError(
-            "Report publish visual-review gate failed: final release requires a passed browser review with full-page and key-section screenshots. "
+            "Report publish visual-review gate failed: the explicitly requested review requires a passed desktop browser review with full-page and key-section screenshots. "
             f"{reason}"
         )
     artifacts = runtime_smoke.get("screenshots") if isinstance(runtime_smoke.get("screenshots"), list) else []
@@ -503,7 +643,7 @@ def _require_completed_visual_review(runtime_smoke: dict[str, Any]) -> None:
     )
     if "desktop" not in full_page_viewports or key_section_count < 1:
         raise ValueError(
-            "Report publish visual-review gate failed: browser review is missing required desktop full-page or key-section screenshot artifacts."
+            "Report publish visual-review gate failed: browser review is missing the required desktop full-page or key-section screenshot artifacts."
         )
     semantic = runtime_smoke.get("semantic_visual") if isinstance(runtime_smoke.get("semantic_visual"), dict) else {}
     if semantic.get("visual_semantic_schema") != 1 or semantic.get("status") != "pass":
@@ -611,6 +751,11 @@ const target = process.argv[1];
   }
   browser.on('disconnected', () => { browserDisconnected = true; });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  await page.route('**/*', route => {
+    const url = route.request().url();
+    if (/^https?:/i.test(url)) return route.abort('blockedbyclient');
+    return route.continue();
+  });
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push('pageerror: ' + error.message));
   page.on('console', message => { if (message.type() === 'error') pageErrors.push('console: ' + message.text()); });
@@ -638,6 +783,19 @@ const target = process.argv[1];
           failures.push({check: 'chart_mount', detail: 'chart target ' + index + ' did not mount'});
         }
       });
+      document.querySelectorAll('.r-advanced-visual-target').forEach((target, index) => {
+        if (!target.querySelector('.r-advanced-svg')) {
+          failures.push({check: 'advanced_visual_mount', detail: 'advanced visual target ' + index + ' did not mount'});
+        }
+        const marks = target.querySelectorAll('[data-dc-advanced-mark]').length;
+        if (!marks || Number(target.getAttribute('data-dc-advanced-mark-count') || 0) !== marks) {
+          failures.push({check: 'advanced_visual_marks', detail: 'advanced visual target ' + index + ' has no verified rendered marks'});
+        }
+        const section = target.closest('[data-dc-section="advanced_visual"]');
+        if (!section || !section.querySelector('.r-advanced-data-summary table')) {
+          failures.push({check: 'advanced_visual_fallback', detail: 'advanced visual target ' + index + ' has no accessible data table'});
+        }
+      });
       document.querySelectorAll('[data-dc-section="filterable_chart"], [data-dc-section="interactive_table"], [data-dc-section="selector_panel"], [data-dc-section="chart_table_explorer"]').forEach(section => {
         if (!section.querySelector('[data-dc-control-bar]')) failures.push({check: 'interactive_controls', detail: 'interactive section missing controls'});
       });
@@ -653,9 +811,21 @@ const target = process.argv[1];
     const semanticVisual = await page.evaluate(() => {
       const findings = [];
       const text = node => (node && node.textContent || '').trim();
-      const heroHeadings = Array.from(document.querySelectorAll('.r-hero h1'));
+      const authoredDocument = document.documentElement.hasAttribute('data-dc-authored-document');
+      const heroHeadings = Array.from(document.querySelectorAll(authoredDocument ? 'h1' : '.r-hero h1'));
       if (heroHeadings.length !== 1) {
         findings.push({id: 'hero_heading_count', detail: 'report should expose exactly one hero H1; found ' + heroHeadings.length});
+      }
+      if (authoredDocument) {
+        document.querySelectorAll('figure').forEach((figure, index) => {
+          const caption = figure.querySelector('figcaption');
+          if (!caption || !text(caption)) {
+            findings.push({id: 'evidence_context_missing', section: 'authored_figure', detail: 'authored figure ' + index + ' has no visible caption'});
+          }
+          if (!figure.closest('[data-evidence]') && figure.getAttribute('data-decoration') !== 'true') {
+            findings.push({id: 'evidence_context_missing', section: 'authored_figure', detail: 'authored figure ' + index + ' has no evidence binding'});
+          }
+        });
       }
       document.querySelectorAll('.r-section').forEach((section, index) => {
         const kind = section.getAttribute('data-dc-section') || 'section';
@@ -665,7 +835,7 @@ const target = process.argv[1];
         } else if (/^(section|analysis|chart)\\s*\\d*$/i.test(text(heading))) {
           findings.push({id: 'section_heading_generic', section: kind, detail: 'section ' + index + ' uses a generic heading: ' + text(heading)});
         }
-        if (/^(chart|chart_interpretation|filterable_chart|chart_table_explorer)$/.test(kind)) {
+        if (/^(chart|chart_interpretation|filterable_chart|chart_table_explorer|advanced_visual)$/.test(kind)) {
           const hasContext = !!section.querySelector('.r-section-dek, .r-caption, .r-interpretation-panel, .r-conclusion');
           if (!hasContext) findings.push({id: 'evidence_context_missing', section: kind, detail: 'visual evidence has no visible conclusion, caption, or interpretation context'});
         }
@@ -705,12 +875,16 @@ const target = process.argv[1];
     }
     async function captureKeySections(viewport) {
       const selectors = [
+        '[data-source]',
+        'html[data-dc-authored-document] main section',
+        'html[data-dc-authored-document] figure',
         '.r-hero',
         '[data-dc-section="insight_grid"]',
         '[data-dc-section="entity_card_grid"]',
         '[data-dc-section="chart_interpretation"]',
         '[data-dc-section="chart_table_explorer"]',
         '[data-dc-section="filterable_chart"]',
+        '[data-dc-section="advanced_visual"]',
         '[data-dc-section="methodology_block"]',
         '[data-dc-section="evidence_trace"]',
         '.r-section',
@@ -722,7 +896,7 @@ const target = process.argv[1];
         for (const handle of handles) {
           if (ordinal >= 8) return;
           const identity = await handle.evaluate(node => (
-            node.getAttribute('data-dc-section-id') || node.getAttribute('data-dc-section') || node.className || 'section'
+            node.getAttribute('data-dc-section-id') || node.getAttribute('data-dc-section') || node.getAttribute('data-source') || node.className || 'section'
           ));
           const slug = String(identity).replace(/[^a-z0-9_-]+/ig, '-').replace(/^-+|-+$/g, '') || 'section';
           const name = viewport + '-section-' + String(ordinal + 1).padStart(2, '0') + '-' + slug;
@@ -749,13 +923,13 @@ const target = process.argv[1];
         if (document.documentElement.scrollWidth > viewportWidth + 1) {
           failures.push({check: 'horizontal_overflow', detail: name + ' viewport scrolls horizontally (' + document.documentElement.scrollWidth + 'px > ' + viewportWidth + 'px)'});
         }
-        document.querySelectorAll('.r-section, .r-hero').forEach((section, index) => {
+        document.querySelectorAll('.r-section, .r-hero, html[data-dc-authored-document] main > section, html[data-dc-authored-document] main > article, html[data-dc-authored-document] figure').forEach((section, index) => {
           const rect = section.getBoundingClientRect();
           if (rect.left < -1 || rect.right > viewportWidth + 1) {
             failures.push({check: 'section_viewport_clip', detail: name + ' section ' + index + ' extends outside the viewport'});
           }
         });
-        document.querySelectorAll('.r-hero h1, .r-hero-abstract, .r-section h2, .r-section-dek, .r-data-note').forEach((node, index) => {
+        document.querySelectorAll('.r-hero h1, .r-hero-abstract, .r-section h2, .r-section-dek, .r-data-note, html[data-dc-authored-document] h1, html[data-dc-authored-document] h2, html[data-dc-authored-document] h3, html[data-dc-authored-document] p, html[data-dc-authored-document] figcaption').forEach((node, index) => {
           const style = getComputedStyle(node);
           if (node.scrollWidth > node.clientWidth + 1 && style.overflowX !== 'auto' && style.overflowX !== 'scroll') {
             failures.push({check: 'text_viewport_clip', detail: name + ' narrative node ' + index + ' clips its text'});
@@ -765,6 +939,12 @@ const target = process.argv[1];
           const rect = target.getBoundingClientRect();
           if (rect.left < -1 || rect.right > viewportWidth + 1) {
             failures.push({check: 'chart_viewport_clip', detail: name + ' chart target ' + index + ' extends outside the viewport'});
+          }
+        });
+        document.querySelectorAll('.r-advanced-visual-target').forEach((target, index) => {
+          const rect = target.getBoundingClientRect();
+          if (rect.left < -1 || rect.right > viewportWidth + 1) {
+            failures.push({check: 'advanced_visual_viewport_clip', detail: name + ' advanced visual target ' + index + ' extends outside the viewport'});
           }
         });
         document.querySelectorAll('.r-diagnostic-pair').forEach((pair, index) => {
@@ -1093,150 +1273,6 @@ async def ws_exec(
     }
 
 
-async def build_report(
-    *,
-    cfg: WorkspaceConfig,
-    html: str | None = None,
-    html_path: str | None = None,
-    output_path: str = "report.html",
-    storyboard_path: str | None = None,
-    report_goal: str = "",
-    title: str = "",
-    audience: str = "",
-    quality_gate: str = "warn",
-    workspace_id: str = "default",
-    **_: Any,
-) -> dict[str, Any]:
-    """Normalize HTML into a typed report, preserving its source beside the rebuild.
-
-    The generated DOCX behavior is intentionally left as the legacy best-effort
-    export. The report itself, however, always flows through the storyboard and
-    critique pipeline so it can pass the structured publish boundary.
-    """
-    if not html and not html_path:
-        raise ValueError("Provide either 'html' (raw HTML string) or 'html_path' (path to HTML file)")
-    if html and html_path:
-        raise ValueError("Provide only one of 'html' or 'html_path', not both")
-
-    if html_path:
-        resolved_input = _resolve_path(workspace_id, html_path)
-        if not resolved_input.is_file():
-            raise ValueError(f"HTML file not found: {html_path}")
-        html = resolved_input.read_text(encoding="utf-8")
-    assert html is not None
-    if quality_gate not in {"warn", "fail", "off"}:
-        raise ValueError("quality_gate must be one of: warn, fail, off")
-
-    # Ensure output ends with .html
-    if not output_path.endswith(".html"):
-        output_path = output_path.rsplit(".", 1)[0] + ".html"
-    if storyboard_path is None:
-        storyboard_path = output_path.rsplit(".", 1)[0] + ".storyboard.json"
-    elif not storyboard_path.endswith(".json"):
-        storyboard_path = storyboard_path.rsplit(".", 1)[0] + ".json"
-
-    resolved_html = _resolve_path(workspace_id, output_path)
-    resolved_html.parent.mkdir(parents=True, exist_ok=True)
-    source_path = output_path.rsplit(".", 1)[0] + ".source.html"
-    resolved_source = _resolve_path(workspace_id, source_path)
-    resolved_source.parent.mkdir(parents=True, exist_ok=True)
-    resolved_source.write_text(html, encoding="utf-8")
-
-    storyboard, normalization = _normalize_raw_html_report(
-        html,
-        title=title,
-        report_goal=report_goal,
-        audience=audience,
-    )
-    storyboard, critique = _critique_report_storyboard(storyboard)
-    # Typed source remains byte-for-byte preserved except for a missing Plotly
-    # bundle. A source report can retain chart mounts and their render queue
-    # while lacking the runtime needed to execute them.
-    if normalization.get("render_from_source"):
-        has_chart = any(
-            str(section.get("section_type") or section.get("kind") or "").strip().lower() in CHART_SECTION_KINDS
-            for section in storyboard.get("section_plan", [])
-            if isinstance(section, dict)
-        )
-        rendered_html = _ensure_plotly_runtime(html) if has_chart else html
-    else:
-        rendered_html = _render_report_from_storyboard(storyboard, title=title or None)
-    stale_skills = [] if quality_gate == "off" else stale_installed_library_skills()
-    quality = _analyze_report_quality(rendered_html, stale_skills=stale_skills) if quality_gate != "off" else {"status": "off", "warnings": []}
-    if quality_gate == "fail" and quality.get("status") == "fail":
-        codes = ", ".join(w.get("code", "unknown") for w in quality.get("warnings", []) if w.get("severity") == "fail")
-        raise ValueError(f"Report quality gate failed: {codes}")
-
-    normalization["source_html_path"] = str(resolved_source)
-    storyboard["normalization"] = normalization
-    storyboard["critique"] = critique
-    storyboard["quality"] = quality
-    storyboard["rendered_html_sha256"] = hashlib.sha256(rendered_html.encode("utf-8")).hexdigest()
-    storyboard["analysis_contract_sha256"] = _stable_json_sha256(storyboard.get("analysis_contract", {}))
-    review_lifecycle = _sync_report_review_lifecycle(
-        critique.get("analytical_review", {}),
-        html_sha256=storyboard["rendered_html_sha256"],
-        session_id=workspace_id,
-    )
-    analytical_review = _attach_review_lifecycle(critique.get("analytical_review", {}), review_lifecycle)
-    critique["analytical_review"] = analytical_review
-    storyboard["analytical_review"] = analytical_review
-    storyboard["review_lifecycle"] = review_lifecycle
-    # The sidecar is verified only when the persisted storyboard declares the
-    # recipe.  Attach it before serialization so builds (including exact typed
-    # preservation) cannot silently bypass the regeneration integrity gate.
-    _ensure_regeneration_recipe(storyboard)
-    resolved_html.write_text(rendered_html, encoding="utf-8")
-    resolved_storyboard = _resolve_path(workspace_id, storyboard_path)
-    resolved_storyboard.parent.mkdir(parents=True, exist_ok=True)
-    resolved_storyboard.write_text(json.dumps(storyboard, indent=2, default=str), encoding="utf-8")
-    recipe_path = _write_regeneration_recipe(
-        resolved_html,
-        resolved_storyboard,
-        storyboard,
-        html_sha256=storyboard["rendered_html_sha256"],
-    )
-
-    # Generate .docx alongside
-    docx_path = output_path.rsplit(".", 1)[0] + ".docx"
-    resolved_docx = _resolve_path(workspace_id, docx_path)
-
-    def _convert_docx() -> None:
-        from html4docx import HtmlToDocx
-        parser = HtmlToDocx()
-        parser.parse_html_string(rendered_html)
-        parser.doc.save(str(resolved_docx))
-
-    try:
-        await asyncio.to_thread(_convert_docx)
-    except Exception:
-        # DOCX generation is best-effort; don't fail the whole tool
-        pass
-
-    result: dict[str, Any] = {
-        "type": "report_build",
-        "publication_status": "designed",
-        "publish_required": True,
-        "html_path": str(resolved_html),
-        "storyboard_path": str(resolved_storyboard),
-        "recipe_path": str(recipe_path),
-        "source_html_path": str(resolved_source),
-        "normalization": normalization,
-        "critique": critique,
-        "design_review": critique.get("design_review", storyboard.get("design_review", {})),
-        "analytical_review": analytical_review,
-        "review_lifecycle": review_lifecycle,
-        "quality": quality,
-        "html_sha256": storyboard["rendered_html_sha256"],
-        "size": resolved_html.stat().st_size,
-        "created": True,
-    }
-    if resolved_docx.exists():
-        result["docx_path"] = str(resolved_docx)
-
-    return result
-
-
 async def report_review_visuals(
     *,
     cfg: WorkspaceConfig,
@@ -1317,12 +1353,12 @@ async def report_publish(
     report_path: str,
     storyboard_path: str,
     receipt_path: str | None = None,
-    export_docx: bool = True,
+    export_docx: bool = False,
     require_visual_review: bool | None = None,
     workspace_id: str = "default",
     **_: Any,
 ) -> dict[str, Any]:
-    """Publish a storyboard-backed report after re-running the fail-closed gate.
+    """Publish a storyboard-backed report after re-running its evidence and integrity gates.
 
     Publishing remains workspace-local: the resulting receipt is the durable record
     that a specific report, storyboard, and current rubric result were approved
@@ -1349,7 +1385,7 @@ async def report_publish(
     if not isinstance(storyboard, dict) or not isinstance(storyboard.get("section_plan"), list):
         raise ValueError(
             "Storyboard must be a report-design JSON object with a section_plan; "
-            "recreate it with report_design_report or build_report before publishing."
+            "recreate it with report_design_report before publishing."
         )
     if require_visual_review is not None and not isinstance(require_visual_review, bool):
         raise ValueError("require_visual_review must be a boolean when supplied")
@@ -1357,23 +1393,60 @@ async def report_publish(
     actual_html_hash = hashlib.sha256(doc.encode("utf-8")).hexdigest()
     if not expected_html_hash:
         raise ValueError(
-            "Storyboard has no rendered HTML hash; recreate the report with report_design_report or build_report before publishing."
+            "Storyboard has no rendered HTML hash; recreate the report with report_design_report before publishing."
         )
     if expected_html_hash != actual_html_hash:
         raise ValueError(
             "Report publish integrity gate failed: the HTML does not match the storyboard's rendered output; redesign or rebuild the report before publishing."
         )
+    # Re-run artifact-safety validation on the EXACT published bytes under the
+    # current policy. Do not strip runtime scripts first: an authored report has
+    # no legitimate embedded runtime, so stripping a spoofed data-dc-runtime
+    # script would hide forbidden JS from validation while leaving it in the
+    # receipt-bound HTML. Also apply the authored-only forbidden-JS list, and
+    # re-derive the creative-evidence gates from the hash-bound HTML.
+    try:
+        validate_and_prepare_html(doc, session_id=workspace_id)
+    except ArtifactValidationError as exc:
+        raise ValueError(
+            f"Report publish artifact-safety gate failed: {exc.code}: {exc}"
+        ) from exc
+    _scan_authored_extra_js(doc)
+    _require_authored_publish_integrity(doc)
     expected_contract_hash = str(storyboard.get("analysis_contract_sha256") or "").strip().lower()
     actual_contract_hash = _stable_json_sha256(storyboard.get("analysis_contract", {}))
     if not expected_contract_hash:
         raise ValueError(
-            "Storyboard has no analytical-contract hash; recreate the report with report_design_report or build_report before publishing."
+            "Storyboard has no analytical-contract hash; recreate the report with report_design_report before publishing."
         )
     if expected_contract_hash != actual_contract_hash:
         raise ValueError(
             "Report publish integrity gate failed: the analytical review contract changed after rendering; redesign the report before publishing."
         )
-    regeneration_recipe = _verify_regeneration_recipe(
+    # Final integrity backstop: re-render the authored document from the
+    # storyboard and require it to reproduce the exact published bytes. The
+    # renderer is byte-deterministic, so this re-validates the authored HTML on
+    # its real content (source coverage, per-visual evidence binding, forbidden
+    # JS, active URIs) and detects any hand-edit of the stored HTML or the
+    # storyboard's authored_document that the narrower per-field gates above did
+    # not already reject. The stored hash alone is self-referential — computed
+    # from the file it is stored beside — and cannot detect such a pair.
+    # Residual ceiling of a workspace-local model without external signing: a
+    # fully self-consistent forged pair whose structure validates and whose
+    # evidence-review verdict is forged to "pass"; closing that requires
+    # re-running or externally signing the evidence review.
+    try:
+        reproduced = _render_report_from_storyboard(copy.deepcopy(storyboard))
+    except (ValueError, ArtifactValidationError) as exc:
+        raise ValueError(
+            f"Report publish integrity gate failed: the storyboard no longer reproduces a valid authored report: {exc}"
+        ) from exc
+    if hashlib.sha256(reproduced.encode("utf-8")).hexdigest() != actual_html_hash:
+        raise ValueError(
+            "Report publish integrity gate failed: the published HTML is not the report the storyboard reproduces; "
+            "redesign the report before publishing."
+        )
+    regeneration_recipe = _inspect_regeneration_recipe(
         resolved_html,
         resolved_storyboard,
         storyboard,
@@ -1419,16 +1492,9 @@ async def report_publish(
     )
     storyboard["design_review"] = design_review
     storyboard["authoring_review"] = authoring_review
-    design_blockers = [
-        finding for finding in design_review.get("findings", [])
-        if isinstance(finding, dict) and str(finding.get("severity") or "").strip().lower() == "warning"
-    ]
-    if design_blockers:
-        finding_ids = ", ".join(str(finding.get("id") or "unknown").strip() for finding in design_blockers)
-        raise ValueError(
-            "Report publish design-review gate failed: "
-            f"{finding_ids}. Redesign the report with the supplied assets, then publish the regenerated artifact."
-        )
+    # Layout and editorial findings remain in the receipt as useful review
+    # notes. They do not block publication unless the caller explicitly opted
+    # into the separate named visual-review workflow above.
     # Recompute instead of trusting the stored critique. A storyboard may have
     # been edited after design, and publication must not accept a stale pass.
     analytical_review = _review_storyboard_analysis(storyboard)
@@ -1467,7 +1533,22 @@ async def report_publish(
 
     docx_export: dict[str, Any]
     docx_path: str | None = None
-    if export_docx:
+    has_advanced_visuals = any(
+        isinstance(section, dict)
+        and str(section.get("section_type") or section.get("kind") or "").strip() == "advanced_visual"
+        for section in storyboard.get("section_plan", [])
+    )
+    has_authored_document = isinstance(storyboard.get("authored_document"), dict)
+    if export_docx and (has_advanced_visuals or has_authored_document):
+        docx_export = {
+            "requested": True,
+            "status": "unsupported",
+            "reason": (
+                "DOCX conversion cannot preserve the report's authored HTML/CSS/SVG/Canvas presentation; "
+                "publish the single-file HTML or add validated static snapshots first."
+            ),
+        }
+    elif export_docx:
         proposed_docx_path = report_path.rsplit(".", 1)[0] + ".docx"
         resolved_docx = _resolve_path(workspace_id, proposed_docx_path)
 
@@ -1507,8 +1588,10 @@ async def report_publish(
         "html_sha256": actual_html_hash,
         "storyboard_sha256": hashlib.sha256(resolved_storyboard.read_bytes()).hexdigest(),
         "regeneration_recipe": {
+            "status": regeneration_recipe.get("status") if regeneration_recipe else "not_declared",
             "path": regeneration_recipe.get("path") if regeneration_recipe else None,
             "source_context_sha256": regeneration_recipe.get("source_context_sha256") if regeneration_recipe else None,
+            "reason": regeneration_recipe.get("reason") if regeneration_recipe else None,
         },
         "quality": quality,
         "design_review": design_review,
@@ -1556,6 +1639,62 @@ async def report_publish(
     return result
 
 
+def _present_notebook_cell_ids(workspace_id: str) -> set[str]:
+    """Cell ids that actually exist in the workspace notebooks.
+
+    A ``notebook_cell:<id>`` citation is only registered as evidence when the
+    cell is present here, so a reference to a fabricated or deleted cell still
+    reads as unresolved. This confirms provenance; it never invents it.
+    """
+    ids: set[str] = set()
+    base = _base_dir(workspace_id)
+    for nb_path in base.rglob("*.ipynb"):
+        if ".ipynb_checkpoints" in nb_path.parts:
+            continue
+        try:
+            nb = json.loads(nb_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for cell in nb.get("cells", []) if isinstance(nb, dict) else []:
+            if isinstance(cell, dict):
+                cid = str(cell.get("id") or "").strip()
+                if cid:
+                    ids.add(cid)
+    return ids
+
+
+def _cited_notebook_cell_ids(sources: list[Any]) -> set[str]:
+    """Bare cell ids cited via ``notebook_cell:<id>`` evidence refs.
+
+    Accepts both the string form (``"notebook_cell:0189d9de"``) and the dict form
+    (``{"kind": "notebook_cell", "ref": "0189d9de"}``) that insights and analyses
+    use for evidence provenance.
+    """
+    prefix = "notebook_cell:"
+    cited: set[str] = set()
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        refs = source.get("evidence_refs")
+        if refs is None:
+            refs = source.get("evidence")
+        if not isinstance(refs, list):
+            refs = [refs] if refs else []
+        for ref in refs:
+            if isinstance(ref, dict):
+                kind = str(ref.get("kind") or ref.get("type") or "").strip()
+                value = str(ref.get("ref") or ref.get("cell_id") or "").strip()
+                if not value:
+                    continue
+                if value.startswith(prefix):
+                    cited.add(value[len(prefix):])
+                elif kind == "notebook_cell":
+                    cited.add(value)
+            elif isinstance(ref, str) and ref.strip().startswith(prefix):
+                cited.add(ref.strip()[len(prefix):])
+    return cited
+
+
 async def report_design_report(
     *,
     cfg: WorkspaceConfig,
@@ -1568,22 +1707,23 @@ async def report_design_report(
     storyboard_path: str = "report_storyboard.json",
     title: str = "Analysis Report",
     quality_gate: str = "fail",
-    design_passes: int = 5,
     visual_author: dict[str, Any] | None = None,
     llm: Any = None,
     workspace_id: str = "default",
     **_: Any,
 ) -> dict[str, Any]:
-    """Design a cohesive report from completed insights, then render it in one pass.
+    """Design a cohesive report from completed insights, then author it in one pass.
 
-    This is the report-designer layer: it plans the story, layout, controls,
-    evidence sections, and quality checks before creating the HTML report.
+    Every report is a handcrafted, creative, evidence-bound visual document: the
+    layer plans the story, evidence sections, and quality checks, then the
+    creative author writes the final single-file HTML. There is no deterministic
+    or bounded fallback — authoring is fail-closed.
     """
     if not isinstance(insights, list):
         raise ValueError("insights must be a list of insight dictionaries")
     if not any(isinstance(item, dict) for item in insights):
         raise ValueError(
-            "insights must include at least one completed insight dictionary; use report_add_section for low-level drafts"
+            "insights must include at least one completed insight dictionary"
         )
     if analyses is not None and not isinstance(analyses, list):
         raise ValueError("analyses must be a list of analysis asset dictionaries")
@@ -1595,13 +1735,49 @@ async def report_design_report(
         raise ValueError("visual_author must be a dictionary when supplied")
     if quality_gate not in {"warn", "fail", "off"}:
         raise ValueError("quality_gate must be one of: warn, fail, off")
-    if not isinstance(design_passes, int) or not 1 <= design_passes <= 5:
-        raise ValueError("design_passes must be an integer from 1 to 5")
+
+    emit_tool_progress("preparing", "Preparing report structure and evidence")
 
     if not report_path.endswith(".html"):
         report_path = report_path.rsplit(".", 1)[0] + ".html"
     if not storyboard_path.endswith(".json"):
         storyboard_path = storyboard_path.rsplit(".", 1)[0] + ".json"
+
+    resolved_requirements = dict(requirements or {})
+    # Every report is a handcrafted, creative, evidence-bound visual document.
+    presentation = dict(resolved_requirements.get("presentation") or {})
+    presentation["mode"] = "handcrafted"
+    resolved_requirements["presentation"] = presentation
+
+    # Register the notebook cells that confirmed insights cite and that are
+    # actually present in the workspace notebooks. Without this, a legitimate
+    # `notebook_cell:<id>` citation never resolves to a registered target, so the
+    # report degrades to a permanent unresolved-evidence warning and the
+    # authoring repair loop spends passes it can never satisfy. Presence is
+    # verified against the notebooks, so a citation to a missing cell still stays
+    # unresolved and the evidence check keeps its teeth.
+    cited_cells = _cited_notebook_cell_ids([*insights, *(analyses or [])])
+    if cited_cells:
+        verified = sorted(cited_cells & _present_notebook_cell_ids(workspace_id))
+        if verified:
+            registry_req = dict(resolved_requirements.get("evidence_registry") or {})
+            targets = list(registry_req.get("targets") or [])
+            registered_ids = {
+                str(t.get("id") or t.get("ref") or "").strip()
+                for t in targets
+                if isinstance(t, dict)
+            }
+            for cell_id in verified:
+                if cell_id in registered_ids:
+                    continue
+                targets.append({
+                    "id": cell_id,
+                    "kind": "notebook_cell",
+                    "present": True,
+                    "source": "workspace_notebook",
+                })
+            registry_req["targets"] = targets
+            resolved_requirements["evidence_registry"] = registry_req
 
     storyboard = _design_report_storyboard(
         report_goal=report_goal,
@@ -1609,16 +1785,28 @@ async def report_design_report(
         analyses=analyses or [],
         audience=audience,
         title=title,
-        requirements=requirements or {},
-        max_design_passes=design_passes,
+        requirements=resolved_requirements,
     )
-    # Finish deterministic structure and evidence critique before the runtime
-    # author sees the page. The model then composes the final, validated plan
-    # rather than choosing a treatment for a structure that later mutates.
+    # Finish deterministic structure and evidence critique before the creative
+    # author sees the page. The model then composes the final, validated
+    # document rather than choosing a treatment for a structure that later
+    # mutates.
     storyboard, critique = _critique_report_storyboard(storyboard)
-    visual_author_cfg = visual_author_config(requirements or {}, visual_author)
-    # Store the resolved, bounded contract so authoring-coverage checks at
-    # publication can validate the same source facts without replaying an LLM.
+    visual_author_cfg = visual_author_config(resolved_requirements, visual_author)
+    evidence_ledger = _build_evidence_registry(storyboard)
+    storyboard["evidence_registry"] = evidence_ledger
+    evidence_targets = [
+        item for item in evidence_ledger.get("targets", [])
+        if isinstance(item, dict)
+    ]
+    if not evidence_targets:
+        raise ValueError(
+            "Report authoring requires a non-empty evidence ledger. Supply stable "
+            "finding/evidence ids and register evidence targets in "
+            "requirements.evidence_registry.targets."
+        )
+    # Persist the resolved contract and ledger so publication can validate the
+    # final artifact without replaying the LLM authoring call.
     storyboard["visual_author_config"] = visual_author_cfg
     resolved_storyboard = _resolve_path(workspace_id, storyboard_path)
     try:
@@ -1635,13 +1823,26 @@ async def report_design_report(
             error=exc,
         )
         raise ValueError(
-            "Report design stopped because required runtime visual authoring failed. "
+            "Report design stopped because creative visual authoring failed. "
             f"Failure audit: {audit_path}"
         ) from exc
 
-    # The visual author may select evidence-bound display facts and, only when
-    # source-declared zones permit it, reorder whole story blocks. It never
-    # creates evidence, so follow-up reviews confirm the final plan read-only.
+    emit_tool_progress("validating", "Running report quality and safety checks")
+    _require_required_visual_coverage(storyboard)
+
+    authoring_dossier_path: Path | None = None
+    authored_document = storyboard.get("authored_document") if isinstance(storyboard.get("authored_document"), dict) else {}
+    dossier = authored_document.pop("dossier", None) if isinstance(authored_document, dict) else None
+    if isinstance(dossier, str) and dossier:
+        authoring_dossier_path = resolved_storyboard.with_name(f"{resolved_storyboard.stem}.author-dossier.md")
+        authoring_dossier_path.parent.mkdir(parents=True, exist_ok=True)
+        authoring_dossier_path.write_text(dossier, encoding="utf-8")
+        authored_document["dossier_path"] = str(authoring_dossier_path)
+        authored_document["dossier_sha256"] = hashlib.sha256(dossier.encode("utf-8")).hexdigest()
+        storyboard["authored_document"] = authored_document
+
+    # The creative author supplies a separately reviewed full document; the
+    # storyboard remains the analytical source and publication audit record.
     final_design_review = _review_storyboard_design(storyboard)
     final_authoring_review = _review_storyboard_authoring(storyboard)
     initial_design_review = critique.get("design_review") if isinstance(critique.get("design_review"), dict) else {}
@@ -1656,6 +1857,21 @@ async def report_design_report(
     critique["authoring_review"] = final_authoring_review
     critique["analytical_review"] = final_analytical_review
     doc = _render_report_from_storyboard(storyboard, title=title)
+    try:
+        validate_and_prepare_html(
+            strip_dataclaw_runtime_scripts(doc),
+            session_id=workspace_id,
+        )
+    except ArtifactValidationError as exc:
+        raise ValueError(
+            f"Report artifact-safety validation failed: {exc.code}: {exc}"
+        ) from exc
+    artifact_safety = {
+        "status": "pass",
+        "validator": "dataclaw_artifacts.validate_and_prepare_html",
+        "workspace_plotly_runtime_excluded": True,
+    }
+    storyboard["artifact_safety"] = artifact_safety
     stale_skills = [] if quality_gate == "off" else stale_installed_library_skills()
     quality = (
         _analyze_report_quality(
@@ -1689,6 +1905,7 @@ async def report_design_report(
     _ensure_regeneration_recipe(storyboard)
 
     resolved_html = _resolve_path(workspace_id, report_path)
+    emit_tool_progress("writing", "Writing report and audit files")
     resolved_html.parent.mkdir(parents=True, exist_ok=True)
     resolved_html.write_text(doc, encoding="utf-8")
 
@@ -1701,7 +1918,7 @@ async def report_design_report(
         html_sha256=storyboard["rendered_html_sha256"],
     )
 
-    return {
+    result = {
         "type": "report_design",
         "publication_status": "designed",
         "publish_required": True,
@@ -1710,8 +1927,9 @@ async def report_design_report(
         "recipe_path": str(recipe_path),
         "title": title,
         "section_count": len(storyboard.get("section_plan", [])),
-        "interaction_count": len(storyboard.get("interaction_plan", [])),
         "visual_author": visual_author_result,
+        "presentation_mode": "handcrafted",
+        "artifact_safety": artifact_safety,
         "quality": quality,
         "html_sha256": storyboard["rendered_html_sha256"],
         "critique": critique,
@@ -1722,66 +1940,11 @@ async def report_design_report(
         "size": resolved_html.stat().st_size,
         "updated": True,
     }
+    if authoring_dossier_path is not None:
+        result["authoring_dossier_path"] = str(authoring_dossier_path)
+    emit_tool_progress("complete", "Report files are ready")
+    return result
 
-
-async def report_add_section(
-    *,
-    cfg: WorkspaceConfig,
-    section_type: str,
-    data: dict[str, Any],
-    report_path: str = "report.html",
-    title: str = "Analysis Report",
-    quality_gate: str = "warn",
-    workspace_id: str = "default",
-    **_: Any,
-) -> dict[str, Any]:
-    """Append a designed section to a live HTML report.
-
-    This is the presentation layer counterpart to notebooks: notebooks do the
-    computation, while this tool builds the readable report surface as findings
-    emerge.
-    """
-    if not report_path.endswith(".html"):
-        report_path = report_path.rsplit(".", 1)[0] + ".html"
-
-    resolved = _resolve_path(workspace_id, report_path)
-    resolved.parent.mkdir(parents=True, exist_ok=True)
-
-    typed_section = _typed_report_section(section_type, data)
-    section_html = _render_report_section(section_type, data, typed_section)
-    if resolved.exists():
-        doc = resolved.read_text(encoding="utf-8")
-        doc = _ensure_report_shell_context(doc)
-        if typed_section.get("kind") in CHART_SECTION_KINDS:
-            doc = _ensure_plotly_runtime(doc)
-        if _REPORT_SECTION_END in doc:
-            doc = doc.replace(_REPORT_SECTION_END, section_html + "\n" + _REPORT_SECTION_END, 1)
-        else:
-            doc += "\n" + section_html
-    else:
-        doc = _report_shell(title=title, first_section=section_html, include_plotly=typed_section.get("kind") in CHART_SECTION_KINDS)
-
-    if quality_gate not in {"warn", "fail", "off"}:
-        raise ValueError("quality_gate must be one of: warn, fail, off")
-    stale_skills = [] if quality_gate == "off" else stale_installed_library_skills()
-    quality = _analyze_report_quality(doc, stale_skills=stale_skills) if quality_gate != "off" else {"status": "off", "warnings": []}
-    if quality_gate == "fail" and quality.get("status") == "fail":
-        codes = ", ".join(w.get("code", "unknown") for w in quality.get("warnings", []) if w.get("severity") == "fail")
-        raise ValueError(f"Report quality gate failed: {codes}")
-
-    resolved.write_text(doc, encoding="utf-8")
-    return {
-        "type": "report",
-        "publication_status": "draft",
-        "publish_required": True,
-        "html_path": str(resolved),
-        "section_type": section_type,
-        "section": typed_section,
-        "quality": quality,
-        "title": title,
-        "size": resolved.stat().st_size,
-        "updated": True,
-    }
 
 async def display_image(
     *,

@@ -1,6 +1,6 @@
 """Typed artifact section contract.
 
-This module is the shared bridge between visualization/dashboarding skills and
+This module is the shared bridge between visualization/report-design skills and
 artifact rendering. The workspace report helper uses it during the transition
 so legacy report sections and first-class artifacts describe the same shapes.
 """
@@ -10,7 +10,9 @@ from __future__ import annotations
 import hashlib
 import html as html_lib
 import json
+import math
 import re
+from datetime import datetime
 from typing import Any
 
 SECTION_TOKENS = [
@@ -53,6 +55,7 @@ SECTION_KINDS = {
     "selector_panel",
     "chart_table_explorer",
     "entity_card_grid",
+    "advanced_visual",
 }
 SECTION_ALIASES = {
     "kpi": "metric_row",
@@ -80,6 +83,9 @@ SECTION_ALIASES = {
     "card_grid": "entity_card_grid",
     "entity_cards": "entity_card_grid",
     "archetype_cards": "entity_card_grid",
+    "bespoke_visual": "advanced_visual",
+    "handcrafted_visual": "advanced_visual",
+    "visual_story": "advanced_visual",
 }
 DATA_POLICIES = {"narrative", "aggregate_only", "preview"}
 CHART_SUMMARY_MAX_BYTES = 200 * 1024
@@ -89,6 +95,55 @@ INTERACTIVE_DATA_MAX_ROWS = 500
 INTERACTIVE_DATA_MAX_BYTES = 160 * 1024
 DISPLAY_FACT_USES = {"pill", "scan_point", "example", "annotation"}
 DISPLAY_FACT_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,119}$")
+ADVANCED_VISUAL_FIELDS: dict[str, tuple[str, ...]] = {
+    "dot_plot": ("label", "value"),
+    "lollipop": ("label", "value"),
+    "slopegraph": ("label", "start", "end"),
+    "range_band": ("label", "low", "high"),
+    "matrix": ("x", "y", "value"),
+    "timeline": ("label", "time"),
+    "flow": ("source", "target"),
+    "bracket": ("source", "target"),
+}
+ADVANCED_VISUAL_OPTIONAL_FIELDS: dict[str, tuple[str, ...]] = {
+    "range_band": ("value",),
+    "timeline": ("detail",),
+    "flow": ("value",),
+    "bracket": ("value",),
+}
+ADVANCED_VISUAL_MAX_RECORDS = {
+    "dot_plot": 30,
+    "lollipop": 30,
+    "slopegraph": 20,
+    "range_band": 30,
+    "matrix": 144,
+    "timeline": 12,
+    "flow": 80,
+    "bracket": 64,
+}
+ADVANCED_VISUAL_NUMERIC_ROLES = {
+    "dot_plot": ("value",),
+    "lollipop": ("value",),
+    "slopegraph": ("start", "end"),
+    "range_band": ("low", "high", "value"),
+    "matrix": ("value",),
+    "flow": ("value",),
+    "bracket": ("value",),
+}
+ADVANCED_VISUAL_TEXT_ROLES = {
+    "dot_plot": ("label",),
+    "lollipop": ("label",),
+    "slopegraph": ("label",),
+    "range_band": ("label",),
+    "matrix": ("x", "y"),
+    "timeline": ("label", "time", "detail"),
+    "flow": ("source", "target"),
+    "bracket": ("source", "target"),
+}
+ADVANCED_VISUAL_META_FIELDS = {
+    "type", "unit", "aria_label", "sort", "zero_baseline", "start_label",
+    "end_label", "stages", "scale",
+}
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
@@ -103,9 +158,271 @@ class SectionValidationError(ValueError):
         return {"code": self.code, "message": str(self), "details": self.details}
 
 
+def _advanced_number(value: Any, *, role: str, row_index: int) -> float | int:
+    if isinstance(value, bool) or value is None or value == "":
+        raise SectionValidationError(
+            "advanced_visual_invalid_number",
+            f"advanced_visual row {row_index + 1} field '{role}' must be a finite number",
+        )
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise SectionValidationError(
+            "advanced_visual_invalid_number",
+            f"advanced_visual row {row_index + 1} field '{role}' must be a finite number",
+        ) from exc
+    if not math.isfinite(number):
+        raise SectionValidationError(
+            "advanced_visual_invalid_number",
+            f"advanced_visual row {row_index + 1} field '{role}' must be a finite number",
+        )
+    return int(number) if number.is_integer() else number
+
+
+def _advanced_text(value: Any, *, role: str, row_index: int, optional: bool = False) -> str:
+    text = clean_text(value).strip()
+    if not text and not optional:
+        raise SectionValidationError(
+            "advanced_visual_blank_label",
+            f"advanced_visual row {row_index + 1} field '{role}' must be non-empty",
+        )
+    limit = 240 if role == "detail" else 120
+    if len(text) > limit:
+        raise SectionValidationError(
+            "advanced_visual_text_too_long",
+            f"advanced_visual row {row_index + 1} field '{role}' exceeds {limit} characters",
+        )
+    return text
+
+
+def _validate_acyclic_links(records: list[dict[str, Any]], source_key: str, target_key: str) -> int:
+    graph: dict[str, set[str]] = {}
+    incoming: dict[str, int] = {}
+    for record in records:
+        source = str(record[source_key])
+        target = str(record[target_key])
+        graph.setdefault(source, set()).add(target)
+        graph.setdefault(target, set())
+        incoming.setdefault(source, 0)
+        incoming[target] = incoming.get(target, 0) + 1
+    queue = [node for node, count in incoming.items() if count == 0]
+    depth = {node: 0 for node in queue}
+    visited = 0
+    while queue:
+        node = queue.pop(0)
+        visited += 1
+        for target in graph.get(node, set()):
+            depth[target] = max(depth.get(target, 0), depth.get(node, 0) + 1)
+            incoming[target] -= 1
+            if incoming[target] == 0:
+                queue.append(target)
+    if visited != len(incoming):
+        raise SectionValidationError(
+            "advanced_visual_cyclic_flow",
+            "advanced_visual flow/bracket links must form an acyclic progression",
+        )
+    return max(depth.values(), default=0) + 1
+
+
+def prepare_advanced_visual_data(data: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+    """Validate and minimize an advanced visual's embedded aggregate payload.
+
+    Only mapped fields are retained. This is the enforcement boundary that
+    prevents unused raw/PII columns from leaking into the single-file report.
+    """
+    records = data.get("records", data.get("rows", []))
+    visual = data.get("visual", data.get("visual_spec", {}))
+    if not isinstance(records, list) or not records:
+        raise SectionValidationError(
+            "invalid_advanced_visual_records",
+            "advanced_visual requires a non-empty list of aggregate 'records' or 'rows'",
+        )
+    if not isinstance(visual, dict):
+        raise SectionValidationError(
+            "invalid_advanced_visual_spec",
+            "advanced_visual requires a dict 'visual' or 'visual_spec'",
+        )
+    visual_type = clean_text(visual.get("type") or "").lower().replace("-", "_")
+    required_roles = ADVANCED_VISUAL_FIELDS.get(visual_type)
+    if required_roles is None:
+        raise SectionValidationError(
+            "unsupported_advanced_visual_type",
+            f"Unsupported advanced visual type: {visual_type or '<missing>'}",
+            {"allowed": sorted(ADVANCED_VISUAL_FIELDS)},
+        )
+    max_records = ADVANCED_VISUAL_MAX_RECORDS[visual_type]
+    if len(records) > max_records:
+        raise SectionValidationError(
+            "advanced_visual_too_many_records",
+            f"advanced_visual type '{visual_type}' has {len(records)} records, max {max_records}",
+            {"records": len(records), "max_records": max_records},
+        )
+    optional_roles = ADVANCED_VISUAL_OPTIONAL_FIELDS.get(visual_type, ())
+    missing_mappings = [role for role in required_roles if not clean_text(visual.get(role) or "")]
+    if missing_mappings:
+        raise SectionValidationError(
+            "advanced_visual_missing_fields",
+            f"advanced_visual type '{visual_type}' is missing field mappings: {', '.join(missing_mappings)}",
+            {"required": list(required_roles)},
+        )
+    mappings = {
+        role: clean_text(visual.get(role) or "").strip()
+        for role in (*required_roles, *optional_roles)
+        if clean_text(visual.get(role) or "").strip()
+    }
+    projected: list[dict[str, Any]] = []
+    discarded: set[str] = set()
+    seen_keys: set[tuple[str, ...]] = set()
+    for index, raw in enumerate(records):
+        if not isinstance(raw, dict):
+            raise SectionValidationError(
+                "advanced_visual_invalid_record",
+                f"advanced_visual row {index + 1} must be an object",
+            )
+        missing_columns = [column for column in mappings.values() if column not in raw]
+        if missing_columns:
+            raise SectionValidationError(
+                "advanced_visual_missing_columns",
+                f"advanced_visual row {index + 1} is missing mapped columns: {', '.join(sorted(set(missing_columns)))}",
+            )
+        discarded.update(clean_text(key) for key in raw if clean_text(key) not in mappings.values())
+        row: dict[str, Any] = {}
+        for role, column in mappings.items():
+            value = raw[column]
+            if role in ADVANCED_VISUAL_NUMERIC_ROLES.get(visual_type, ()):
+                row[column] = _advanced_number(value, role=role, row_index=index)
+            elif role in ADVANCED_VISUAL_TEXT_ROLES.get(visual_type, ()):
+                row[column] = _advanced_text(
+                    value, role=role, row_index=index,
+                    optional=role in optional_roles,
+                )
+            else:
+                row[column] = clean_text(value)
+        if visual_type == "range_band":
+            if row[mappings["low"]] > row[mappings["high"]]:
+                raise SectionValidationError(
+                    "advanced_visual_invalid_range",
+                    f"advanced_visual row {index + 1} has low greater than high",
+                )
+            if "value" in mappings and not (
+                row[mappings["low"]] <= row[mappings["value"]] <= row[mappings["high"]]
+            ):
+                raise SectionValidationError(
+                    "advanced_visual_invalid_range_value",
+                    f"advanced_visual row {index + 1} value must fall within low and high",
+                )
+        if visual_type in {"flow", "bracket"}:
+            source, target = row[mappings["source"]], row[mappings["target"]]
+            if source == target:
+                raise SectionValidationError(
+                    "advanced_visual_self_link", f"advanced_visual row {index + 1} links a node to itself"
+                )
+            if "value" in mappings and row[mappings["value"]] < 0:
+                raise SectionValidationError(
+                    "advanced_visual_negative_flow", f"advanced_visual row {index + 1} flow value cannot be negative"
+                )
+            unique_key = (source, target)
+        elif visual_type == "matrix":
+            unique_key = (str(row[mappings["x"]]), str(row[mappings["y"]]))
+        else:
+            unique_key = (str(row[mappings["label"]]),)
+        if unique_key in seen_keys:
+            raise SectionValidationError(
+                "advanced_visual_duplicate_record",
+                f"advanced_visual row {index + 1} duplicates a visual key: {' / '.join(unique_key)}",
+            )
+        seen_keys.add(unique_key)
+        projected.append(row)
+
+    sanitized_visual = {
+        key: visual[key]
+        for key in sorted(ADVANCED_VISUAL_META_FIELDS)
+        if key in visual
+    }
+    sanitized_visual["type"] = visual_type
+    sanitized_visual.update(mappings)
+    if "zero_baseline" in sanitized_visual and not isinstance(sanitized_visual["zero_baseline"], bool):
+        raise SectionValidationError(
+            "advanced_visual_invalid_zero_baseline",
+            "advanced_visual zero_baseline must be a boolean",
+        )
+    if "sort" in sanitized_visual:
+        sort = clean_text(sanitized_visual["sort"]).lower()
+        if sort not in {"source", "descending"}:
+            raise SectionValidationError(
+                "advanced_visual_invalid_sort",
+                "advanced_visual sort must be 'source' or 'descending'",
+            )
+        sanitized_visual["sort"] = sort
+    for key, limit in (("unit", 24), ("aria_label", 180), ("start_label", 80), ("end_label", 80)):
+        if key not in sanitized_visual:
+            continue
+        value = clean_text(sanitized_visual[key]).strip()
+        if len(value) > limit:
+            raise SectionValidationError(
+                "advanced_visual_metadata_too_long",
+                f"advanced_visual {key} exceeds {limit} characters",
+            )
+        sanitized_visual[key] = value
+    if visual_type == "timeline":
+        scale = clean_text(visual.get("scale") or "ordinal").lower()
+        if scale not in {"ordinal", "time"}:
+            raise SectionValidationError(
+                "advanced_visual_invalid_timeline_scale",
+                "advanced_visual timeline scale must be 'ordinal' or 'time'",
+            )
+        sanitized_visual["scale"] = scale
+        if scale == "time":
+            for index, row in enumerate(projected):
+                value = str(row[mappings["time"]]).replace("Z", "+00:00")
+                try:
+                    datetime.fromisoformat(value)
+                except ValueError as exc:
+                    raise SectionValidationError(
+                        "advanced_visual_invalid_time",
+                        f"advanced_visual row {index + 1} time must be ISO-8601 when scale='time'",
+                    ) from exc
+    if visual_type == "matrix":
+        x_count = len({row[mappings["x"]] for row in projected})
+        y_count = len({row[mappings["y"]] for row in projected})
+        if x_count > 12 or y_count > 12:
+            raise SectionValidationError(
+                "advanced_visual_matrix_too_dense",
+                "advanced_visual matrix supports at most 12 rows and 12 columns",
+                {"x_values": x_count, "y_values": y_count},
+            )
+    if visual_type in {"flow", "bracket"}:
+        stage_count = _validate_acyclic_links(projected, mappings["source"], mappings["target"])
+        stages = sanitized_visual.get("stages")
+        if stages is not None:
+            if not isinstance(stages, list) or any(
+                not clean_text(stage).strip() or len(clean_text(stage).strip()) > 80 for stage in stages
+            ):
+                raise SectionValidationError(
+                    "advanced_visual_invalid_stages",
+                    "advanced_visual stages must be a list of non-empty labels no longer than 80 characters",
+                )
+            if len(stages) != stage_count:
+                raise SectionValidationError(
+                    "advanced_visual_missing_stages",
+                    f"advanced_visual stages supplies {len(stages)} labels but the graph needs exactly {stage_count}",
+                )
+            sanitized_visual["stages"] = [clean_text(stage).strip() for stage in stages]
+
+    summary = _interactive_payload_summary(projected, "advanced_visual")
+    summary.update({
+        "visual_type": visual_type,
+        "field_mappings": mappings,
+        "projected_columns": list(dict.fromkeys(mappings.values())),
+        "discarded_column_count": len({column for column in discarded if column}),
+        "data_minimized": True,
+        "max_records_for_visual": max_records,
+    })
+    return projected, sanitized_visual, summary
+
+
 def normalize_section(section_type: str, data: dict[str, Any]) -> dict[str, Any]:
     kind = canonical_kind(section_type)
-    section_id = str(data.get("section_id") or data.get("id") or _stable_section_id(kind, data))
     data_policy = str(data.get("data_policy") or _default_data_policy(kind))
     if data_policy not in DATA_POLICIES:
         raise SectionValidationError(
@@ -113,6 +430,22 @@ def normalize_section(section_type: str, data: dict[str, Any]) -> dict[str, Any]
             f"Unsupported artifact section data_policy: {data_policy}",
             {"allowed": sorted(DATA_POLICIES)},
         )
+    if kind == "advanced_visual" and data_policy != "aggregate_only":
+        raise SectionValidationError(
+            "advanced_visual_requires_aggregate_only",
+            "advanced_visual data_policy is fixed to 'aggregate_only'",
+        )
+    advanced_prepared: tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]] | None = None
+    stable_id_data = data
+    if kind == "advanced_visual":
+        advanced_prepared = prepare_advanced_visual_data(data)
+        records, visual, _ = advanced_prepared
+        stable_id_data = {
+            key: value for key, value in data.items()
+            if key not in {"records", "rows", "visual", "visual_spec"}
+        }
+        stable_id_data = {**stable_id_data, "records": records, "visual": visual}
+    section_id = str(data.get("section_id") or data.get("id") or _stable_section_id(kind, stable_id_data))
 
     payload: dict[str, Any] = {}
     semantic_role = clean_text(data.get("semantic_role") or data.get("content_role") or data.get("semantic_intent") or "").lower().replace("-", "_")
@@ -198,6 +531,71 @@ def normalize_section(section_type: str, data: dict[str, Any]) -> dict[str, Any]
             raise SectionValidationError("invalid_entity_cards", "entity_card_grid requires list 'items' or 'entities'")
         payload.update(_interactive_payload_summary(items, kind))
         payload["item_count"] = len(items)
+    elif kind == "advanced_visual":
+        assert advanced_prepared is not None
+        records, visual, visual_summary = advanced_prepared
+        visual_type = visual["type"]
+        caption = clean_text(data.get("caption") or "")
+        interpretation = clean_text(data.get("interpretation") or data.get("insight") or data.get("summary") or "")
+        if not caption:
+            raise SectionValidationError(
+                "advanced_visual_missing_caption",
+                "advanced_visual requires a reader-facing caption",
+            )
+        if not interpretation:
+            raise SectionValidationError(
+                "advanced_visual_missing_interpretation",
+                "advanced_visual requires an adjacent interpretation sourced from the completed analysis",
+            )
+        evidence = data.get("evidence", data.get("evidence_refs", []))
+        if evidence is not None and not isinstance(evidence, list):
+            raise SectionValidationError(
+                "invalid_advanced_visual_evidence",
+                "advanced_visual evidence/evidence_refs must be a list",
+            )
+        payload.update(visual_summary)
+        payload["evidence_count"] = len(evidence or [])
+        payload["has_interpretation"] = True
+        claim_source = data.get("claim_source")
+        if claim_source is not None:
+            if not isinstance(claim_source, dict):
+                raise SectionValidationError(
+                    "invalid_advanced_visual_claim_source",
+                    "advanced_visual claim_source must be an object",
+                )
+            finding_id = clean_text(claim_source.get("finding_id") or "")
+            source = clean_text(claim_source.get("source") or "")
+            digest = clean_text(claim_source.get("text_sha256") or "")
+            data_digest = clean_text(claim_source.get("data_sha256") or "")
+            if (
+                not finding_id or not source
+                or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                or not re.fullmatch(r"[0-9a-f]{64}", data_digest)
+            ):
+                raise SectionValidationError(
+                    "invalid_advanced_visual_claim_source",
+                    "advanced_visual claim_source requires finding_id, source, and SHA-256 text/data digests",
+                )
+            if digest != hashlib.sha256(interpretation.encode("utf-8")).hexdigest():
+                raise SectionValidationError(
+                    "advanced_visual_claim_changed",
+                    "advanced_visual interpretation no longer matches its completed-analysis source digest",
+                )
+            current_data_digest = hashlib.sha256(json.dumps(
+                {"records": records, "visual": visual}, sort_keys=True, default=str,
+                separators=(",", ":"),
+            ).encode("utf-8")).hexdigest()
+            if data_digest != current_data_digest:
+                raise SectionValidationError(
+                    "advanced_visual_data_changed",
+                    "advanced_visual records or visual mapping no longer match the completed-analysis source digest",
+                )
+            payload["claim_source"] = {
+                "finding_id": finding_id,
+                "source": source,
+                "text_sha256": digest,
+                "data_sha256": data_digest,
+            }
     elif kind == "findings":
         items = data.get("items", data.get("findings", []))
         if not isinstance(items, list):

@@ -28,6 +28,16 @@ interface ActivityCall {
   duplicateCount: number
 }
 
+type TurnSequenceItem =
+  | { kind: 'activity'; call: ToolCallState; duplicateCount: number }
+  | { kind: 'guardrail'; guardrail: GuardrailState }
+  | { kind: 'evidence'; call: ToolCallState }
+
+type TurnSequenceRow =
+  | { kind: 'steps'; items: Array<Extract<TurnSequenceItem, { kind: 'activity' | 'guardrail' }>> }
+  | { kind: 'metrics'; items: Array<Extract<TurnSequenceItem, { kind: 'evidence' }>> }
+  | Extract<TurnSequenceItem, { kind: 'evidence' }>
+
 export type TranscriptBlock =
   | { kind: 'timeline'; entry: TimelineItem }
   | { kind: 'activity'; group: TurnGroup }
@@ -70,17 +80,18 @@ export function groupTranscript(entries: TimelineItem[]): TranscriptBlock[] {
     blocks.push({ kind: 'timeline', entry })
   }
   flush()
-  return keepLatestPublishedReportEvidence(blocks)
+  return keepLatestEvidence(blocks)
 }
 
 /**
- * Publishing the same durable report more than once is common during an
- * agentic turn (retry, quality gate, then final publish).  The transcript
- * should point to the latest version once, rather than stacking identical
- * report readers and their iframes.
+ * Publishing the same report or re-displaying a notebook chart is common
+ * during an agentic run. Keep the latest evidence surface so a captioned
+ * display can replace the raw execution output without rendering the same
+ * chart twice.
  */
-function keepLatestPublishedReportEvidence(blocks: TranscriptBlock[]) {
+function keepLatestEvidence(blocks: TranscriptBlock[]) {
   const seenReportPaths = new Set<string>()
+  const seenChartOutputs = new Set<string>()
   const keptBlocks: TranscriptBlock[] = []
 
   for (let blockIndex = blocks.length - 1; blockIndex >= 0; blockIndex -= 1) {
@@ -96,6 +107,9 @@ function keepLatestPublishedReportEvidence(blocks: TranscriptBlock[]) {
       const reportPath = successfulReportPath(call)
       if (reportPath && seenReportPaths.has(reportPath)) continue
       if (reportPath) seenReportPaths.add(reportPath)
+      const chartOutput = chartEvidenceKey(call)
+      if (chartOutput && seenChartOutputs.has(chartOutput)) continue
+      if (chartOutput) seenChartOutputs.add(chartOutput)
       evidence.push(call)
     }
     block.group.evidence = evidence.reverse()
@@ -103,6 +117,28 @@ function keepLatestPublishedReportEvidence(blocks: TranscriptBlock[]) {
   }
 
   return keptBlocks.reverse()
+}
+
+function chartEvidenceKey(call: ToolCallState) {
+  const toolName = toolBaseName(call.name)
+  if (!['execute_cell', 'execute_code', 'display_cell_output'].includes(toolName)) return ''
+  const data = parse(call.result)
+  if (!Array.isArray(data?.outputs)) return ''
+  const figures = data.outputs
+    .filter((output: any) => output?.type === 'plotly' && output?.figure)
+    .map((output: any) => ({
+      data: output.figure.data ?? [],
+      layout: output.figure.layout ?? {},
+      config: output.figure.config ?? {},
+    }))
+  if (figures.length === 0) return ''
+  const args = parse(call.args) || {}
+  const cell = data.cell_index ?? args.cell_index ?? ''
+  // Key on the full semantic figure (data + layout + config) so charts that
+  // differ only in annotations, axis ranges, titles, barmode, or subplot layout
+  // are not collapsed. Exclude only transient identifiers that change per render.
+  const transient = new Set(['uid', 'uirevision', 'revision', 'datarevision'])
+  return `${cell}|${JSON.stringify(figures, (key, value) => (transient.has(key) ? undefined : value))}`
 }
 
 export function TurnActivity({ group, sessionId, onFileClick }: {
@@ -132,10 +168,13 @@ export function TurnActivity({ group, sessionId, onFileClick }: {
     if (isRunning) setExpanded(true)
   }, [isRunning])
 
-  const duration = relativeDuration(allCalls)
+  const now = useLiveNow(isRunning)
+  const duration = relativeDuration(allCalls, now)
   const turnStartedAt = firstTimestamp(allCalls)
-  const metricEvidence = group.evidence.filter(call => toolBaseName(call.name) === 'display_metric')
-  const documentEvidence = group.evidence.filter(call => toolBaseName(call.name) !== 'display_metric')
+  const rows = sequenceTurnRows(activityCalls, group.guardrails, group.evidence)
+  const detailRowIds = rows
+    .map((row, index) => row.kind === 'steps' ? `${group.id}-details-${index}` : '')
+    .filter(Boolean)
   const stepCount = activityCalls.length + group.guardrails.length + group.evidence.length
   const meta = `${stepCount} steps${duration ? ` · ${duration}` : ''}`
   const label = `${verb} · ${meta}`
@@ -146,7 +185,7 @@ export function TurnActivity({ group, sessionId, onFileClick }: {
         type="button"
         className="chat-turn__header"
         aria-expanded={expanded}
-        aria-controls={`${group.id}-details`}
+        aria-controls={detailRowIds.join(' ') || undefined}
         onClick={() => setExpanded(value => !value)}
       >
         <RightOutlined className="chat-turn__chevron" />
@@ -156,23 +195,80 @@ export function TurnActivity({ group, sessionId, onFileClick }: {
         {remainingErrors > 0 && <span className="chat-turn__error-count">· {remainingErrors} error{remainingErrors === 1 ? '' : 's'}</span>}
         {fixedErrors > 0 && <span className="chat-turn__recovered-count">· {fixedErrors} error{fixedErrors === 1 ? '' : 's'} fixed</span>}
       </button>
-      {expanded && (
-        <div id={`${group.id}-details`} className="chat-turn__details">
-          {activityCalls.map(({ call, duplicateCount }) => <ActivityStep key={call.id} call={call} turnStartedAt={turnStartedAt} duplicateCount={duplicateCount} />)}
-          {group.guardrails.map(guardrail => <GuardrailStep key={guardrail.id} guardrail={guardrail} />)}
-        </div>
-      )}
-      {metricEvidence.length > 0 && <div className="chat-metric-grid">{metricEvidence.map(call => <EvidenceCell key={call.id} call={call} sessionId={sessionId} onFileClick={onFileClick} />)}</div>}
-      {documentEvidence.map(call => <EvidenceCell key={call.id} call={call} sessionId={sessionId} onFileClick={onFileClick} />)}
+      {rows.map((row, index) => {
+        if (row.kind === 'steps') {
+          if (!expanded) return null
+          return (
+            <div key={`steps-${index}`} id={`${group.id}-details-${index}`} className="chat-turn__details">
+              {row.items.map(item => item.kind === 'activity'
+                ? <ActivityStep key={item.call.id} call={item.call} turnStartedAt={turnStartedAt} duplicateCount={item.duplicateCount} />
+                : <GuardrailStep key={item.guardrail.id} guardrail={item.guardrail} />
+              )}
+            </div>
+          )
+        }
+        if (row.kind === 'metrics') {
+          return (
+            <div key={`metrics-${row.items[0].call.id}`} className="chat-metric-grid">
+              {row.items.map(item => <EvidenceCell key={item.call.id} call={item.call} sessionId={sessionId} onFileClick={onFileClick} />)}
+            </div>
+          )
+        }
+        return <EvidenceCell key={row.call.id} call={row.call} sessionId={sessionId} onFileClick={onFileClick} />
+      })}
     </section>
   )
 }
 
+/**
+ * Activity steps and reader-facing outputs are stored separately for compact
+ * rendering, but their `order` values share one execution timeline. Rebuild
+ * that sequence before rendering so a chart/table stays beside the tool call
+ * that produced it instead of drifting to the end of the working block.
+ */
+function sequenceTurnRows(
+  activityCalls: ActivityCall[],
+  guardrails: GuardrailState[],
+  evidenceCalls: ToolCallState[],
+): TurnSequenceRow[] {
+  const items: TurnSequenceItem[] = [
+    ...activityCalls.map(({ call, duplicateCount }) => ({ kind: 'activity' as const, call, duplicateCount })),
+    ...guardrails.map(guardrail => ({ kind: 'guardrail' as const, guardrail })),
+    ...evidenceCalls.map(call => ({ kind: 'evidence' as const, call })),
+  ].sort((left, right) => turnSequenceOrder(left) - turnSequenceOrder(right))
+
+  const rows: TurnSequenceRow[] = []
+  for (const item of items) {
+    if (item.kind !== 'evidence') {
+      const previous = rows[rows.length - 1]
+      if (previous?.kind === 'steps') previous.items.push(item)
+      else rows.push({ kind: 'steps', items: [item] })
+      continue
+    }
+
+    if (toolBaseName(item.call.name) === 'display_metric') {
+      const previous = rows[rows.length - 1]
+      if (previous?.kind === 'metrics') previous.items.push(item)
+      else rows.push({ kind: 'metrics', items: [item] })
+      continue
+    }
+
+    rows.push(item)
+  }
+  return rows
+}
+
+function turnSequenceOrder(item: TurnSequenceItem) {
+  return item.kind === 'guardrail' ? item.guardrail.order : item.call.order
+}
+
 function ActivityStep({ call, turnStartedAt, duplicateCount = 1 }: { call: ToolCallState; turnStartedAt: number | null; duplicateCount?: number }) {
   const [open, setOpen] = useState(false)
+  const now = useLiveNow(call.status === 'calling')
   const failed = hasError(call)
   const timestamp = relativeTimestamp(call, turnStartedAt)
-  const label = `${stepLabel(call)}${duplicateCount > 1 ? ` — consolidated ${duplicateCount} identical updates` : ''}`
+  const label = `${stepLabel(call, now)}${duplicateCount > 1 ? ` — consolidated ${duplicateCount} identical updates` : ''}`
+  const progress = progressSummary(call, now)
   const disclosure = failed
     ? 'traceback'
     : sourceFor(call)
@@ -187,6 +283,7 @@ function ActivityStep({ call, turnStartedAt, duplicateCount = 1 }: { call: ToolC
     {timestamp && <span className="chat-step__time">{timestamp}</span>}
     <span className="chat-step__mark" aria-hidden="true">{call.status === 'calling' ? '•' : failed ? '!' : '·'}</span>
     <span className="chat-step__label">{label}</span>
+    {progress && <span className="chat-step__progress">{progress}</span>}
     {disclosure && <span className="chat-step__more">{open ? '▾' : '▸'} {disclosure}</span>}
   </>
 
@@ -282,7 +379,7 @@ function isEvidenceCall(call: ToolCallState) {
   return Array.isArray(data?.outputs) && data.outputs.some((output: any) => ['plotly', 'image', 'html'].includes(output?.type))
 }
 
-function stepLabel(call: ToolCallState): string {
+function stepLabel(call: ToolCallState, now: number = Date.now()): string {
   const args = parse(call.args) || {}
   const result = parse(call.result) || {}
   const cell = result.cell_index ?? result.index ?? args.cell_index ?? args.index
@@ -290,7 +387,7 @@ function stepLabel(call: ToolCallState): string {
   const failed = hasError(call)
   const failure = failed ? errorSummary(call, result) : ''
   const suffix = failure ? ` — ${failure}` : ''
-  const duration = callDuration(call, result)
+  const duration = callDuration(call, result, now)
   const durationSuffix = duration ? ` · ${duration}` : ''
   const toolName = toolBaseName(call.name)
 
@@ -331,7 +428,7 @@ function stepLabel(call: ToolCallState): string {
     case 'update_plan': return `Updated plan${planChange(args, result)}${suffix}`
     case 'delegate_to_subagent': return `Delegated to ${args.subagent_name || call.subagent?.name || 'subagent'}${call.subagent ? ` · ${call.subagent.currentTurn || 0} turns` : ''}${suffix}`
     case 'build_report': return `Built report ${displayName(args.title || path || 'report')}${args.report_goal ? ` — ${compactInline(args.report_goal, 110)}` : ''}${suffix}`
-    case 'report_design_report': return reportDesignLabel(args, result, path, suffix)
+    case 'report_design_report': return reportDesignLabel(call, args, result, path, suffix)
     case 'report_review_visuals': return `Reviewed report visuals for ${displayName(path || 'report')}${suffix}`
     case 'report_publish': return reportPublishLabel(call, suffix)
     case 'report_add_section': return reportSectionLabel(args, result, suffix)
@@ -340,11 +437,14 @@ function stepLabel(call: ToolCallState): string {
   }
 }
 
-function reportDesignLabel(args: any, result: any, path: unknown, suffix: string) {
+function reportDesignLabel(call: ToolCallState, args: any, result: any, path: unknown, suffix: string) {
   const title = displayName(args.title || result.title || path || 'report')
   const insightCount = Array.isArray(args.insights) ? args.insights.length : 0
   const purpose = args.report_goal || result.report_goal || ''
-  return `Designed report ${title}${insightCount ? ` from ${insightCount} completed finding${insightCount === 1 ? '' : 's'}` : ''}${purpose ? ` — ${compactInline(purpose, 110)}` : ''}${suffix}`
+  const action = call.status === 'calling'
+    ? call.progress?.label || 'Designing report'
+    : 'Designed report'
+  return `${action}: ${title}${insightCount ? ` from ${insightCount} completed finding${insightCount === 1 ? '' : 's'}` : ''}${call.status === 'calling' ? '' : purpose ? ` — ${compactInline(purpose, 110)}` : ''}${suffix}`
 }
 
 function reportPublishLabel(call: ToolCallState, suffix: string) {
@@ -477,9 +577,9 @@ function errorSummary(call: ToolCallState, result: any) {
   return compactInline(raw.replace(/^error:\s*/i, ''), 150)
 }
 
-function callDuration(call: ToolCallState, result: any) {
+function callDuration(call: ToolCallState, result: any, now: number = Date.now()) {
   const started = call.startedAt
-  const finished = call.finishedAt
+  const finished = call.finishedAt ?? (call.status === 'calling' ? now : undefined)
   const milliseconds = typeof started === 'number' && typeof finished === 'number'
     ? Math.max(0, finished - started)
     : Number(result?.duration_ms ?? result?.elapsed_ms ?? result?.durationMs ?? 0)
@@ -649,9 +749,48 @@ function formatBytes(size: number) {
   return size < 1024 ? `${size} B` : `${(size / 1024).toFixed(1)} KB`
 }
 
-function relativeDuration(calls: ToolCallState[]) {
+function relativeDuration(calls: ToolCallState[], now: number = Date.now()) {
   const times = calls.flatMap(call => [call.startedAt, call.finishedAt]).filter((value): value is number => typeof value === 'number')
-  if (times.length < 2) return null
-  const seconds = Math.max(0, Math.round((Math.max(...times) - Math.min(...times)) / 1000))
+  if (!times.length) return null
+  const end = calls.some(call => call.status === 'calling') ? now : Math.max(...times)
+  const seconds = Math.max(0, Math.round((end - Math.min(...times)) / 1000))
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
+}
+
+function useLiveNow(active: boolean) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!active) return
+    const initial = window.setTimeout(() => setNow(Date.now()), 0)
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => {
+      window.clearTimeout(initial)
+      window.clearInterval(timer)
+    }
+  }, [active])
+  return now
+}
+
+function progressSummary(call: ToolCallState, now: number) {
+  if (call.status !== 'calling') return ''
+  const progress = call.progress
+  const parts: string[] = []
+  if (progress?.attempt && progress.maxAttempts && progress.maxAttempts > 1) {
+    parts.push(`${progress.phase === 'repairing' ? 'repair ' : 'pass '}${progress.attempt}/${progress.maxAttempts}`)
+  }
+  if (progress?.activity === 'receiving') parts.push('receiving output')
+  else if (progress?.activity === 'waiting') parts.push('waiting for model')
+  else if (progress?.activity === 'received') parts.push('output received')
+  if (typeof progress?.outputChars === 'number' && progress.outputChars > 0) {
+    parts.push(formatCompactCount(progress.outputChars) + ' chars')
+  }
+  if (progress?.lastOutputAt) {
+    const age = Math.max(0, Math.round((now - Date.parse(progress.lastOutputAt)) / 1000))
+    parts.push(`output ${age < 2 ? 'now' : `${age}s ago`}`)
+  }
+  return parts.join(' · ')
+}
+
+function formatCompactCount(value: number) {
+  return value >= 1000 ? `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}k` : String(value)
 }

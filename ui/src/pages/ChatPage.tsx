@@ -5,12 +5,12 @@ import {
   FolderOutlined, FolderOpenOutlined, ExperimentOutlined, StopOutlined, ReloadOutlined,
   EditOutlined, SafetyOutlined,
   ExportOutlined, PauseOutlined, PlayCircleOutlined, CloseOutlined, ArrowUpOutlined, RightOutlined,
-  ArrowLeftOutlined, DeleteOutlined, MessageOutlined, FileTextOutlined, DatabaseOutlined,
+  ArrowLeftOutlined, DeleteOutlined, MessageOutlined, FileTextOutlined, DatabaseOutlined, LoadingOutlined,
 } from '@ant-design/icons'
 import { useSearchParams } from 'react-router-dom'
 import { API } from '../api'
 import { useAGUI } from '../hooks/useAGUI'
-import type { AGUIMessage, ToolCallState } from '../hooks/useAGUI'
+import type { AGUIMessage, RunHealth, ToolCallState } from '../hooks/useAGUI'
 import MarkdownContent from '../components/MarkdownContent'
 import { groupTranscript, TurnActivity } from '../components/ChatActivity'
 import { toolBaseName } from '../components/reportPublishState'
@@ -32,7 +32,14 @@ interface QueuedMessage { id: string; text: string; ts: number }
 interface PersistedToolTiming { startedAt?: number; finishedAt?: number }
 interface ReportCounts { published: number; scratch: number }
 interface DatasetConfirmation { sessionId?: string; pendingMessage?: string; title?: string }
+interface ResumeOpportunity {
+  reason: 'max_turns' | 'stopped' | 'error' | 'compaction' | 'incomplete'
+  title: string
+  description: string
+}
 type FileSort = 'name' | 'size' | 'modified' | 'type'
+
+const RESUME_WORK_MESSAGE = 'Continue from where you stopped. Review the saved progress and complete the remaining work.'
 
 function isSuccessfulArtifactPublish(call: ToolCallState): boolean {
   if (toolBaseName(call.name) !== 'publish_artifact' || call.status !== 'complete' || !call.result) return false
@@ -42,6 +49,43 @@ function isSuccessfulArtifactPublish(call: ToolCallState): boolean {
   } catch {
     return false
   }
+}
+
+function describeRunStatus(
+  activeTool: ToolCallState | null,
+  health: RunHealth | null,
+  state: { isStopping: boolean; reconnecting: boolean },
+) {
+  if (state.isStopping) return 'Stopping the current run…'
+  if (state.reconnecting) return 'Reconnecting to the current run…'
+  if (health && !health.reachable) return 'Run status is temporarily unavailable — reconnecting…'
+  if (health && !health.healthy && health.task_status !== 'unknown') {
+    return `Run needs attention — task is ${health.task_status}`
+  }
+  if (!activeTool) {
+    const backendLabel = health?.active_tool?.label
+    return typeof backendLabel === 'string' && backendLabel
+      ? backendLabel
+      : 'Dataclaw is preparing the next step…'
+  }
+
+  const progress = activeTool.progress
+  const label = progress?.label || (toolBaseName(activeTool.name) === 'report_design_report'
+    ? 'Designing the report'
+    : `Running ${activeTool.name.replace(/_/g, ' ')}`)
+  const details: string[] = []
+  if (progress?.activity === 'receiving') details.push('receiving output')
+  else if (progress?.activity === 'waiting') details.push('waiting for model')
+  if (typeof progress?.elapsedMs === 'number') details.push(formatElapsed(progress.elapsedMs))
+  if (progress?.timeoutSeconds && progress.timeoutSeconds >= 60) {
+    details.push(`up to ${Math.round(progress.timeoutSeconds / 60)}m for this pass`)
+  }
+  return `${label}${details.length ? ` · ${details.join(' · ')}` : ''}`
+}
+
+function formatElapsed(milliseconds: number) {
+  const seconds = Math.max(0, Math.round(milliseconds / 1000))
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
 }
 
 // A chat is a reading surface, not an edge-to-edge document.  The outer
@@ -82,6 +126,89 @@ function persistedToolTimings(messages: unknown): Record<string, PersistedToolTi
   return timings
 }
 
+function findResumeOpportunity({
+  messages,
+  toolCalls,
+  error,
+  manuallyStopped,
+  isRunning,
+  hasPendingPlan,
+  hasQueuedMessages,
+}: {
+  messages: AGUIMessage[]
+  toolCalls: ToolCallState[]
+  error: string | null
+  manuallyStopped: boolean
+  isRunning: boolean
+  hasPendingPlan: boolean
+  hasQueuedMessages: boolean
+}): ResumeOpportunity | null {
+  if (isRunning || hasPendingPlan || hasQueuedMessages) return null
+  if (manuallyStopped) {
+    return {
+      reason: 'stopped',
+      title: 'Run stopped before completion',
+      description: 'Progress is saved and Dataclaw can continue from the latest checkpoint.',
+    }
+  }
+  if (error) {
+    return {
+      reason: 'error',
+      title: 'Run needs another attempt',
+      description: 'Resume with the saved conversation and completed tool results.',
+    }
+  }
+
+  const completedAssistantOrder = messages.reduce(
+    (latest, message) => message.role === 'assistant' && message.content.trim()
+      ? Math.max(latest, message.order)
+      : latest,
+    0,
+  )
+  const latestWorkOrder = Math.max(
+    0,
+    ...messages.filter(message => message.role === 'user').map(message => message.order),
+    ...toolCalls.map(call => call.order),
+  )
+  const latestNotice = messages
+    .filter(message => message.role === 'run_notice')
+    .sort((left, right) => right.order - left.order)[0]
+  if (latestNotice && latestNotice.order >= Math.max(completedAssistantOrder, latestWorkOrder)) {
+    const maxTurns = latestNotice.maxTurns ? ` after ${latestNotice.maxTurns} turns` : ''
+    return latestNotice.stopReason === 'max_turns'
+      ? {
+          reason: 'max_turns',
+          title: `Action-round limit reached${maxTurns}`,
+          description: 'Progress is saved and the remaining work can continue in a new run.',
+        }
+      : {
+          reason: latestNotice.stopReason === 'error' ? 'error' : 'stopped',
+          title: 'Run stopped before completion',
+          description: 'Progress is saved and Dataclaw can continue from the latest checkpoint.',
+        }
+  }
+
+  const latestCompactionOrder = messages.reduce(
+    (latest, message) => message.role === 'compaction' ? Math.max(latest, message.order) : latest,
+    0,
+  )
+  if (latestCompactionOrder > completedAssistantOrder && latestWorkOrder > completedAssistantOrder) {
+    return {
+      reason: 'compaction',
+      title: 'Compacted conversation has unfinished work',
+      description: 'The context summary is saved, but no completed response followed it.',
+    }
+  }
+  if (latestWorkOrder > completedAssistantOrder) {
+    return {
+      reason: 'incomplete',
+      title: 'Latest request has no completed response',
+      description: 'Continue from the saved messages and completed tool results.',
+    }
+  }
+  return null
+}
+
 interface ChatPageProps {
   projectId?: string
   initialSessionId?: string | null
@@ -101,10 +228,14 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
   const [sessionProjectId, setSessionProjectId] = useState<string | null>(projectId ?? null)
   const [loadedSessionTitle, setLoadedSessionTitle] = useState('')
   const [savedToolTimings, setSavedToolTimings] = useState<Record<string, PersistedToolTiming>>({})
+  const [manualResumePending, setManualResumePending] = useState(false)
   const effectiveProjectId = projectId || sessionProjectId
   const [projectName, setProjectName] = useState<string | null>(null)
   const setActiveSessionId = (id: string | null) => {
-    if (id !== activeSessionId) setLoadedSessionTitle('')
+    if (id !== activeSessionId) {
+      setLoadedSessionTitle('')
+      setManualResumePending(false)
+    }
     _setActiveSessionId(id)
     if (id) setSessionBrowserOpen(false)
     if (!id) setSessionProjectId(projectId ?? null)
@@ -153,6 +284,7 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
   const pendingPlanDecisionRef = useRef<{ sessionId: string; text: string } | null>(null)
   const queuedMessagesRef = useRef<QueuedMessage[]>([])
   const queuePausedRef = useRef(false)
+  const sendNextAfterStopRef = useRef(false)
   const datasetConfirmationOpenRef = useRef(false)
   const commitQueueRef = useRef<(messages: QueuedMessage[], paused: boolean) => void>(() => {})
   const dispatchQueuedMessageRef = useRef<() => boolean>(() => false)
@@ -370,6 +502,7 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
     const [next, ...rest] = queuedMessagesRef.current
     if (!sessionId || !next || queuePausedRef.current) return false
     commitQueue(rest, false)
+    setManualResumePending(false)
     setTimeout(() => sendMessageRef.current(sessionId, [], next.text, { sentFromQueue: true, queuedAt: next.ts }), 0)
     return true
   }, [commitQueue])
@@ -394,12 +527,13 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
       // Re-check auto mode — user may have toggled it off during the delay
       if (!sessionId || !autoModeRef.current) return
       setAutoTurnsUsed(prev => prev + 1)
+      setManualResumePending(false)
       // We pass empty history — the backend loads full history from session storage
       sendMessageRef.current(sessionId, [], autoMessageRef.current)
     }, 2000)
   }, [])
 
-  const { messages, toolCalls, timeline, isRunning, reconnecting, error, sendMessage, cancelRun, checkAndReconnect, reset, setToolCalls } = useAGUI({ onRunFinished })
+  const { messages, toolCalls, timeline, isRunning, isStopping, reconnecting, runHealth, error, sendMessage, cancelRun, checkAndReconnect, reset, setToolCalls } = useAGUI({ onRunFinished })
   sendMessageRef.current = sendMessage
 
   const deleteSession = useCallback(async (sessionId: string) => {
@@ -519,6 +653,7 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
     }
 
     const history = messages.map(m => ({ role: m.role, content: m.content }))
+    setManualResumePending(false)
     sendMessage(activeSessionId, history, text)
   }, [isRunning, activeSessionId, messages, sendMessage])
 
@@ -527,6 +662,7 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
     const pending = pendingPlanDecisionRef.current
     if (!pending) return
     pendingPlanDecisionRef.current = null
+    setManualResumePending(false)
     sendMessage(pending.sessionId, [], pending.text)
   }, [isRunning, sendMessage])
 
@@ -593,6 +729,20 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
 
   const pendingPlans = useMemo(() => plans.filter(p => p.status === 'pending'), [plans])
   const latestPendingPlan = pendingPlans[pendingPlans.length - 1] ?? null
+  const resumeOpportunity = useMemo(() => findResumeOpportunity({
+    messages,
+    toolCalls,
+    error,
+    manuallyStopped: manualResumePending,
+    isRunning,
+    hasPendingPlan: Boolean(latestPendingPlan),
+    hasQueuedMessages: queuedMessages.length > 0,
+  }), [error, isRunning, latestPendingPlan, manualResumePending, messages, queuedMessages.length, toolCalls])
+  const resumeWork = useCallback(() => {
+    if (!activeSessionId || isRunning) return
+    setManualResumePending(false)
+    sendMessage(activeSessionId, [], RESUME_WORK_MESSAGE)
+  }, [activeSessionId, isRunning, sendMessage])
 
   // A newly submitted plan should be reviewable beside the conversation
   // without asking the user to discover the collapsed rail first. Remember
@@ -630,6 +780,8 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
         : null
   const composerPlaceholder = latestPendingPlan
     ? 'Type feedback or revision notes for this plan...'
+    : isStopping
+      ? 'Stopping the current run...'
     : isRunning
       ? 'Message Dataclaw — sends when the current run finishes...'
       : 'Send a message...'
@@ -870,6 +1022,18 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
 
   const hasMore = filteredTimeline.length > visibleCount
   const windowedBlocks = useMemo(() => groupTranscript(windowedTimeline), [windowedTimeline])
+  const activeToolCall = useMemo(
+    () => [...toolCalls].reverse().find(call => call.status === 'calling') || null,
+    [toolCalls],
+  )
+  const liveRunStatus = describeRunStatus(activeToolCall, runHealth, { isStopping, reconnecting })
+
+  useEffect(() => {
+    if (isRunning || !sendNextAfterStopRef.current) return
+    sendNextAfterStopRef.current = false
+    commitQueue(queuedMessagesRef.current, false)
+    dispatchQueuedMessageRef.current()
+  }, [commitQueue, isRunning])
 
   // Reset visible window when switching sessions
   useEffect(() => { setVisibleCount(WINDOW_SIZE) }, [activeSessionId])
@@ -990,6 +1154,7 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
 
     const history = messages.map(m => ({ role: m.role, content: m.content }))
     if (queuePausedRef.current) commitQueue(queuedMessagesRef.current, false)
+    setManualResumePending(false)
     sendMessage(sessionId!, history, text)
   }
 
@@ -1238,6 +1403,8 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
                     ? <TurnActivity group={block.group} onFileClick={previewFile} sessionId={activeSessionId} />
                     : (block.entry.item as AGUIMessage).role === 'compaction'
                     ? <CompactionDivider message={block.entry.item as AGUIMessage} />
+                    : (block.entry.item as AGUIMessage).role === 'run_notice'
+                    ? <RunNotice message={block.entry.item as AGUIMessage} />
                     : <MessageBubble message={block.entry.item as AGUIMessage} onFileClick={previewFile} />
                   }
                 </div>
@@ -1269,7 +1436,7 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
                       }} />
                     ))}
                   </div>
-                  <span style={{ fontSize: 12, color: '#999' }}>{reconnecting ? 'Reconnecting...' : 'Dataclaw is thinking...'}</span>
+                  <span style={{ fontSize: 12, color: '#667085' }}>{liveRunStatus}</span>
                 </div>
               )}
               <div ref={messagesEndRef} />
@@ -1289,6 +1456,17 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
               <Button size="small" danger onClick={() => submitDecision(latestPendingPlan.id, 'denied')}>Deny</Button>
             </div>
           )}
+          {resumeOpportunity && (
+            <div
+              data-testid="resume-work-banner"
+              style={{ maxWidth: CHAT_SURFACE_MAX_WIDTH, margin: '0 auto 8px', padding: '8px 10px', border: '1px solid #b2ccff', borderRadius: 8, background: '#f5f8ff', color: '#344054', fontSize: 12, display: 'flex', alignItems: 'center', gap: 8 }}
+              role="status"
+            >
+              <PlayCircleOutlined aria-hidden="true" style={{ color: 'var(--accent)' }} />
+              <span><b>{resumeOpportunity.title}.</b> {resumeOpportunity.description}</span>
+              <Button type="primary" size="small" icon={<PlayCircleOutlined />} onClick={resumeWork} style={{ marginLeft: 'auto', flex: '0 0 auto' }}>Resume work</Button>
+            </div>
+          )}
           {queuePaused && queuedMessages.length > 0 && (
             <div style={{ maxWidth: CHAT_SURFACE_MAX_WIDTH, margin: '0 auto 8px', padding: '8px 10px', border: '1px solid #d0d5dd', borderRadius: 8, background: '#f7f8fa', color: '#475467', fontSize: 12, display: 'flex', alignItems: 'center', gap: 8 }} role="status">
               <PauseOutlined aria-hidden="true" />
@@ -1305,7 +1483,8 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
               style={{ borderRadius: 10 }} />
             {isRunning ? (
               <>
-                <Button danger icon={<StopOutlined />} onClick={() => {
+                <Button danger disabled={isStopping} icon={isStopping ? <LoadingOutlined spin /> : <StopOutlined />} onClick={() => {
+                  setManualResumePending(true)
                   if (activeSessionId) cancelRun(activeSessionId)
                   if (queuedMessagesRef.current.length > 0) commitQueue(queuedMessagesRef.current, true)
                   if (autoMode) {
@@ -1318,15 +1497,22 @@ export default function ChatPage({ projectId, initialSessionId, initialDatasetId
                     }
                   }
                 }}
-                  style={{ borderRadius: 10, height: 36 }}>Stop</Button>
-                <Button type="primary" onClick={handleSend} style={{ borderRadius: 10, height: 36 }}>Queue ↵</Button>
+                  style={{ borderRadius: 10, height: 36 }}>{isStopping ? 'Stopping…' : 'Stop'}</Button>
+                {queuedMessages.length > 0 && !isStopping && (
+                  <Button onClick={() => {
+                    sendNextAfterStopRef.current = true
+                    commitQueue(queuedMessagesRef.current, true)
+                    if (activeSessionId) cancelRun(activeSessionId)
+                  }} style={{ borderRadius: 10, height: 36 }}>Stop &amp; send next</Button>
+                )}
+                <Button type="primary" disabled={isStopping} onClick={handleSend} style={{ borderRadius: 10, height: 36 }}>Queue ↵</Button>
               </>
             ) : (
               <Button type="primary" icon={<SendOutlined />} onClick={handleSend}
                 style={{ borderRadius: 10, minWidth: 44, height: 32 }} />
             )}
           </div>
-          {isRunning && <div style={{ maxWidth: CHAT_SURFACE_MAX_WIDTH, margin: '6px auto 0', color: 'var(--faint)', fontSize: 11, textAlign: 'right' }}>↵ send — queues during a run · ⇧↵ newline</div>}
+          {isRunning && <div style={{ maxWidth: CHAT_SURFACE_MAX_WIDTH, margin: '6px auto 0', color: 'var(--faint)', fontSize: 11, textAlign: 'right' }}>{queuedMessages.length > 0 ? `${queuedMessages.length} message${queuedMessages.length === 1 ? '' : 's'} queued · ` : ''}↵ send — queues during a run · ⇧↵ newline</div>}
         </div>}
       </div>
 
@@ -2023,6 +2209,21 @@ function MessageBubble({ message, onFileClick }: { message: AGUIMessage; onFileC
         {isUser ? <span style={{ whiteSpace: 'pre-wrap' }}>{message.content}</span> : <MarkdownContent content={message.content} onFileClick={onFileClick} />}
       </div>
     </div>
+  )
+}
+
+function RunNotice({ message }: { message: AGUIMessage }) {
+  const title = message.stopReason === 'max_turns'
+    ? `Agent stopped after reaching ${message.maxTurns || 'the configured number of'} turns`
+    : 'Agent stopped before the task finished'
+  return (
+    <Alert
+      type="warning"
+      showIcon
+      title={title}
+      description={message.content}
+      style={{ marginBottom: 18 }}
+    />
   )
 }
 

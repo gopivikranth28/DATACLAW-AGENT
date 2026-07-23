@@ -250,6 +250,18 @@ button.chat-step__summary:hover {
   min-width: 0;
 }
 
+.chat-step__progress {
+  flex: 0 0 auto;
+  max-width: 45%;
+  overflow: hidden;
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .chat-step__more {
   flex: 0 0 auto;
   margin-left: 2px;

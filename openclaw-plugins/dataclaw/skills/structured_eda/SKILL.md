@@ -4,8 +4,6 @@ description: Run goal-directed exploratory data analysis tailored to the user's 
 tags: [data, analysis, eda, exploratory-analysis, data-quality, profiling]
 ---
 
-<!-- Canonical OpenClaw skill directory: structured_eda -->
-
 ## When to use
 
 Use this skill when the user asks to explore, understand, profile, audit, or prepare a dataset before modeling, dashboarding, reporting, segmentation, forecasting, survey analysis, or decision support.
@@ -180,71 +178,45 @@ At the Decide step, pass `loop_index` as the 1-based insight-loop number on both
 
 ## Output and visualization rules
 
-Fetch the `visualization` skill before producing the first final chart or report
-artifact. Fetch the `report_design` skill before producing a polished EDA report
-or living-report entry. Follow their conventions for final visual output: Plotly
-charts via `fig.show()`, metric tiles for headline checks, and a final
-report-design pass when producing a polished artifact or living-report entry.
+Fetch `visualization` when non-trivial notebook charting or a visual-integrity
+review is useful. It is optional when the completed aggregate evidence is already
+well described. Fetch `report_design` before producing a polished EDA report or
+living-report artifact; it is the sole final composition layer.
 
 Do not treat appended report cells as the final EDA report. First finish the
 notebook analysis, hypothesis dispositions, recorded EDA findings, aggregate
-tables, chart specs, caveats, and evidence ids. Then follow `report_design` and
-call `report_design_report` so the report designer can look across all completed
-material, storyboard the report, choose layouts and interactive controls, and
-render the HTML in one cohesive pass. Then call
+tables, caveats, uncertainty, methodology, and evidence ids. Describe each
+useful aggregate's grain, population, units, denominator, field definitions,
+comparison baseline, and semantic relationship. Then call
+`report_design_report` so the creative author can look across all completed
+material and choose the prose, story, layout, visual forms, and safe interactions
+in one cohesive pass. Do not prescribe chart types, KPI counts, components, or
+section order unless the user or analytical contract requires them. Then call
 `report_publish(report_path=..., storyboard_path=..., export_docx=False)` unless
 the user requested Word output. Inspect its returned `quality`, `runtime_smoke`,
 and receipt path before calling the report published. Supply
 `requirements.evidence_registry.targets` for notebook cells, artifacts, or
-other non-external evidence references. If `build_report` returns
-`preserved_low_confidence` for legacy HTML, rebuild from typed EDA assets rather
-than publishing the preserved source.
+other non-external evidence references. This ledger is required and authoring is
+fail-closed. To redesign legacy report HTML, re-author from the typed EDA assets
+and evidence ledger rather than normalizing raw HTML.
 
-Use visuals that match the goal:
+For notebook analysis—not final report composition—choose visuals that expose
+the relevant distribution, relationship, missingness, change, or uncertainty.
+Use ordinary Plotly with `fig.show()` when a working visual helps validation.
+Every analytical visual should retain its labels, units, sample size or scope,
+interpretation, and material caveat.
 
-- Missingness: sorted bar chart or heatmap when patterns matter.
-- Numeric distribution: histogram/box/violin, with log scale only when explained.
-- Categorical distribution: sorted bar chart; group rare levels when needed.
-- Time: line chart with gaps and time grain clearly labelled.
-- Relationship: scatter, grouped box/violin, faceted bars, or heatmap depending on data types.
-- Correlation: small, relevant matrix or ranked relationship table, not a giant unreadable heatmap.
-
-When producing a living report, make the report read like an analytical story,
-not a dump of notebook outputs:
-
-- Start with `header` and `metric_row` for objective, grain, row/column counts, coverage, and headline risk.
-- Use `narrative_band` for a short story turn, revised readout, decision-facing summary, or caveat band.
-- Use `methodology_block` for grain, denominator, validation, review, and assumption methods.
-- Use `chart_interpretation` for EDA charts that carry a conclusion; include `finding_id`, `hypothesis_id`, evidence refs, caveat, and next action where available.
-- Use `evidence_rail` beside important claims so notebook cells, query cards, artifact sections, or findings stay adjacent to interpretation.
-- Use `ledger_timeline` when a hypothesis, finding, review concern, risk acceptance, or supersession changes over time.
-- Use `hypothesis_ledger` after proposing hypotheses and again near the end to show dispositions.
-- Use `evidence_trace` to connect material findings to notebook cells, filters, sample sizes, and validation checks.
-- Use `insight_grid` for the 3-7 findings that change the user's answer, each with evidence, status, and caveat.
-- Use `comparison` when the claim depends on cohorts, time periods, segments, target classes, or model baselines.
-- Use `chart_table_explorer`, `filterable_chart`, `interactive_table`, or
-  `selector_panel` when the EDA naturally supports slicing, lookup,
-  leaderboard review, similarity exploration, or scenario comparison. Embed only
-  small aggregate JSON payloads, not raw full datasets.
-- Use `entity_card_grid` for archetypes, segments, cohorts, players, models, or
-  scenarios that need card-level metric summaries.
-- Use `checklist` for data-quality, validation, and readiness verdicts; mark blockers explicitly.
-- Use `explanation` to narrate why the route changed, why a caveat matters, or why a finding is not causal.
-- Use plain `chart` and `table` only when they are the clearest representation and a nearby section already carries interpretation or provenance.
-
-As the EDA evolves, append report sections that show the new layer of
-understanding: revised hypotheses, a clarified denominator, a changed cohort
-comparison, or a readiness blocker becoming resolved. Use `caption`, `tags` or
-`pills`, `methodology`, `bullets`, item-level `evidence`, and item-level
-`caveat` consistently so readers can scan the logic without rereading the
-notebook.
+Pass the author the new layer of understanding rather than rendering it as a
+preselected report component: revised hypotheses, clarified denominators,
+changed comparisons, resolved blockers, representative examples, and remaining
+limitations. Explicit story arcs, required lookup/filter tasks, brand, or visual
+direction are optional constraints; omit them when the author should decide.
 
 Before final publication, inspect `report_publish`'s returned `quality` object,
 `runtime_smoke`, and publish receipt. Fix chart dumps, missing insight sections,
-missing or unresolved evidence, missing table captions, stale installed skills,
-oversized HTML, and missing explorers before marking the visual report done.
-
-Every chart must have a title, labelled axes with units, sample size when relevant, and a one-line interpretation plus caveat.
+missing or unresolved evidence, omitted material caveats, unsafe HTML, and
+oversized payloads before marking the report done. Skill freshness is advisory;
+the evidence ledger and current report reviews govern publication.
 
 ## Standard deliverables
 
