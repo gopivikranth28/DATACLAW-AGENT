@@ -28,6 +28,16 @@ interface ActivityCall {
   duplicateCount: number
 }
 
+type TurnSequenceItem =
+  | { kind: 'activity'; call: ToolCallState; duplicateCount: number }
+  | { kind: 'guardrail'; guardrail: GuardrailState }
+  | { kind: 'evidence'; call: ToolCallState }
+
+type TurnSequenceRow =
+  | { kind: 'steps'; items: Array<Extract<TurnSequenceItem, { kind: 'activity' | 'guardrail' }>> }
+  | { kind: 'metrics'; items: Array<Extract<TurnSequenceItem, { kind: 'evidence' }>> }
+  | Extract<TurnSequenceItem, { kind: 'evidence' }>
+
 export type TranscriptBlock =
   | { kind: 'timeline'; entry: TimelineItem }
   | { kind: 'activity'; group: TurnGroup }
@@ -161,8 +171,10 @@ export function TurnActivity({ group, sessionId, onFileClick }: {
   const now = useLiveNow(isRunning)
   const duration = relativeDuration(allCalls, now)
   const turnStartedAt = firstTimestamp(allCalls)
-  const metricEvidence = group.evidence.filter(call => toolBaseName(call.name) === 'display_metric')
-  const documentEvidence = group.evidence.filter(call => toolBaseName(call.name) !== 'display_metric')
+  const rows = sequenceTurnRows(activityCalls, group.guardrails, group.evidence)
+  const detailRowIds = rows
+    .map((row, index) => row.kind === 'steps' ? `${group.id}-details-${index}` : '')
+    .filter(Boolean)
   const stepCount = activityCalls.length + group.guardrails.length + group.evidence.length
   const meta = `${stepCount} steps${duration ? ` · ${duration}` : ''}`
   const label = `${verb} · ${meta}`
@@ -173,7 +185,7 @@ export function TurnActivity({ group, sessionId, onFileClick }: {
         type="button"
         className="chat-turn__header"
         aria-expanded={expanded}
-        aria-controls={`${group.id}-details`}
+        aria-controls={detailRowIds.join(' ') || undefined}
         onClick={() => setExpanded(value => !value)}
       >
         <RightOutlined className="chat-turn__chevron" />
@@ -183,16 +195,71 @@ export function TurnActivity({ group, sessionId, onFileClick }: {
         {remainingErrors > 0 && <span className="chat-turn__error-count">· {remainingErrors} error{remainingErrors === 1 ? '' : 's'}</span>}
         {fixedErrors > 0 && <span className="chat-turn__recovered-count">· {fixedErrors} error{fixedErrors === 1 ? '' : 's'} fixed</span>}
       </button>
-      {expanded && (
-        <div id={`${group.id}-details`} className="chat-turn__details">
-          {activityCalls.map(({ call, duplicateCount }) => <ActivityStep key={call.id} call={call} turnStartedAt={turnStartedAt} duplicateCount={duplicateCount} />)}
-          {group.guardrails.map(guardrail => <GuardrailStep key={guardrail.id} guardrail={guardrail} />)}
-        </div>
-      )}
-      {metricEvidence.length > 0 && <div className="chat-metric-grid">{metricEvidence.map(call => <EvidenceCell key={call.id} call={call} sessionId={sessionId} onFileClick={onFileClick} />)}</div>}
-      {documentEvidence.map(call => <EvidenceCell key={call.id} call={call} sessionId={sessionId} onFileClick={onFileClick} />)}
+      {rows.map((row, index) => {
+        if (row.kind === 'steps') {
+          if (!expanded) return null
+          return (
+            <div key={`steps-${index}`} id={`${group.id}-details-${index}`} className="chat-turn__details">
+              {row.items.map(item => item.kind === 'activity'
+                ? <ActivityStep key={item.call.id} call={item.call} turnStartedAt={turnStartedAt} duplicateCount={item.duplicateCount} />
+                : <GuardrailStep key={item.guardrail.id} guardrail={item.guardrail} />
+              )}
+            </div>
+          )
+        }
+        if (row.kind === 'metrics') {
+          return (
+            <div key={`metrics-${row.items[0].call.id}`} className="chat-metric-grid">
+              {row.items.map(item => <EvidenceCell key={item.call.id} call={item.call} sessionId={sessionId} onFileClick={onFileClick} />)}
+            </div>
+          )
+        }
+        return <EvidenceCell key={row.call.id} call={row.call} sessionId={sessionId} onFileClick={onFileClick} />
+      })}
     </section>
   )
+}
+
+/**
+ * Activity steps and reader-facing outputs are stored separately for compact
+ * rendering, but their `order` values share one execution timeline. Rebuild
+ * that sequence before rendering so a chart/table stays beside the tool call
+ * that produced it instead of drifting to the end of the working block.
+ */
+function sequenceTurnRows(
+  activityCalls: ActivityCall[],
+  guardrails: GuardrailState[],
+  evidenceCalls: ToolCallState[],
+): TurnSequenceRow[] {
+  const items: TurnSequenceItem[] = [
+    ...activityCalls.map(({ call, duplicateCount }) => ({ kind: 'activity' as const, call, duplicateCount })),
+    ...guardrails.map(guardrail => ({ kind: 'guardrail' as const, guardrail })),
+    ...evidenceCalls.map(call => ({ kind: 'evidence' as const, call })),
+  ].sort((left, right) => turnSequenceOrder(left) - turnSequenceOrder(right))
+
+  const rows: TurnSequenceRow[] = []
+  for (const item of items) {
+    if (item.kind !== 'evidence') {
+      const previous = rows[rows.length - 1]
+      if (previous?.kind === 'steps') previous.items.push(item)
+      else rows.push({ kind: 'steps', items: [item] })
+      continue
+    }
+
+    if (toolBaseName(item.call.name) === 'display_metric') {
+      const previous = rows[rows.length - 1]
+      if (previous?.kind === 'metrics') previous.items.push(item)
+      else rows.push({ kind: 'metrics', items: [item] })
+      continue
+    }
+
+    rows.push(item)
+  }
+  return rows
+}
+
+function turnSequenceOrder(item: TurnSequenceItem) {
+  return item.kind === 'guardrail' ? item.guardrail.order : item.call.order
 }
 
 function ActivityStep({ call, turnStartedAt, duplicateCount = 1 }: { call: ToolCallState; turnStartedAt: number | null; duplicateCount?: number }) {

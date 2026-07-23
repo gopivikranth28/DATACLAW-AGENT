@@ -107,3 +107,57 @@ test('keeps charts with identical traces but different semantic layouts', async 
 
   await expect(page.locator('.chat-cell-output__plot')).toHaveCount(2)
 })
+
+test('interleaves chart and table outputs with working steps in execution order', async ({ page }) => {
+  const sessionId = 'session-output-execution-order'
+  const figure = {
+    data: [{ type: 'bar', x: ['A', 'B'], y: [1, 2] }],
+    layout: { title: 'Execution-order chart' },
+  }
+  const table = '<table><thead><tr><th>Team</th><th>Score</th></tr></thead><tbody><tr><td>A</td><td>1</td></tr></tbody></table>'
+  const messages = [
+    { id: 'user-order', role: 'user', content: 'Run the analysis in order' },
+    {
+      id: 'assistant-order-tools',
+      role: 'assistant',
+      content: 'Analysis complete.',
+      toolCalls: [
+        { id: 'call-query', type: 'function', function: { name: 'data_query_data', arguments: JSON.stringify({ dataset_id: 'sample', sql: 'select 1' }) } },
+        { id: 'call-chart', type: 'function', function: { name: 'display_cell_output', arguments: JSON.stringify({ cell_index: 2 }) } },
+        { id: 'call-edit', type: 'function', function: { name: 'edit_cell_source', arguments: JSON.stringify({ cell_index: 3, old_string: 'before', new_string: 'after' }) } },
+        { id: 'call-table', type: 'function', function: { name: 'execute_cell', arguments: JSON.stringify({ cell_index: 4 }) } },
+      ],
+    },
+    { id: 'result-query', role: 'tool', toolCallId: 'call-query', content: JSON.stringify({ rows: [{ value: 1 }] }) },
+    {
+      id: 'result-chart',
+      role: 'tool',
+      toolCallId: 'call-chart',
+      content: JSON.stringify({ cell_index: 2, outputs: [{ type: 'plotly', figure }] }),
+    },
+    { id: 'result-edit', role: 'tool', toolCallId: 'call-edit', content: JSON.stringify({ ok: true }) },
+    {
+      id: 'result-table',
+      role: 'tool',
+      toolCallId: 'call-table',
+      content: JSON.stringify({ cell_index: 4, outputs: [{ type: 'html', text: table }] }),
+    },
+  ]
+
+  await openMockSession(page, sessionId, messages)
+  await page.locator('.chat-turn__header').click()
+
+  const executionOrder = await page.locator('.chat-turn').evaluate(turn =>
+    Array.from(turn.querySelectorAll('.chat-step, .chat-evidence')).map(element =>
+      element.classList.contains('chat-evidence')
+        ? element.id
+        : element.querySelector('.chat-step__label')?.textContent?.trim(),
+    ),
+  )
+  expect(executionOrder).toEqual([
+    'Queried sample — select 1',
+    'output-call-chart',
+    'Edited cell [3] — replaced before',
+    'output-call-table',
+  ])
+})
