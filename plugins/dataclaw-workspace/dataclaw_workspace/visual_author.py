@@ -526,7 +526,9 @@ def build_creative_author_dossier(
         "hypotheses", "sample", "sample_size", "data_sources", "time_period",
     ))
     if review_material:
-        review_material = {"source_alias": "src-methods", **review_material}
+        # The src-methods binding is stated in the dossier section heading below, so
+        # keep it out of the payload data itself (a control key mixed among
+        # methodology/metrics fields only invites the model to render it as content).
         sources.append({"alias": "src-methods", "source_id": "methodology-and-review", "kind": "trust_material"})
     contract = {
         "author_contract_schema": 1,
@@ -664,7 +666,12 @@ class _AuthoredDocumentParser(HTMLParser):
     # captions/cells, and definition terms carry bindable claims too, so the evidence
     # reviewer must see them. Excludes anything inside <nav> (site chrome, not
     # analysis) — see the in_nav check at collection.
-    _CLAIM_BLOCKS = _TEXT_BLOCKS | {"h1", "h2", "h3", "h4", "caption", "th", "td", "dt", "dd", "small"}
+    # Tabular / annotation cells are collected but ranked BELOW prose and headings
+    # when the 250-claim window is truncated (see validate_authored_document), so a
+    # large early table cannot crowd substantive analytical claims out of the
+    # reviewer's view.
+    _CELL_CLAIM_BLOCKS = {"caption", "th", "td", "dt", "dd", "small"}
+    _CLAIM_BLOCKS = _TEXT_BLOCKS | {"h1", "h2", "h3", "h4"} | _CELL_CLAIM_BLOCKS
     # A trust disclosure is credited only when its marker sits on one of these
     # leaf-ish text elements, so the credited text is the element's own prose,
     # not everything a large wrapper happens to contain.
@@ -1038,6 +1045,15 @@ def validate_authored_document(html: str, contract: dict[str, Any]) -> dict[str,
     # same as a claim to a regex. Evidence discipline is enforced where claims
     # actually live: prose claims require data-evidence, plus the independent
     # evidence review, source coverage, and the hash/re-render publish gates.
+    # Rank substantive prose and headings ahead of tabular/annotation cells before
+    # the 250-claim window is applied, preserving document order within each group.
+    # A table-heavy report emits a claim per populated cell; in raw document order a
+    # large early table would consume the window and truncate the real analytical
+    # claims that follow it. Prose-first ordering guarantees those are always seen,
+    # and only lower-signal cells fall past the cap.
+    prose_claims = [c for c in parser.claims if c.get("tag") not in _AuthoredDocumentParser._CELL_CLAIM_BLOCKS]
+    cell_claims = [c for c in parser.claims if c.get("tag") in _AuthoredDocumentParser._CELL_CLAIM_BLOCKS]
+    ordered_claims = prose_claims + cell_claims
     return {
         "coverage": {
             "used": sorted(parser.source_aliases),
@@ -1046,7 +1062,7 @@ def validate_authored_document(html: str, contract: dict[str, Any]) -> dict[str,
         },
         "disclosures": sorted(parser.disclosures),
         "evidence_aliases": sorted(parser.evidence_aliases),
-        "claim_candidates": parser.claims[:250],
+        "claim_candidates": ordered_claims[:250],
         "claim_candidates_truncated": len(parser.claims) > 250,
         "claim_candidate_count": len(parser.claims),
         "script_count": parser.script_count,

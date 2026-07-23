@@ -13,19 +13,17 @@ https://github.com/user-attachments/assets/25dc8181-bd14-41ad-a81c-5f9fe108e30a
 
 ---
 
-## Release 3.5 — governed analysis and reporting
+## Release 3 — governed analysis and reporting
 
-Release 3.5 is the current branch after `main`. It adds an evidence-backed path from exploratory analysis to a reviewed, versioned report, together with a redesigned session workspace, then refines the reporting layer, configuration, and live run feedback on top of that foundation. The governance model is unchanged throughout.
+Release 3 adds an evidence-backed path from exploratory analysis to a reviewed, versioned report, together with a redesigned session workspace, a reworked reporting layer, a rebuilt configuration surface, and live run feedback. The governance model runs throughout: claims trace back to evidence, and publication is gated on the required reviews.
 
-[Compare `release3.5` with `main`](https://github.com/gopivikranth28/DATACLAW-AGENT/compare/main...release3.5)
+### Capabilities
 
-### What changed from `main`
-
-| Area | Change |
+| Area | Capability |
 |---|---|
 | Analysis | Adds a durable EDA ledger for hypotheses, findings, validation state, and notebook or structured-evidence anchors. Readiness checks now make unresolved data-quality and validation gaps visible before downstream work. |
 | Review and plans | Adds stable plan-step IDs, deterministic analysis-review checklists, validation gates, and an audited path for user-approved risk acceptance. A required sub-agent review remains unresolved until that reviewer has actually run. |
-| Reports | Adds storyboard-first HTML composition, a versioned report rubric, design and analytical review, browser-based visual review when required, publish receipts, and optional DOCX export. Report generation is now a single handcrafted, evidence-bound document authored per report: the deterministic shell/section renderers, the raw-HTML `build_report` intake, and the un-publishable `report_add_section` draft are gone; the storyboard becomes a lean evidence-and-requirements contract, and the rubric (v14) drops the forced-interactivity and plain-chart penalties while keeping every evidence and integrity gate. Design/story review becomes an author-owned stub; analytical and authoring-rigor reviews still gate publication. Report provenance and compaction boundaries are hardened so evidence and summary edges stay intact. |
+| Reports | Generates one handcrafted, evidence-bound HTML document per report: an LLM authors the prose, story, layout, original CSS, and bespoke SVG/Canvas visuals from a lean evidence-and-requirements storyboard. Every substantive claim and quantitative visual binds to its source or evidence alias, and methodology, limitations, and source coverage are tracked and gated. Authoring runs a validate → evidence-review → bounded-repair loop; a versioned rubric keeps every evidence and integrity gate; analytical and authoring-rigor reviews gate publication, with design/story review an author-owned stub. Reports are desktop-oriented, contrast-checked, and served as sandboxed artifacts with working in-document navigation; provenance and compaction boundaries are hardened so evidence and summary edges stay intact. Browser-based visual review runs when required, and publish receipts plus optional DOCX export remain. |
 | Authoring performance | Reasoning-effort control now takes effect on all direct backends (Anthropic, OpenAI, Gemini), not just Codex. Authoring defaults to medium reasoning effort for stronger prose, story, and visual design, with a per-report knob to raise or lower it; transient stream drops during a long author run are retried. |
 | Artifacts | Adds session-scoped HTML publication with validation, immutable version history, revision conflict checks, export, living-report notes, and sandboxed previews. Structured reports must have a current successful `report_publish` receipt before they can become an artifact version. |
 | Configuration | A redesigned Config page with a server-side authenticated model catalog — validate a newly entered key and pick a model before saving, while stored credentials stay masked. Conversation history is now counted and compacted by complete turns rather than by raw messages. |
@@ -66,7 +64,7 @@ This chain improves traceability from a published claim back to its evidence and
 ### Skill library
 
 - Governed workflow skills: `structured_eda`, `insight_validation`, `analysis_review`, `report_design`, `artifacts`, and `visualization`, alongside the `dataclaw_data_science` router (in `dataclaw.md`) and the compact `data_profiling`, `notebook_report`, and `sql_analyst` paths.
-- Release 3.5 refines the reporting and analysis skills — `report_design`, `structured_eda`, `visualization`, `artifacts`, and `dataclaw_data_science` — and retires the standalone `dashboarding` skill, folding its guidance into `report_design` and `visualization`.
+- The reporting and analysis skills — `report_design`, `structured_eda`, `visualization`, `artifacts`, and `dataclaw_data_science` — are tuned for the governed workflow, and the standalone `dashboarding` skill is retired, its guidance folded into `report_design` and `visualization`.
 - Skills are installed from `skill-library/`. OpenClaw tool-manifest installation and skill synchronization are separate operations.
 
 ### Release scope
@@ -74,6 +72,22 @@ This chain improves traceability from a published claim back to its evidence and
 - Release 3 remains an experimental beta for local machines and trusted private servers.
 - Artifact versions and review records are stored by the local Dataclaw instance; this release does not add public hosting, authentication, or multi-user permissions.
 - Generic hand-authored HTML can use the artifact validator directly. Storyboard-backed structured reports have the stricter review-and-receipt publication path described above.
+
+### Visual report example
+
+The World Cup 2026 forecast shows the governed analysis-to-report workflow rendered as one complete, handcrafted document. The snapshots below are sections of that single report: a decision-first hero, evidence-bound figures with their interpretation beside them, a sensitivity view, and explicit data-quality limits.
+
+![Decision-first hero — "Spain has the shortest path" — with the selected-model title probability called out.](examples/Fifa%20WC%2026/snapshots/hero.png)
+
+![Champion probabilities as an evidence-bound bar chart, with its denominator and an interpretation reading the result as conditional, not certain.](examples/Fifa%20WC%2026/snapshots/champion-probabilities.png)
+
+![Model-sensitivity range plot — champion-probability spread across four specifications, with the 50% line marked.](examples/Fifa%20WC%2026/snapshots/model-sensitivity.png)
+
+![Data-quality audit — fixture-integrity tiles, result and status distributions, and a reconciliation count table.](examples/Fifa%20WC%2026/snapshots/data-quality.png)
+
+**[Open the standalone HTML report](examples/Fifa%20WC%2026/art-48c8874a-v1.html)** · [Source notebook](examples/Fifa%20WC%2026/fifa_wc_26.ipynb)
+
+> These are excerpts. GitHub renders the HTML file as source, so after cloning the repository open it locally in a browser for the full report.
 
 ## Quick Start
 

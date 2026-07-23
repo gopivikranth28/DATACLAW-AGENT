@@ -607,6 +607,73 @@ def test_absent_trust_material_adds_no_src_methods_source():
     assert "src-methods" not in {item["alias"] for item in contract["sources"]}
 
 
+def test_src_methods_source_is_a_coverage_obligation():
+    from dataclaw_workspace.visual_author import build_creative_author_dossier
+
+    storyboard = _ledger_backed_storyboard()
+    storyboard["source_context"]["requirements"] = {
+        "methodology": "Each row is a customer-month; rates per eligible renewal; reconciled to billing.",
+        "limitations": "Coverage excludes trial accounts.",
+    }
+    _, contract = build_creative_author_dossier(storyboard, {"mode": "creative"})
+    assert "src-methods" in {item["alias"] for item in contract["sources"]}
+
+    # Trust material is now a real source, so a document that neither binds nor omits
+    # it fails coverage — the intended tightening: an unbound methods section no
+    # longer slips through as aliasless prose.
+    unbound = _authored_html()  # covers src-finding-1 only, never mentions src-methods
+    with pytest.raises(ValueError, match="use or explicitly omit every source"):
+        validate_authored_document(unbound, contract)
+
+    # Binding a methods statement with data-source="src-methods" satisfies coverage.
+    bound = _authored_html().replace(
+        "</main>",
+        '<section data-source="src-methods"><p>Each row is a customer-month; rates reconciled to billing.</p></section></main>',
+    )
+    assert "src-methods" in validate_authored_document(bound, contract)["coverage"]["used"]
+
+    # Explicitly omitting it in the coverage block is also accepted.
+    omitted = _authored_html().replace(
+        '{"omitted":[]}',
+        '{"omitted":[{"source":"src-methods","reason":"methods folded into figure captions"}]}',
+    )
+    assert validate_authored_document(omitted, contract)["coverage"]["omitted"] == {
+        "src-methods": "methods folded into figure captions"
+    }
+
+
+def test_table_cells_do_not_crowd_prose_claims_out_of_the_review_window():
+    _, contract = build_creative_author_dossier(_ledger_backed_storyboard())
+
+    # 300 populated table cells precede a trailing analytical sentence in document
+    # order — enough to overflow the 250-claim window on their own.
+    big_table = (
+        "<table><caption>counts</caption><tbody><tr>"
+        + "".join(f"<td>{index}</td>" for index in range(300))
+        + "</tr></tbody></table>"
+    )
+    late_prose = '<p>The latest cohort shows a distinctive renewal collapse of 41 percent.</p>'
+    doc = _authored_html().replace(
+        '<main data-source="src-finding-1">',
+        f'<main data-source="src-finding-1">{big_table}{late_prose}',
+    )
+
+    result = validate_authored_document(doc, contract)
+    texts = [claim["text"] for claim in result["claim_candidates"]]
+    assert result["claim_candidates_truncated"] is True
+    assert result["claim_candidate_count"] >= 300
+
+    # The trailing sentence survives truncation even though 300 cells precede it:
+    # prose is ranked ahead of tabular cells before the window is applied.
+    prose_index = next(
+        (i for i, text in enumerate(texts) if "distinctive renewal collapse" in text),
+        None,
+    )
+    assert prose_index is not None
+    # No bare numeric cell is listed ahead of the prose claims — cells rank last.
+    assert not any(text.isdigit() for text in texts[:prose_index])
+
+
 def test_bespoke_visual_without_records_renders_instead_of_aborting():
     storyboard = design_report_storyboard(
         report_goal="Explain the bracket.",
