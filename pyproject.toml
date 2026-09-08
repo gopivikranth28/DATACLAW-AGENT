@@ -29,6 +29,8 @@ dependencies = [
     "dataclaw-kaggle",
     "dataclaw-gbrain",
     "dataclaw-codex",
+    "dataclaw-okf",
+    "dataclaw-context-research",
 ]
 
 [tool.uv.sources]
@@ -47,6 +49,8 @@ dataclaw-custom-tools = { path = "plugins/dataclaw-custom-tools", editable = tru
 dataclaw-kaggle = { path = "plugins/dataclaw-kaggle", editable = true }
 dataclaw-gbrain = { path = "plugins/dataclaw-gbrain", editable = true }
 dataclaw-codex = { path = "plugins/dataclaw-codex", editable = true }
+dataclaw-okf = { path = "plugins/dataclaw-okf", editable = true }
+dataclaw-context-research = { path = "plugins/dataclaw-context-research", editable = true }
 
 [project.scripts]
 dataclaw = "dataclaw.__main__:main"

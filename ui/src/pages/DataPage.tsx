@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Button, Card, Collapse, Empty, Input, Modal, Select, Segmented, Table, Tag, Upload, Popconfirm, message, Alert } from 'antd'
-import { PlusOutlined, DeleteOutlined, ReloadOutlined, EyeOutlined, EditOutlined, ApiOutlined, UploadOutlined, InboxOutlined } from '@ant-design/icons'
+import { PlusOutlined, DeleteOutlined, ReloadOutlined, EyeOutlined, EditOutlined, ApiOutlined, UploadOutlined, InboxOutlined, FileTextOutlined, DownloadOutlined } from '@ant-design/icons'
 import { API } from '../api'
 
 interface ColumnDetail { name: string; type: string }
@@ -8,6 +8,10 @@ interface TableInfo { name: string; rows: number; columns: number; column_detail
 interface Dataset {
   id: string; name: string; type: string; status: string; connection: string
   description: string; tables: TableInfo[]; created_at?: string
+}
+interface OKFBundle {
+  id: string; dataset_id: string; dataset_name: string; path: string
+  file_count: number; files?: string[]; stale?: boolean; updated_at?: string
 }
 
 const TYPE_OPTIONS = [
@@ -53,10 +57,26 @@ export default function DataPage() {
   const [uploadName, setUploadName] = useState('')
   const [uploadDesc, setUploadDesc] = useState('')
   const [uploadFiles, setUploadFiles] = useState<any[]>([])
+  const [okfBundles, setOkfBundles] = useState<Record<string, OKFBundle>>({})
+  const [okfLoading, setOkfLoading] = useState<Record<string, boolean>>({})
+  const [okfOpen, setOkfOpen] = useState(false)
+  const [okfActive, setOkfActive] = useState<OKFBundle | null>(null)
+
+  const loadOkfBundles = async () => {
+    try {
+      const r = await fetch(`${API}/okf/bundles`)
+      if (!r.ok) return
+      const bundles: OKFBundle[] = await r.json()
+      const byDataset: Record<string, OKFBundle> = {}
+      for (const b of bundles) byDataset[b.dataset_id] = b
+      setOkfBundles(byDataset)
+    } catch {}
+  }
 
   const load = async () => {
     setLoading(true)
     try { const r = await fetch(`${API}/data/datasets`); if (r.ok) setDatasets(await r.json()) } catch {}
+    await loadOkfBundles()
     setLoading(false)
   }
   useEffect(() => { load() }, [])
@@ -119,6 +139,36 @@ export default function DataPage() {
 
   const remove = async (id: string) => { await fetch(`${API}/data/datasets/${id}`, { method: 'DELETE' }); load() }
   const refresh = async (id: string) => { await fetch(`${API}/data/datasets/${id}/refresh`, { method: 'POST' }); message.success('Refreshed'); load() }
+  const generateOkf = async (datasetId: string, force = false) => {
+    setOkfLoading(prev => ({ ...prev, [datasetId]: true }))
+    try {
+      const res = await fetch(`${API}/okf/bundles/generate`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dataset_id: datasetId, force }),
+      })
+      if (res.ok) {
+        const bundle = await res.json()
+        message.success(bundle.status === 'unchanged' ? 'OKF bundle is current' : 'OKF bundle generated')
+        await loadOkfBundles()
+        setOkfActive(prev => prev?.dataset_id === datasetId ? bundle : prev)
+      } else {
+        const err = await res.json().catch(() => ({}))
+        message.error(err.detail || 'Failed to generate OKF bundle')
+      }
+    } catch { message.error('Failed to generate OKF bundle') }
+    setOkfLoading(prev => ({ ...prev, [datasetId]: false }))
+  }
+  const openOkf = async (bundle: OKFBundle) => {
+    try {
+      const res = await fetch(`${API}/okf/bundles/${bundle.id}`)
+      if (res.ok) setOkfActive(await res.json())
+      else setOkfActive(bundle)
+    } catch { setOkfActive(bundle) }
+    setOkfOpen(true)
+  }
+  const exportOkf = (bundle: OKFBundle) => {
+    window.open(`${API}/okf/bundles/${bundle.id}/export`, '_blank')
+  }
 
   const preview = async (datasetId: string, tableName: string) => {
     try {
@@ -169,12 +219,16 @@ export default function DataPage() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {datasets.map(ds => (
             <Card key={ds.id} size="small" style={{ borderRadius: 8 }}>
+              {(() => {
+                const okf = okfBundles[ds.id]
+                return (
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
                   <div style={{ fontWeight: 600, fontSize: 15 }}>{ds.name}</div>
                   <div style={{ fontSize: 12, color: '#888', marginTop: 2, display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
                     <Tag color={ds.status === 'connected' ? 'green' : 'red'}>{ds.status}</Tag>
                     <Tag>{ds.type}</Tag>
+                    {okf && <Tag color={okf.stale ? 'orange' : 'blue'}>{okf.stale ? 'OKF stale' : 'OKF'}</Tag>}
                     {ds.description && <span>{ds.description}</span>}
                   </div>
                   <div style={{ fontSize: 11, color: '#bbb', marginTop: 2, fontFamily: 'monospace' }}>
@@ -184,12 +238,16 @@ export default function DataPage() {
                 <div style={{ display: 'flex', gap: 4 }}>
                   <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(ds)} title="Edit" />
                   <Button size="small" onClick={() => openDefs(ds)} title="Definitions">Defs</Button>
+                  <Button size="small" icon={<FileTextOutlined />} loading={!!okfLoading[ds.id]} onClick={() => okf ? openOkf(okf) : generateOkf(ds.id)} title={okf ? 'View OKF' : 'Generate OKF'} />
+                  {okf && <Button size="small" icon={<DownloadOutlined />} onClick={() => exportOkf(okf)} title="Export OKF" />}
                   <Button size="small" icon={<ReloadOutlined />} onClick={() => refresh(ds.id)} title="Refresh" />
                   <Popconfirm title="Delete this dataset?" onConfirm={() => remove(ds.id)}>
                     <Button size="small" icon={<DeleteOutlined />} danger />
                   </Popconfirm>
                 </div>
               </div>
+                )
+              })()}
 
               {ds.tables && ds.tables.length > 0 && (
                 <Collapse size="small" ghost style={{ marginTop: 8 }}
@@ -296,6 +354,27 @@ export default function DataPage() {
                 </div>
               )
             })}
+          </div>
+        )}
+      </Modal>
+      {/* OKF Modal */}
+      <Modal title={`OKF: ${okfActive?.dataset_name || ''}`} open={okfOpen} onCancel={() => setOkfOpen(false)} footer={null} width={700}>
+        {okfActive && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <Tag color={okfActive.stale ? 'orange' : 'blue'}>{okfActive.stale ? 'Stale' : 'Current'}</Tag>
+              <Tag>{okfActive.file_count} files</Tag>
+              {okfActive.updated_at && <Tag>Updated {new Date(okfActive.updated_at).toLocaleString()}</Tag>}
+            </div>
+            <div style={{ fontSize: 12, color: '#888', fontFamily: 'monospace', wordBreak: 'break-all' }}>{okfActive.path}</div>
+            <Table size="small" pagination={false}
+              dataSource={(okfActive.files || []).map((f, i) => ({ key: i, file: f }))}
+              columns={[{ title: 'File', dataIndex: 'file', key: 'file', render: (v: string) => <code style={{ fontSize: 12 }}>{v}</code> }]}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <Button icon={<ReloadOutlined />} onClick={() => okfActive && generateOkf(okfActive.dataset_id, true)}>Regenerate</Button>
+              <Button icon={<DownloadOutlined />} onClick={() => okfActive && exportOkf(okfActive)}>Export ZIP</Button>
+            </div>
           </div>
         )}
       </Modal>
