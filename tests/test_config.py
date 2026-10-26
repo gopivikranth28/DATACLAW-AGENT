@@ -271,15 +271,79 @@ def test_migrate_legacy_llm_sections_to_backends() -> None:
     assert backends["codex"] == {
         "model": "gpt-5.4", "api_key": "", "auth_mode": "api_key", "codex_bin": "/opt/codex",
     }
-    # Old schema defaults recorded no user choice, so the registry default
-    # applies; an OpenAI proxy keeps its model.
-    assert "model" not in backends["anthropic"]
-    assert "model" not in backends["gemini"]
+    # Old schema defaults map to their same-tier successor, written
+    # explicitly; an OpenAI proxy keeps its model.
+    assert backends["anthropic"]["model"] == "claude-sonnet-5-5"
+    assert backends["gemini"]["model"] == "gemini-3.8-flash"
     assert backends["openai"]["model"] == "gpt-4o"
 
     # The migrated config parses, and a second pass is a no-op.
     DataclawConfig(**raw)
     assert migrate_config(raw) is False
+
+
+def test_migrate_maps_old_default_models_to_successors(caplog) -> None:
+    raw = {"llm": {
+        "backend": "openai",
+        "openai": {"api_key": "k", "model": "gpt-4o", "base_url": ""},
+        "anthropic": {"model": "claude-opus-4-5"},
+    }}
+
+    with caplog.at_level("INFO", logger="dataclaw.config.migrations"):
+        assert migrate_llm_backends_config(raw) is True
+
+    backends = raw["llm"]["backends"]
+    assert backends["openai"]["model"] == "gpt-6.1-sol"
+    # A model the user chose is kept as is.
+    assert backends["anthropic"]["model"] == "claude-opus-4-5"
+    assert [r.getMessage() for r in caplog.records] == ["migrated llm.openai.model gpt-4o → gpt-6.1-sol"]
+
+
+def test_migrate_config_file_backs_up_original_once(tmp_dataclaw_home, caplog) -> None:
+    import os
+    import stat
+
+    from dataclaw.config.migrations import backup_path, migrate_config_file
+
+    config_file = tmp_dataclaw_home / "dataclaw.config.json"
+    original = json.dumps(_legacy_llm_config(), indent=4)
+    config_file.write_text(original)
+    backup = backup_path(config_file)
+    assert backup.name == "dataclaw.config.json.pre-llm-backends.bak"
+
+    with caplog.at_level("INFO", logger="dataclaw.config.migrations"):
+        assert migrate_config_file(config_file) is True
+
+    assert backup.read_text() == original
+    assert stat.S_IMODE(os.stat(backup).st_mode) == 0o600
+    assert "anthropic" not in json.loads(config_file.read_text())["llm"]
+    assert any(str(backup) in r.getMessage() for r in caplog.records)
+    assert [p.name for p in tmp_dataclaw_home.iterdir() if p.name.endswith(".tmp")] == []
+
+    # Nothing left to migrate: no rewrite, and the backup is untouched.
+    migrated = config_file.read_text()
+    assert migrate_config_file(config_file) is False
+    assert config_file.read_text() == migrated
+    assert backup.read_text() == original
+
+    # A later migration that changes the file never overwrites the backup.
+    reverted = json.loads(migrated)
+    reverted["llm"]["gemini"] = {"api_key": "g"}
+    config_file.write_text(json.dumps(reverted))
+    assert migrate_config_file(config_file) is True
+    assert backup.read_text() == original
+
+
+def test_migrate_config_file_without_changes_creates_no_backup(tmp_dataclaw_home) -> None:
+    from dataclaw.config.migrations import backup_path, migrate_config_file
+
+    config_file = tmp_dataclaw_home / "dataclaw.config.json"
+    current = {"agent": {"runtime": "dataclaw"}, "llm": {"backend": "anthropic", "backends": {}}}
+    config_file.write_text(json.dumps(current))
+
+    assert migrate_config_file(config_file) is False
+    assert not backup_path(config_file).exists()
+    assert json.loads(config_file.read_text()) == current
 
 
 def test_migrate_keeps_newer_backend_values() -> None:

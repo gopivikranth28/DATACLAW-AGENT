@@ -532,7 +532,14 @@ All runtime data under `~/.dataclaw/` (override with `$DATACLAW_HOME`):
 `llm.backend` selects the utility model backend; each backend's settings live
 under `llm.backends.<id>` (`api_key`, `base_url`, `model`, `headers`, `preset`,
 `reasoning_effort`, and `api` for `openai`). Configs that still use the older
-`llm.anthropic|openai|gemini|codex` sections are migrated on startup.
+`llm.anthropic|openai|gemini|codex` sections are migrated on startup. Before
+the first change, the original file is saved once as
+`~/.dataclaw/dataclaw.config.json.pre-llm-backends.bak` (mode 0600, never
+overwritten); restore it if you downgrade. Models that were the old defaults
+move to the same tier: `claude-sonnet-4-20250514` → `claude-sonnet-5-5`,
+`gpt-4o` → `gpt-6.1-sol` (unless a custom `base_url` is set), and
+`gemini-2.5-flash` → `gemini-3.8-flash`. Fresh installs use the defaults in the environment-variable table
+above.
 
 | Backend | Transport | Notes |
 |---|---|---|

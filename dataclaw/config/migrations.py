@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
+import json
+import logging
+import os
+from pathlib import Path
 from typing import Any
+
+from dataclaw.config.secure_io import write_private_text
+
+logger = logging.getLogger(__name__)
 
 EXTERNAL_RUNTIMES = frozenset({"openclaw", "hermes"})
 
@@ -10,12 +18,19 @@ EXTERNAL_RUNTIMES = frozenset({"openclaw", "hermes"})
 # ``llm.backends.<id>`` layout.
 LEGACY_BACKEND_SECTIONS = ("anthropic", "openai", "gemini", "codex")
 
-# Model defaults of the legacy schema (codex's is unchanged, so omitted).
-_OLD_SCHEMA_DEFAULT_MODELS = {
-    "anthropic": "claude-sonnet-4-20250514",
-    "openai": "gpt-4o",
-    "gemini": "gemini-2.5-flash",
+# Model defaults of the legacy schema (codex's is unchanged, so omitted),
+# mapped to their same-tier successors. Earlier releases wrote these defaults
+# into every config file, so a migrated config keeps the same tier (and cost
+# class) rather than jumping to the registry's current default.
+_OLD_DEFAULT_SUCCESSORS = {
+    "anthropic": ("claude-sonnet-4-20250514", "claude-sonnet-5-5"),
+    "openai": ("gpt-4o", "gpt-6.1-sol"),
+    "gemini": ("gemini-2.5-flash", "gemini-3.8-flash"),
 }
+
+# Copy of the config taken before the first migration that changes it, kept
+# next to the config so a downgrade can restore the legacy layout.
+BACKUP_SUFFIX = ".pre-llm-backends.bak"
 
 
 def _utility_backends() -> frozenset[str]:
@@ -29,6 +44,54 @@ def migrate_config(raw: dict[str, Any]) -> bool:
     changed = migrate_runtime_utility_config(raw)
     changed = migrate_llm_backends_config(raw) or changed
     return changed
+
+
+def backup_path(config_file: Path) -> Path:
+    return config_file.with_name(config_file.name + BACKUP_SUFFIX)
+
+
+def migrate_config_file(config_file: Path) -> bool:
+    """Migrate the config file in place. Returns True if it was rewritten.
+
+    Before the first rewrite, the original bytes are saved as
+    ``<config>.pre-llm-backends.bak`` (mode 0600, never overwritten), since
+    the migrated file drops the legacy ``llm.<backend>`` sections that older
+    releases read.
+    """
+    original = config_file.read_bytes()
+    raw = json.loads(original)
+    if not migrate_config(raw):
+        return False
+    backup = backup_path(config_file)
+    created = _write_backup_once(backup, original)
+    write_private_text(config_file, json.dumps(raw, indent=2))
+    logger.info(
+        "Migrated runtime and LLM backend config in %s (pre-migration copy: %s%s)",
+        config_file,
+        backup,
+        "" if created else ", kept from an earlier migration",
+    )
+    return True
+
+
+def _write_backup_once(backup: Path, data: bytes) -> bool:
+    """Atomically create ``backup`` with mode 0600 unless it already exists."""
+    if backup.exists():
+        return False
+    tmp = backup.with_name(f"{backup.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        # link() fails if the backup appeared meanwhile: never overwrite it.
+        os.link(tmp, backup)
+        return True
+    except FileExistsError:
+        return False
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def migrate_runtime_utility_config(raw: dict[str, Any]) -> bool:
@@ -125,8 +188,8 @@ def migrate_llm_backends_config(raw: dict[str, Any]) -> bool:
             current = {}
             backends[backend] = current
         for key, value in legacy.items():
-            if key == "model" and _is_stale_default(backend, value, legacy):
-                continue
+            if key == "model":
+                value = _successor_model(backend, value, legacy)
             if _is_unset(current.get(key)):
                 current[key] = value
         del llm[backend]
@@ -134,17 +197,18 @@ def migrate_llm_backends_config(raw: dict[str, Any]) -> bool:
     return changed
 
 
-def _is_stale_default(backend: str, model: Any, legacy: dict[str, Any]) -> bool:
-    """Whether a legacy model value is the old schema default.
+def _successor_model(backend: str, model: Any, legacy: dict[str, Any]) -> Any:
+    """The model to keep for a legacy section.
 
-    Earlier releases wrote these defaults into every config file, so they
-    record no user choice; dropping them lets the registry's current default
-    apply. An OpenAI proxy (custom base_url) keeps its model, since the new
-    default may not exist there.
+    An old schema default maps to its same-tier successor; any other value
+    is kept. An OpenAI proxy (custom base_url) keeps its model, since the
+    successor may not exist there.
     """
-    if model != _OLD_SCHEMA_DEFAULT_MODELS.get(backend):
-        return False
-    return not (backend == "openai" and str(legacy.get("base_url") or "").strip())
+    old, new = _OLD_DEFAULT_SUCCESSORS.get(backend, (None, None))
+    if model != old or (backend == "openai" and str(legacy.get("base_url") or "").strip()):
+        return model
+    logger.info("migrated llm.%s.model %s → %s", backend, old, new)
+    return new
 
 
 def _is_unset(value: Any) -> bool:

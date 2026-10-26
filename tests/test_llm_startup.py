@@ -42,6 +42,9 @@ def test_startup_migrates_legacy_llm_config_and_masks_secrets() -> None:
         on_disk = json.loads(config_path().read_text())
         assert "anthropic" not in on_disk["llm"]
         assert on_disk["llm"]["backends"]["anthropic"]["api_key"] == "sk-ant-api03-secret-value"
+        backup = config_path().with_name("dataclaw.config.json.pre-llm-backends.bak")
+        assert "anthropic" in json.loads(backup.read_text())["llm"]
+        assert backup.stat().st_mode & 0o777 == 0o600
 
         shown = client.get("/api/config").json()
         masked = shown["llm"]["backends"]["anthropic"]["api_key"]

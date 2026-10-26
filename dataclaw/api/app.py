@@ -124,13 +124,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     else:
         # Config files written by older versions used the default umask.
         restrict_permissions(cfg_path)
-        from dataclaw.config.migrations import migrate_config
+        from dataclaw.config.migrations import migrate_config_file
 
         try:
-            raw = json.loads(cfg_path.read_text())
-            if migrate_config(raw):
-                write_private_text(cfg_path, json.dumps(raw, indent=2))
-                logger.info("Migrated runtime and LLM backend config in %s", cfg_path)
+            migrate_config_file(cfg_path)
         except Exception:
             logger.exception("Failed to migrate runtime/LLM backend configuration")
         # File exists — backfill any new schema defaults the user is missing.
