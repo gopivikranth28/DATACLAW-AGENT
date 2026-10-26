@@ -115,21 +115,30 @@ def test_utility_auth_failure_identifies_dataclaw_utility_model(
         build_utility_llm(backend, model)
 
 
-@pytest.mark.parametrize("backend", ["anthropic", "openai", "gemini"])
+@pytest.mark.parametrize(
+    ("backend", "env_var"),
+    [
+        ("anthropic", "ANTHROPIC_API_KEY"),
+        ("openai", "OPENAI_API_KEY"),
+        ("gemini", "GOOGLE_API_KEY"),
+    ],
+)
 def test_missing_utility_credentials_identify_backend(
     monkeypatch: pytest.MonkeyPatch,
     backend: str,
+    env_var: str,
 ) -> None:
-    from dataclaw.providers.llm.implementations.mock_llm import MockLLM
+    from dataclaw.config.resolver import invalidate_cache
 
-    monkeypatch.setattr(
-        "dataclaw.providers.llm.implementations.factory.llm_from_config",
-        lambda **kwargs: MockLLM(),
-    )
+    monkeypatch.delenv(env_var, raising=False)
+    invalidate_cache()
 
     with pytest.raises(
         RuntimeError,
-        match=rf"DataClaw utility model.*no usable {backend} credentials",
+        match=(
+            rf"DataClaw utility model could not initialize \({backend}/utility-model\).*"
+            rf"API key is not configured.*{env_var}.*llm\.backends\.{backend}\.api_key"
+        ),
     ):
         build_utility_llm(backend, "utility-model")
 

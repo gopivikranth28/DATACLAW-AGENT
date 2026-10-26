@@ -65,13 +65,13 @@ class BrowserSubAgentProvider:
                 name="llm_model",
                 field_type="string",
                 label="Browser LLM Model",
-                default="claude-sonnet-4-20250514",
+                description="Leave empty for the provider's default model.",
             ),
             ConfigField(
                 name="api_key",
                 field_type="string",
                 label="API Key (override)",
-                description="Leave empty to use the environment variable for your provider (ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY)",
+                description="Leave empty to use the key configured for that provider in DataClaw's LLM settings (or its environment variable).",
             ),
         ]
 
@@ -85,7 +85,7 @@ class BrowserSubAgentProvider:
         timeout = int(config.get("timeout", 300))
         max_steps = int(config.get("max_steps", 100))
         llm_provider = config.get("llm_provider", "anthropic")
-        llm_model = config.get("llm_model", "claude-sonnet-4-20250514")
+        llm_model = config.get("llm_model", "")
         api_key = config.get("api_key", "")
 
         # Emit start

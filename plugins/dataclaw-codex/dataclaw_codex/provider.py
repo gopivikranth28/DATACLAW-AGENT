@@ -20,6 +20,13 @@ from dataclaw.providers.sub_agent.provider import SubAgentContext, SubAgentResul
 logger = logging.getLogger(__name__)
 
 
+def _default_model() -> str:
+    """The codex backend's default model from DataClaw's LLM backend registry."""
+    from dataclaw.providers.llm.registry import default_model_for
+
+    return default_model_for("codex")
+
+
 class CodexSubAgentProvider:
     """Executes coding tasks via OpenAI Codex."""
 
@@ -32,8 +39,7 @@ class CodexSubAgentProvider:
                 name="model",
                 field_type="string",
                 label="Codex Model",
-                description="Model to use for Codex tasks",
-                default="gpt-5.5",
+                description="Model to use for Codex tasks. Leave empty for the codex backend's default.",
             ),
             ConfigField(
                 name="api_key",
@@ -62,7 +68,7 @@ class CodexSubAgentProvider:
         conversation_id = context.conversation_id or str(uuid.uuid4())
         subagent_name = context.definition.get("name", "codex")
 
-        model = config.get("model", "gpt-5.5")
+        model = config.get("model", "") or _default_model()
         api_key = config.get("api_key", "")
 
         # Emit start
@@ -91,15 +97,16 @@ class CodexSubAgentProvider:
             )
 
         try:
-            # Set API key via env if provided
-            if api_key:
-                import os
-                os.environ.setdefault("OPENAI_API_KEY", api_key)
-
             from codex_app_server.client import AppServerConfig
             codex_bin = config.get("codex_bin", "") or shutil.which("codex") or "codex"
             cwd = config.get("cwd", "") or None
-            codex_config = AppServerConfig(codex_bin=codex_bin, cwd=cwd)
+            # An override key goes to the Codex subprocess only; this
+            # process's environment is left untouched.
+            codex_config = AppServerConfig(
+                codex_bin=codex_bin,
+                cwd=cwd,
+                env={"OPENAI_API_KEY": api_key} if api_key else None,
+            )
             with Codex(config=codex_config) as codex:
                 thread = codex.thread_start(model=model)
                 result = thread.run(task)

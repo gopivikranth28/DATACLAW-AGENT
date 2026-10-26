@@ -22,6 +22,9 @@ class LangChainAgentProvider:
 
     @classmethod
     def config_schema(cls) -> list[ConfigField]:
+        from dataclaw.providers.llm.registry import list_llm_backends
+
+        backends = list_llm_backends(include_hidden=True)
         return [
             ConfigField(
                 name="llm_backend",
@@ -29,13 +32,8 @@ class LangChainAgentProvider:
                 label="LLM Backend",
                 description="Which LLM provider to use",
                 required=True,
-                default="anthropic",
-                options=[
-                    {"value": "mock", "label": "Mock (Testing)"},
-                    {"value": "anthropic", "label": "Anthropic (Claude)"},
-                    {"value": "openai", "label": "OpenAI"},
-                    {"value": "gemini", "label": "Google Gemini"},
-                ],
+                default="codex",
+                options=[{"value": spec.id, "label": spec.label} for spec in backends],
             ),
             ConfigField(
                 name="llm_model",

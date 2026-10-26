@@ -507,11 +507,15 @@ All runtime data under `~/.dataclaw/` (override with `$DATACLAW_HOME`):
 | `DATACLAW_AGENT_RUNTIME` | `agent.runtime` | `openclaw` |
 | `DATACLAW_UTILITY_BACKEND` | `llm.backend` | `codex` |
 | `DATACLAW_LLM_BACKEND` | Legacy combined runtime/provider override | |
-| `ANTHROPIC_API_KEY` | `llm.anthropic.api_key` | |
-| `OPENAI_API_KEY` | `llm.openai.api_key` / `llm.codex.api_key` | |
-| `GOOGLE_API_KEY` | `llm.gemini.api_key` | |
-| `CODEX_MODEL` | `llm.codex.model` | `gpt-5.5` |
-| `CODEX_AUTH_MODE` | `llm.codex.auth_mode` | `default` (OAuth) — `api_key` for direct |
+| `ANTHROPIC_API_KEY` | `llm.backends.anthropic.api_key` | |
+| `ANTHROPIC_MODEL` | `llm.backends.anthropic.model` | `claude-opus-5-5` (utility: `claude-haiku-5-5`) |
+| `OPENAI_API_KEY` | `llm.backends.openai.api_key` / `llm.backends.codex.api_key` | |
+| `OPENAI_MODEL` | `llm.backends.openai.model` | `gpt-6.1-sol` (utility: `gpt-6-luna`) |
+| `OPENAI_BASE_URL` | `llm.backends.openai.base_url` | `https://api.openai.com/v1` |
+| `GOOGLE_API_KEY` | `llm.backends.gemini.api_key` | |
+| `GEMINI_MODEL` | `llm.backends.gemini.model` | `gemini-4-argon` (utility: `gemini-3.8-flash`) |
+| `CODEX_MODEL` | `llm.backends.codex.model` | `gpt-5.5` |
+| `CODEX_AUTH_MODE` | `llm.backends.codex.auth_mode` | `default` (OAuth) — `api_key` for direct |
 | `DATACLAW_MAX_TURNS` | `app.max_turns` | `30` |
 | `DATACLAW_HOST` | `app.host` | `127.0.0.1` |
 | `DATACLAW_PORT` | `app.port` | `8000` |
@@ -522,6 +526,30 @@ All runtime data under `~/.dataclaw/` (override with `$DATACLAW_HOME`):
 | `DATACLAW_OPENCLAW_URL` | `plugins.openclaw.url` | `http://127.0.0.1:18789` |
 | `KAGGLE_API_TOKEN` | `plugins.kaggle.kaggle_api_token` | |
 | `KAGGLE_USERNAME` / `KAGGLE_KEY` | `plugins.kaggle.kaggle_username` / `plugins.kaggle.kaggle_key` | Legacy credentials |
+
+### LLM backends
+
+`llm.backend` selects the utility model backend; each backend's settings live
+under `llm.backends.<id>` (`api_key`, `base_url`, `model`, `headers`, `preset`,
+`reasoning_effort`, and `api` for `openai`). Configs that still use the older
+`llm.anthropic|openai|gemini|codex` sections are migrated on startup.
+
+| Backend | Transport | Notes |
+|---|---|---|
+| `anthropic` | Messages API (langchain-anthropic) | Effort via `output_config.effort` |
+| `openai` | Responses API (`store=false`) | Set `api: "chat_completions"` to opt out; a custom `base_url` defaults to Chat Completions |
+| `gemini` | langchain-google-genai | `thinking_level` |
+| `codex` | Responses API via Codex OAuth or an API key | |
+| `openai_compatible` | Chat Completions at a custom `base_url` | Presets: Ollama, vLLM, LM Studio (keyless), OpenRouter, Groq, xAI, DeepSeek, Mistral, Together |
+| `open_responses` | Responses API at a custom `base_url` | For [Open Responses](https://www.openresponses.org) servers; API key optional |
+
+A backend that needs an API key and has none fails with a configuration error
+naming the env var and config path; the runtime status in Settings shows it.
+Hosted presets also read their own key variable (`OPENROUTER_API_KEY`,
+`GROQ_API_KEY`, `XAI_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`,
+`TOGETHER_API_KEY`). vLLM's default port (8000) clashes with DataClaw's, so its
+preset expects `--port 8001`. Plugins can add backends with
+`PluginContext.register_llm_backend`.
 
 Changes to the agent runtime, the DataClaw utility model, and supported plugin
 integrations are **hot-reloaded** — no server restart needed. The utility model
@@ -605,7 +633,7 @@ This refreshes OpenClaw's Dataclaw tools. Installed skill files are synchronized
 
 **Protocol:** [AG-UI](https://docs.ag-ui.com) (Server-Sent Events)
 
-**Agent Backends:** OpenClaw (recommended), Anthropic Claude, OpenAI, OpenAI Codex (OAuth or API key), Google Gemini, Mock
+**Agent Backends:** OpenClaw (recommended), Anthropic Claude, OpenAI, OpenAI Codex (OAuth or API key), Google Gemini, OpenAI-compatible endpoints, Open Responses endpoints, Mock
 
 **Sub-agents:** built-in LLM, browser-use, Codex
 

@@ -19,13 +19,10 @@ _active_manager: object | None = None  # CodexLoginManager, lazily imported
 
 
 def _get_codex_bin(request: Request) -> str | None:
-    """Read codex_bin from the app's runtime config if available."""
-    registry = getattr(request.app.state, "registry", None)
-    if registry and hasattr(registry, "config"):
-        codex_cfg = getattr(registry.config, "llm", None)
-        if codex_cfg:
-            return getattr(getattr(codex_cfg, "codex", None), "codex_bin", None) or None
-    return None
+    """Read codex_bin (CODEX_BIN or llm.backends.codex.codex_bin) if configured."""
+    from dataclaw.providers.llm.registry import resolve_backend_config
+
+    return str(resolve_backend_config("codex").get("codex_bin", "")).strip() or None
 
 
 @router.post("/login/start")
@@ -242,8 +239,9 @@ async def login_api_key(request: Request) -> dict[str, Any]:
 
     cfg_path = config_path()
     raw = _json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
-    raw.setdefault("llm", {}).setdefault("codex", {})["api_key"] = api_key
-    raw["llm"]["codex"]["auth_mode"] = "api_key"
+    codex = raw.setdefault("llm", {}).setdefault("backends", {}).setdefault("codex", {})
+    codex["api_key"] = api_key
+    codex["auth_mode"] = "api_key"
     write_private_text(cfg_path, _json.dumps(raw, indent=2) + "\n")
     invalidate_cache()
 

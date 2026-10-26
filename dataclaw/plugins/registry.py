@@ -56,6 +56,17 @@ class ProviderRegistry:
             raise ValueError(f"Runtime factory already registered: {name}")
         self._runtime_factories[name] = factory
 
+    def register_llm_backend(self, spec: Any) -> None:
+        """Register an ``LLMBackendSpec`` with the LLM backend registry.
+
+        LLM backends are process-wide (``llm_from_config`` and the config
+        resolver have no ProviderRegistry), so this forwards to
+        ``dataclaw.providers.llm.registry``. Built-in ids cannot be replaced.
+        """
+        from dataclaw.providers.llm.registry import register_llm_backend
+
+        register_llm_backend(spec)
+
     def get_runtime_factory(self, runtime: str) -> Any | None:
         return self._runtime_factories.get(runtime.strip().lower())
 

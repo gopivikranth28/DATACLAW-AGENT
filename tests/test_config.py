@@ -13,7 +13,11 @@ from dataclaw.api.routers.config import (
     _strip_masked_secrets,
 )
 from dataclaw.config.paths import DATACLAW_HOME, config_path, sessions_dir, skills_dir
-from dataclaw.config.migrations import migrate_runtime_utility_config
+from dataclaw.config.migrations import (
+    migrate_config,
+    migrate_llm_backends_config,
+    migrate_runtime_utility_config,
+)
 from dataclaw.config.resolver import (
     invalidate_cache,
     resolve,
@@ -33,6 +37,7 @@ def test_default_config():
     config = DataclawConfig()
     assert config.agent.runtime == "openclaw"
     assert config.llm.backend == "codex"
+    assert config.llm.backends == {}
     assert config.compaction.enabled is False
     assert config.app.max_turns == 30
     assert config.app.host == "127.0.0.1"
@@ -101,9 +106,15 @@ def test_migrate_hermes_runtime_and_utility_model() -> None:
     assert migrate_runtime_utility_config(raw) is True
     assert raw["agent"]["runtime"] == "hermes"
     assert raw["llm"]["backend"] == "codex"
-    assert raw["llm"]["codex"]["model"] == "gpt-5.5"
+    assert raw["llm"]["backends"]["codex"]["model"] == "gpt-5.5"
     assert "utility_backend" not in raw["plugins"]["hermes"]
     assert "utility_model" not in raw["plugins"]["hermes"]
+
+    # The legacy section then moves under llm.backends; the Hermes alias,
+    # already written there, wins over the stale legacy model.
+    assert migrate_llm_backends_config(raw) is True
+    assert "codex" not in raw["llm"]
+    assert raw["llm"]["backends"]["codex"]["model"] == "gpt-5.5"
 
 
 def test_migrate_direct_backend_to_dataclaw_runtime() -> None:
@@ -224,3 +235,107 @@ async def test_config_update_runs_plugin_reload_off_event_loop(
 
     assert callback_threads
     assert callback_threads[0] != main_thread
+
+
+# ── llm.backends migration ──────────────────────────────────────────────────
+
+
+def _legacy_llm_config() -> dict:
+    """A config as written by releases before llm.backends."""
+    return {
+        "agent": {"runtime": "dataclaw"},
+        "llm": {
+            "backend": "anthropic",
+            "anthropic": {"api_key": "sk-ant-secret-0001", "model": "claude-sonnet-4-20250514"},
+            "openai": {"api_key": "sk-openai-secret-0002", "model": "gpt-4o", "base_url": "http://proxy.local/v1"},
+            "gemini": {"api_key": "", "model": "gemini-2.5-flash"},
+            "codex": {"model": "gpt-5.4", "api_key": "", "auth_mode": "api_key", "codex_bin": "/opt/codex"},
+        },
+    }
+
+
+def test_migrate_legacy_llm_sections_to_backends() -> None:
+    raw = _legacy_llm_config()
+
+    assert migrate_config(raw) is True
+
+    llm = raw["llm"]
+    assert llm["backend"] == "anthropic"
+    for legacy in ("anthropic", "openai", "gemini", "codex"):
+        assert legacy not in llm
+    backends = llm["backends"]
+    # Secrets and every other key are carried over.
+    assert backends["anthropic"]["api_key"] == "sk-ant-secret-0001"
+    assert backends["openai"]["api_key"] == "sk-openai-secret-0002"
+    assert backends["openai"]["base_url"] == "http://proxy.local/v1"
+    assert backends["codex"] == {
+        "model": "gpt-5.4", "api_key": "", "auth_mode": "api_key", "codex_bin": "/opt/codex",
+    }
+    # Old schema defaults recorded no user choice, so the registry default
+    # applies; an OpenAI proxy keeps its model.
+    assert "model" not in backends["anthropic"]
+    assert "model" not in backends["gemini"]
+    assert backends["openai"]["model"] == "gpt-4o"
+
+    # The migrated config parses, and a second pass is a no-op.
+    DataclawConfig(**raw)
+    assert migrate_config(raw) is False
+
+
+def test_migrate_keeps_newer_backend_values() -> None:
+    raw = {"llm": {
+        "backend": "openai",
+        "openai": {"api_key": "old", "model": "gpt-5"},
+        "backends": {"openai": {"api_key": "new", "model": ""}},
+    }}
+
+    assert migrate_llm_backends_config(raw) is True
+    assert raw["llm"]["backends"]["openai"] == {"api_key": "new", "model": "gpt-5"}
+
+
+def test_migrated_config_resolves_like_legacy(tmp_dataclaw_home, monkeypatch) -> None:
+    from dataclaw.providers.llm.registry import resolve_backend_config
+
+    for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_AUTH_MODE", "CODEX_BIN"):
+        monkeypatch.delenv(name, raising=False)
+    config_file = tmp_dataclaw_home / "dataclaw.config.json"
+    legacy = _legacy_llm_config()
+
+    config_file.write_text(json.dumps(legacy))
+    invalidate_cache()
+    before = {b: resolve_backend_config(b).values for b in ("anthropic", "openai", "codex")}
+
+    migrate_config(legacy)
+    config_file.write_text(json.dumps(legacy))
+    invalidate_cache()
+    after = {b: resolve_backend_config(b).values for b in ("anthropic", "openai", "codex")}
+
+    for backend in ("anthropic", "openai", "codex"):
+        for key in ("api_key", "base_url", "auth_mode", "codex_bin"):
+            assert after[backend].get(key) == before[backend].get(key), (backend, key)
+    assert after["anthropic"]["api_key"] == "sk-ant-secret-0001"
+    invalidate_cache()
+
+
+def test_llm_backend_secrets_are_masked_and_preserved() -> None:
+    config = {"llm": {"backends": {
+        "openai_compatible": {
+            "api_key": "sk-or-v1-abcdefghijklmnop",
+            "base_url": "https://openrouter.ai/api/v1",
+            "headers": {"Authorization": "Bearer abcdefghijklmnop", "X-Title": "DataClaw"},
+        },
+    }}}
+
+    _mask_secrets_recursive(config)
+
+    compat = config["llm"]["backends"]["openai_compatible"]
+    assert compat["api_key"] != "sk-or-v1-abcdefghijklmnop"
+    assert compat["headers"]["Authorization"] != "Bearer abcdefghijklmnop"
+    assert compat["headers"]["X-Title"] == "DataClaw"
+    assert compat["base_url"] == "https://openrouter.ai/api/v1"
+
+    # Saving the masked values back must not overwrite the real secrets.
+    _strip_masked_secrets(config)
+    assert "api_key" not in compat
+    assert "Authorization" not in compat["headers"]
+    assert compat["headers"]["X-Title"] == "DataClaw"

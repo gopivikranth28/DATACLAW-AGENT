@@ -25,6 +25,7 @@ from openai import AsyncOpenAI
 
 from dataclaw.providers.llm.capabilities import (
     OPENAI,
+    resolve_reasoning_effort,
     supports_reasoning_effort,
     supports_text_verbosity,
 )
@@ -58,8 +59,22 @@ class OpenAIResponsesLLM:
         base_url: str,
         model: str,
         default_headers: dict[str, str] | None = None,
+        *,
+        default_reasoning_effort: str | None = None,
+        compat: bool = False,
     ) -> None:
+        """
+        Args:
+            default_reasoning_effort: Effort used on turns that don't set one
+                (the backend's configured ``reasoning_effort``).
+            compat: The endpoint is a third-party Responses implementation
+                (Open Responses). OpenAI-specific extras (prompt_cache_key,
+                text verbosity) are not sent, and reasoning effort only when
+                the model catalog vouches for it.
+        """
         self._model = model
+        self._default_reasoning_effort = default_reasoning_effort or None
+        self._compat = compat
         self._client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url,
@@ -122,7 +137,11 @@ class OpenAIResponsesLLM:
             )
 
         kwargs = self._request_kwargs(
-            input_items, system, api_tools, reasoning_effort, text_verbosity
+            input_items,
+            system,
+            api_tools,
+            reasoning_effort or self._default_reasoning_effort,
+            text_verbosity,
         )
 
         completed_tool_calls: list[dict[str, Any]] = []
@@ -252,14 +271,14 @@ class OpenAIResponsesLLM:
             "stream": True,
             "store": False,
         }
-        if self.prompt_cache_key:
+        if self.prompt_cache_key and not self._compat:
             kwargs["prompt_cache_key"] = self.prompt_cache_key
         # Static system prompt goes in instructions (stable, cached separately)
         if system:
             kwargs["instructions"] = system
         if api_tools:
             kwargs["tools"] = api_tools
-        reasoning_model = supports_reasoning_effort(OPENAI, self._model)
+        reasoning_model = supports_reasoning_effort(OPENAI, self._model, catalog_only=self._compat)
         if reasoning_model:
             # With store=False the server keeps nothing between requests;
             # ask for the encrypted reasoning so it can be replayed.
@@ -268,16 +287,13 @@ class OpenAIResponsesLLM:
         # gpt-5-class reasoning models from emitting scratchpad output as
         # the final answer. Not set by default for normal chat turns, and
         # dropped for models that would reject them.
-        if reasoning_effort:
-            if reasoning_model:
-                kwargs["reasoning"] = {"effort": reasoning_effort}
-            else:
-                logger.debug(
-                    "Skipping reasoning_effort=%r: not supported by %r",
-                    reasoning_effort, self._model,
-                )
+        effort = resolve_reasoning_effort(
+            OPENAI, self._model, reasoning_effort, catalog_only=self._compat
+        )
+        if effort:
+            kwargs["reasoning"] = {"effort": effort}
         if text_verbosity:
-            if supports_text_verbosity(OPENAI, self._model):
+            if not self._compat and supports_text_verbosity(OPENAI, self._model):
                 kwargs["text"] = {"verbosity": text_verbosity}
             else:
                 logger.debug(

@@ -1,4 +1,4 @@
-"""Per-model request capabilities, keyed by model-id prefix.
+"""Per-model request capabilities.
 
 Some request knobs are rejected outright by models that don't implement
 them (``reasoning_effort`` on gpt-4o, ``thinking_level`` on Gemini 2.5,
@@ -6,15 +6,20 @@ them (``reasoning_effort`` on gpt-4o, ``thinking_level`` on Gemini 2.5,
 into a failed turn.  Providers consult these helpers before binding such
 knobs and drop them with a debug log when unsupported.
 
-This is a deliberately small, conservative heuristic.  It is meant to be
-replaced by catalog-driven ``ModelInfo`` metadata (``supports_reasoning``,
-``reasoning_efforts``); keep the call sites going through these functions
-so that swap stays local.
+Known models are answered from the catalog's ``ModelInfo``
+(``model_capabilities.json``: ``supports_reasoning``, ``reasoning_efforts``).
+Unknown ids fall back to small, conservative prefix rules, unless the
+caller talks to a third-party endpoint and asks for ``catalog_only``.
 """
 
 from __future__ import annotations
 
+import logging
 import re
+
+from dataclaw.providers.llm.catalog import lookup_model_info, nearest_effort, normalize_model_id
+
+logger = logging.getLogger(__name__)
 
 # Provider families understood here. Callers map their backend/model class
 # onto one of these.
@@ -31,20 +36,28 @@ _GEMINI = re.compile(r"^gemini-(?P<major>\d+)")
 
 
 def _normalize(model: str) -> str:
-    model = (model or "").strip().lower()
     # Gemini ids may be given as "models/gemini-..."; OpenAI-style gateways
     # sometimes use "openai/gpt-...". Only the last path segment matters.
-    return model.rsplit("/", 1)[-1]
+    return normalize_model_id(model)
 
 
-def supports_reasoning_effort(provider: str, model: str) -> bool:
+def supports_reasoning_effort(provider: str, model: str, *, catalog_only: bool = False) -> bool:
     """Whether ``model`` accepts the provider's reasoning-effort control.
 
     ``provider`` is one of OPENAI (``reasoning_effort`` / ``reasoning.effort``),
     ANTHROPIC (``output_config.effort``) or GEMINI (``thinking_level``).
     Unknown providers or model ids return False so the knob is dropped
-    rather than failing the request.
+    rather than failing the request.  ``catalog_only`` skips the prefix
+    rules, for endpoints (OpenAI-compatible servers) where a familiar-looking
+    id says nothing about which request fields the server accepts.
     """
+    if provider not in (OPENAI, ANTHROPIC, GEMINI):
+        return False
+    info = lookup_model_info(model)
+    if info is not None:
+        return info.supports_reasoning
+    if catalog_only:
+        return False
     m = _normalize(model)
     if provider == OPENAI:
         return bool(_OPENAI_REASONING.match(m)) and "-chat" not in m
@@ -62,6 +75,39 @@ def supports_reasoning_effort(provider: str, model: str) -> bool:
         match = _GEMINI.match(m)
         return bool(match) and int(match["major"]) >= 3
     return False
+
+
+def resolve_reasoning_effort(
+    provider: str,
+    model: str,
+    effort: str | None,
+    *,
+    catalog_only: bool = False,
+) -> str | None:
+    """The effort value to send for ``model``, or None to omit the knob.
+
+    Drops the knob when the model has no reasoning control.  When the catalog
+    lists the model's accepted values, an unsupported request maps to the
+    nearest supported level (e.g. "minimal" -> "low" on Claude), or is
+    dropped if it cannot be placed.  Without a list the value passes through.
+    """
+    if not effort:
+        return None
+    if not supports_reasoning_effort(provider, model, catalog_only=catalog_only):
+        logger.debug("Skipping reasoning_effort=%r: not supported by %r", effort, model)
+        return None
+    info = lookup_model_info(model)
+    if info is None or not info.reasoning_efforts:
+        return effort
+    chosen = nearest_effort(effort, info.reasoning_efforts)
+    if chosen is None:
+        logger.debug(
+            "Skipping reasoning_effort=%r: %r accepts %s",
+            effort, model, info.reasoning_efforts,
+        )
+    elif chosen != effort:
+        logger.debug("reasoning_effort=%r not offered by %r; using %r", effort, model, chosen)
+    return chosen
 
 
 def supports_text_verbosity(provider: str, model: str) -> bool:

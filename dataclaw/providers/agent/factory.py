@@ -26,6 +26,7 @@ from dataclaw.providers.agent.implementations.langchain_agent import (
 from dataclaw.providers.agent.provider import AgentProvider
 from dataclaw.providers.compaction.provider import CompactionProvider
 from dataclaw.providers.llm.provider import LLMProvider
+from dataclaw.providers.llm.registry import llm_backend_ids
 from dataclaw.providers.memory.provider import MemoryProvider
 from dataclaw.providers.skill.provider import SkillProvider
 from dataclaw.providers.sub_agent.registry import SubAgentRegistry
@@ -33,8 +34,6 @@ from dataclaw.providers.system_prompt.provider import SystemPromptProvider
 from dataclaw.providers.tool.provider import ToolAvailabilityProvider
 
 logger = logging.getLogger(__name__)
-
-DIRECT_BACKENDS = frozenset({"mock", "anthropic", "openai", "gemini", "codex"})
 
 
 class RuntimeSelectionError(RuntimeError):
@@ -161,7 +160,6 @@ def build_utility_llm(
     """Build and validate the DataClaw-owned utility model."""
 
     from dataclaw.providers.llm.implementations.factory import llm_from_config
-    from dataclaw.providers.llm.implementations.mock_llm import MockLLM
 
     selected_backend = backend or resolve_utility_backend()
     selected_model = model or resolve_utility_model(selected_backend)
@@ -171,16 +169,13 @@ def build_utility_llm(
             model=selected_model or None,
         )
     except Exception as exc:
+        # Includes LLMConfigurationError for a missing API key; the message
+        # names the env var / config path and surfaces as the runtime's
+        # selection error instead of a silent mock fallback.
         raise RuntimeSelectionError(
             "DataClaw utility model could not initialize "
             f"({selected_backend}/{selected_model or 'no model'}): {exc}"
         ) from exc
-    if isinstance(utility, MockLLM):
-        raise RuntimeSelectionError(
-            "DataClaw utility model could not initialize "
-            f"({selected_backend}/{selected_model or 'no model'}): "
-            f"no usable {selected_backend} credentials were found"
-        )
     return utility
 
 
@@ -204,7 +199,7 @@ def build_direct_bundle(
     elif selected_runtime == "dataclaw":
         utility_backend = resolve_utility_backend()
         identity = "dataclaw"
-    elif selected_runtime in DIRECT_BACKENDS:
+    elif selected_runtime in llm_backend_ids():
         # Compatibility for callers that still pass a direct model backend.
         utility_backend = selected_runtime
         identity = "dataclaw"
@@ -254,7 +249,7 @@ async def build_runtime_bundle(
 ) -> RuntimeBundle:
     """Select a runtime after plugins have registered their factories."""
     selected = backend or resolve_agent_runtime()
-    if selected == "dataclaw" or selected in DIRECT_BACKENDS:
+    if selected == "dataclaw" or selected in llm_backend_ids():
         return build_direct_bundle(providers, hooks, selected)
 
     factory = providers.get_runtime_factory(selected)

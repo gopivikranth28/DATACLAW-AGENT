@@ -25,7 +25,7 @@ async def browser_use(
     workspace_id: str = "default",
     enabled: bool = True,
     llm_provider: str = "anthropic",
-    llm_model: str = "claude-sonnet-4-20250514",
+    llm_model: str = "",
     api_key: str = "",
     timeout_max: int = 600,
     **kw: Any,
@@ -110,35 +110,35 @@ async def browser_use(
     return output
 
 
+# DataClaw LLM backends that map onto a browser-use chat class.
+SUPPORTED_PROVIDERS = ("anthropic", "openai", "gemini")
+
+
 def _create_llm(provider: str, model: str, api_key: str) -> Any:
     """Create an LLM instance for browser-use using browser-use's native classes.
 
-    API key handling:
-      - Anthropic: pass api_key directly; falls back to ANTHROPIC_API_KEY env var
-      - OpenAI: set OPENAI_API_KEY env var if provided; falls back to existing env
-      - Gemini: set GOOGLE_API_KEY env var if provided; falls back to existing env
-
-    If no api_key is provided, all providers fall back to their respective
-    environment variables, which should be set from the main LLM config.
+    ``model`` defaults to the provider's default model in DataClaw's LLM
+    backend registry, and ``api_key`` to the key DataClaw itself resolves for
+    that backend (env var, then ``llm.backends.<provider>.api_key``). The key
+    is passed to the client explicitly; the process environment is never
+    modified.
     """
-    import os
+    if provider not in SUPPORTED_PROVIDERS:
+        return None
+    from dataclaw.providers.llm.registry import default_model_for, resolve_backend_config
+
+    model = model or default_model_for(provider)
+    api_key = api_key or resolve_backend_config(provider).api_key
     try:
         if provider == "anthropic":
             from browser_use import ChatAnthropic
-            kwargs: dict[str, Any] = {"model": model}
-            if api_key:
-                kwargs["api_key"] = api_key
-            return ChatAnthropic(**kwargs)
+            return ChatAnthropic(model=model, api_key=api_key or None)
         elif provider == "openai":
             from browser_use import ChatOpenAI
-            if api_key:
-                os.environ.setdefault("OPENAI_API_KEY", api_key)
-            return ChatOpenAI(model=model)
+            return ChatOpenAI(model=model, api_key=api_key or None)
         elif provider == "gemini":
             from browser_use import ChatGoogle
-            if api_key:
-                os.environ.setdefault("GOOGLE_API_KEY", api_key)
-            return ChatGoogle(model=model)
+            return ChatGoogle(model=model, api_key=api_key or None)
     except ImportError:
         return None
     return None

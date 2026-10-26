@@ -96,6 +96,18 @@ def _all_backend_schemas(slot: str) -> dict[str, list[dict[str, Any]]]:
     return {}
 
 
+@router.get("/llm-backends")
+async def list_llm_backends() -> list[dict[str, Any]]:
+    """Selectable LLM backends: id, label, config fields, presets, defaults.
+
+    The settings UI renders backend options and their fields from this list,
+    so a backend registered by a plugin shows up without UI changes.
+    """
+    from dataclaw.providers.llm.registry import list_llm_backends as registered
+
+    return [spec.to_dict() for spec in registered()]
+
+
 @router.get("")
 async def list_providers(request: Request) -> list[dict[str, Any]]:
     """List all registered providers with their config schemas."""
