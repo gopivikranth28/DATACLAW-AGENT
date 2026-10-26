@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createBrowserRouter, RouterProvider } from 'react-router-dom'
 import App from './App'
+import AuthGate from './components/AuthGate'
 import './index.css'
 
 // A data router gives settings pages a real navigation blocker, allowing a
@@ -12,6 +13,8 @@ const router = createBrowserRouter([
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <RouterProvider router={router} />
+    <AuthGate>
+      <RouterProvider router={router} />
+    </AuthGate>
   </StrictMode>,
 )

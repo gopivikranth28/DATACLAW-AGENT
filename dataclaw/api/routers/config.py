@@ -14,6 +14,7 @@ from dataclaw.config.resolver import (
     resolve_agent_runtime,
 )
 from dataclaw.config.schema import DataclawConfig
+from dataclaw.config.secure_io import write_private_text
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,6 @@ async def update_config(updates: dict[str, Any], request: Request) -> dict[str, 
     import asyncio
 
     path = config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
 
     if path.exists():
         raw = json.loads(path.read_text())
@@ -56,7 +56,7 @@ async def update_config(updates: dict[str, Any], request: Request) -> dict[str, 
 
     _strip_masked_secrets(updates)
     _deep_merge(raw, updates)
-    path.write_text(json.dumps(raw, indent=2))
+    write_private_text(path, json.dumps(raw, indent=2))
     invalidate_cache()
 
     # Refresh the in-memory DataclawConfig snapshot so /api/providers reflects

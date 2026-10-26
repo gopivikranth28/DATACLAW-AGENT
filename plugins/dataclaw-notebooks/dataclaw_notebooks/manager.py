@@ -420,7 +420,13 @@ class NotebookManager:
 
     def _kernel_env(self) -> dict[str, str]:
         env = os.environ.copy()
-        env.setdefault("DATACLAW_API_URL", os.environ.get("DATACLAW_API_URL", "http://127.0.0.1:8000"))
+        from dataclaw.api.security import api_token, local_api_url
+
+        env.setdefault("DATACLAW_API_URL", local_api_url())
+        # dataclaw_data authenticates its /api/data calls with this token.
+        token = api_token()
+        if token:
+            env.setdefault("DATACLAW_TOKEN", token)
 
         # Inject runtime_packages into PYTHONPATH so dataclaw_data is importable
         runtime_dir = str(Path(__file__).parent / "runtime_packages")

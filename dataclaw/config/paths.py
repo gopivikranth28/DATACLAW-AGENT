@@ -17,6 +17,11 @@ def config_path() -> Path:
     return DATACLAW_HOME / "dataclaw.config.json"
 
 
+def api_token_path() -> Path:
+    """Generated API token, used when DATACLAW_TOKEN / app.token is not set."""
+    return DATACLAW_HOME / "api-token"
+
+
 def sessions_dir() -> Path:
     """Directory for chat session JSON files."""
     return DATACLAW_HOME / "sessions"
@@ -76,5 +81,7 @@ def skill_library_dir() -> Path:
 
 def ensure_dirs() -> None:
     """Create all required directories if they don't exist."""
+    # The home directory holds credentials; keep it private when we create it.
+    DATACLAW_HOME.mkdir(mode=0o700, parents=True, exist_ok=True)
     for d in [DATACLAW_HOME, sessions_dir(), skills_dir(), workspaces_dir(), plugins_dir(), tools_dir(), runtime_runs_dir()]:
         d.mkdir(parents=True, exist_ok=True)

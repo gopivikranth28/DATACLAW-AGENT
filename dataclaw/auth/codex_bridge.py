@@ -76,7 +76,8 @@ def resolve_codex_credentials(
 
 def prepare_codex_env() -> dict[str, str]:
     """Return env overrides for the Codex app-server (used by login manager)."""
-    CODEX_HOME.mkdir(parents=True, exist_ok=True)
+    # auth.json (written by the app-server) holds OAuth tokens.
+    CODEX_HOME.mkdir(mode=0o700, parents=True, exist_ok=True)
     return {"CODEX_HOME": str(CODEX_HOME)}
 
 

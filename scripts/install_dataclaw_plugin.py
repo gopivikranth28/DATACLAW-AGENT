@@ -89,6 +89,7 @@ def bootstrap_tool_registry() -> list[dict]:
 
 async def main() -> int:
     from dataclaw_openclaw import openclaw_install_service
+    from dataclaw_openclaw.shared_token import resolve_shared_token
 
     # The bundled entrypoint runs this BEFORE starting the gateway — there's no
     # /healthz endpoint to poll. install_plugin_atomic calls _wait_for_gateway
@@ -103,7 +104,7 @@ async def main() -> int:
 
     gateway_port = os.environ.get("OPENCLAW_GATEWAY_PORT", "18789")
     cfg = {
-        "token": os.environ.get("DATACLAW_TOKEN", "dataclaw-local"),
+        "token": resolve_shared_token({}),
         "tools_api_url": os.environ.get(
             "DATACLAW_API_URL",
             f"http://127.0.0.1:{os.environ.get('DATACLAW_PORT', '8000')}",

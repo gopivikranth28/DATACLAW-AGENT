@@ -32,6 +32,13 @@ def tmp_dataclaw_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     # Reimport paths to pick up new env
     import dataclaw.config.paths as paths
     monkeypatch.setattr(paths, "DATACLAW_HOME", home)
+    # TestClient sends `Host: testserver`; allow it through the loopback Host
+    # check, and keep the developer's own auth settings out of the tests.
+    monkeypatch.setenv("DATACLAW_ALLOWED_HOSTS", "testserver")
+    for var in ("DATACLAW_HOST", "DATACLAW_AUTH", "DATACLAW_TOKEN", "DATACLAW_ALLOWED_ORIGINS"):
+        monkeypatch.delenv(var, raising=False)
+    from dataclaw.config.resolver import invalidate_cache
+    invalidate_cache()
     return home
 
 

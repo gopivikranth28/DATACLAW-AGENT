@@ -317,6 +317,9 @@ async def test_post_to_openclaw_delivers_direct_response_callback(monkeypatch):
             return FakeResponse({})
 
     monkeypatch.setattr(agent_provider_module.httpx, "AsyncClient", PostingClient)
+    monkeypatch.setattr(
+        "dataclaw.api.security.local_api_url", lambda: "http://127.0.0.1:8000"
+    )
 
     provider = OpenClawAgentProvider(
         url="http://fake:1234",
@@ -335,5 +338,8 @@ async def test_post_to_openclaw_delivers_direct_response_callback(monkeypatch):
     }
     assert posts[1] == (
         "http://127.0.0.1:8000/api/agent/callback/callback-sess",
-        {"json": {"text": "Hello from OpenClaw!"}},
+        {
+            "headers": {"X-Dataclaw-Token": "secret"},
+            "json": {"text": "Hello from OpenClaw!"},
+        },
     )

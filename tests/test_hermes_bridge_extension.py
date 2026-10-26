@@ -24,6 +24,16 @@ def _bridge(monkeypatch):
     return correlation, tools
 
 
+def test_bridge_callbacks_send_dataclaw_token(monkeypatch) -> None:
+    _, tools = _bridge(monkeypatch)
+    catalog = importlib.import_module("dataclaw_hermes_bridge.catalog")
+    monkeypatch.setenv("DATACLAW_TOKEN", "tok")
+    assert tools._settings()[2] == {"X-Dataclaw-Token": "tok"}
+    assert catalog._settings()[2] == {"X-Dataclaw-Token": "tok"}
+    monkeypatch.delenv("DATACLAW_TOKEN")
+    assert tools._settings()[2] == {}
+
+
 def test_directory_plugin_loads_under_hermes_namespace() -> None:
     """Match Hermes 0.19's directory-plugin import semantics."""
     parent_name = "hermes_plugins"
