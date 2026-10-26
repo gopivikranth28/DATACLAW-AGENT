@@ -53,6 +53,12 @@ def _resolve_project_dir(project_id: str) -> Path | None:
     return None
 
 
+def _tool_available(tool: Any) -> bool:
+    """A tool's runtime availability (see ``ToolProvider.is_available``)."""
+    check = getattr(tool, "is_available", None)
+    return bool(check()) if callable(check) else True
+
+
 class DefaultToolAvailability:
     """Resolves tools from a registry of ToolProvider instances.
 
@@ -231,6 +237,7 @@ class DefaultToolAvailability:
                 )
             )
             d["in_scope"] = allowed_ids is None or tool.name in allowed_ids
+            d["available"] = _tool_available(tool)
             result.append(d)
         return result
 
@@ -300,6 +307,8 @@ class DefaultToolAvailability:
                 project_config,
                 session_config,
             ):
+                continue
+            if not _tool_available(tool):
                 continue
             definitions.append(tool.definition)
             callables[name] = tool.execute

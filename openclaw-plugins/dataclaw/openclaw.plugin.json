@@ -81,6 +81,7 @@
     "tools": [
       "dataclaw_fetch_skill",
       "dataclaw_list_skills",
+      "dataclaw_decide",
       "dataclaw_data_list_datasets",
       "dataclaw_data_preview_data",
       "dataclaw_data_profile_dataset",
