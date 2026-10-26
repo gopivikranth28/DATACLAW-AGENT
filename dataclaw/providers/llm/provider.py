@@ -81,6 +81,10 @@ class LLMStreamError(RuntimeError):
         self.code = code
 
 
+class StructuredOutputError(RuntimeError):
+    """The model's reply could not be read as an object matching the schema."""
+
+
 BrokerEvent = (
     TextDeltaEvent
     | ToolUseStartEvent
@@ -114,4 +118,42 @@ class LLMProvider(Protocol):
         errors: list[Exception | None],
     ) -> list[Message]:
         """Build Message objects to append after tool execution."""
+        ...
+
+
+@runtime_checkable
+class StructuredOutputProvider(Protocol):
+    """Optional LLMProvider capability: one non-streaming, schema-shaped reply.
+
+    Not part of LLMProvider so existing providers stay valid. Callers use
+    ``dataclaw.providers.llm.structured.structured_output(llm, ...)``, which
+    uses this method when a provider has it and a forced-tool-call fallback
+    otherwise.
+    """
+
+    async def structured_output(
+        self,
+        messages: list[Message],
+        schema: dict[str, Any],
+        *,
+        system: str = "",
+        name: str = "response",
+        strict: bool = False,
+    ) -> dict[str, Any]:
+        """Answer ``messages`` with a JSON object conforming to ``schema``.
+
+        Args:
+            messages: Conversation to answer (canonical Messages).
+            schema: JSON Schema of the reply; its root must be an object.
+            system: System prompt for this call.
+            name: Schema / tool name (``^[A-Za-z0-9_-]+$``).
+            strict: Ask for strict schema enforcement where the API offers
+                it (OpenAI). The schema must then meet that API's strict
+                subset (every property required, no additional properties).
+
+        Raises:
+            StructuredOutputError: The reply was not a JSON object or is
+                missing a required top-level property.
+            LLMStreamError: The provider reported a failed response.
+        """
         ...

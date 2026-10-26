@@ -13,6 +13,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
+from langchain_core.exceptions import OutputParserException
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
@@ -29,9 +30,11 @@ from dataclaw.providers.llm.capabilities import (
     resolve_reasoning_effort,
     supports_text_verbosity,
 )
+from dataclaw.providers.llm.catalog import lookup_model_info
 from dataclaw.providers.llm.provider import (
     BrokerEvent,
     PendingToolCall,
+    StructuredOutputError,
     TextDeltaEvent,
     ToolUseStartEvent,
     TurnCompleteEvent,
@@ -121,19 +124,7 @@ class LangChainLLM:
             except Exception:  # pragma: no cover - defensive
                 logger.warning("Could not apply request options %s", native)
 
-        # System-role messages in the history (compaction summaries) are
-        # folded into the single leading system message: Anthropic rejects
-        # non-consecutive system messages and Gemini merges them into
-        # system_instruction anyway, so this is the one shape every backend
-        # accepts.
-        context = [m.text() for m in messages if m.role == "system"]
-        history = [m for m in messages if m.role != "system"]
-
-        lc_messages: list[BaseMessage] = []
-        system_message = _build_system_message(self._model, system, context, system_dynamic)
-        if system_message is not None:
-            lc_messages.append(system_message)
-        lc_messages.extend(_to_lc_messages(history, provider=_provider_tag(self._model)))
+        lc_messages = self._lc_messages(messages, system, system_dynamic)
 
         accumulated: AIMessage | None = None
         seen_tool_indices: set[int] = set()
@@ -177,6 +168,65 @@ class LangChainLLM:
             )
 
         yield TurnCompleteEvent(has_pending_tool_calls=bool(tool_calls))
+
+    def _lc_messages(self, messages: list[Message], system: str, system_dynamic: str) -> list[BaseMessage]:
+        # System-role messages in the history (compaction summaries) are
+        # folded into the single leading system message: Anthropic rejects
+        # non-consecutive system messages and Gemini merges them into
+        # system_instruction anyway, so this is the one shape every backend
+        # accepts.
+        context = [m.text() for m in messages if m.role == "system"]
+        history = [m for m in messages if m.role != "system"]
+
+        lc_messages: list[BaseMessage] = []
+        system_message = _build_system_message(self._model, system, context, system_dynamic)
+        if system_message is not None:
+            lc_messages.append(system_message)
+        lc_messages.extend(_to_lc_messages(history, provider=_provider_tag(self._model)))
+        return lc_messages
+
+    async def structured_output(
+        self,
+        messages: list[Message],
+        schema: dict[str, Any],
+        *,
+        system: str = "",
+        name: str = "response",
+        strict: bool = False,
+    ) -> dict[str, Any]:
+        """Schema-shaped reply (see ``StructuredOutputProvider``).
+
+        Uses the SDK's native JSON-schema response format where the model
+        offers one (OpenAI, Gemini, catalogued Claude models), LangChain's
+        forced function call for other first-party models, and the generic
+        tool-call fallback on third-party OpenAI-compatible servers.
+        """
+        from dataclaw.providers.llm.structured import (
+            check_required,
+            titled_schema,
+            tool_call_structured_output,
+        )
+
+        if self._compat:
+            return await tool_call_structured_output(self, messages, schema, system=system, name=name)
+
+        family = _provider_family(self._model)
+        info = lookup_model_info(_model_id(self._model))
+        if info is not None:
+            native = info.supports_structured_output
+        else:
+            native = family in (OPENAI, GEMINI)
+        kwargs: dict[str, Any] = {"method": "json_schema" if native else "function_calling"}
+        if family == OPENAI:
+            kwargs["strict"] = strict
+        runnable = self._model.with_structured_output(titled_schema(schema, name), **kwargs)
+        try:
+            result = await runnable.ainvoke(self._lc_messages(messages, system, ""))
+        except OutputParserException as exc:
+            raise StructuredOutputError(f"The model's reply did not match the schema: {exc}") from exc
+        if result is None:
+            raise StructuredOutputError("The model returned no structured reply")
+        return check_required(result, schema)
 
     def _remember_turn(self, ai_message: AIMessage, call_ids: list[str]) -> None:
         state = _TurnState(

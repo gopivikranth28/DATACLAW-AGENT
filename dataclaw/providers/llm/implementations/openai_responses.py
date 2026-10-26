@@ -302,6 +302,52 @@ class OpenAIResponsesLLM:
                 )
         return kwargs
 
+    async def structured_output(
+        self,
+        messages: list[Message],
+        schema: dict[str, Any],
+        *,
+        system: str = "",
+        name: str = "response",
+        strict: bool = False,
+    ) -> dict[str, Any]:
+        """Schema-shaped reply (see ``StructuredOutputProvider``).
+
+        Uses the Responses ``text.format`` json_schema response format. It is
+        streamed like a normal turn because the ChatGPT (Codex) backend only
+        accepts streaming requests. Third-party (compat) endpoints use the
+        tool-call fallback, since Open Responses servers may not implement
+        response formats.
+        """
+        from dataclaw.providers.llm.structured import (
+            check_required,
+            parse_json_object,
+            tool_call_structured_output,
+        )
+
+        if self._compat:
+            return await tool_call_structured_output(self, messages, schema, system=system, name=name)
+
+        kwargs = self._request_kwargs(_build_input_ordered(messages, ""), system, [], None, None)
+        kwargs["text"] = {
+            "format": {"type": "json_schema", "name": name, "schema": schema, "strict": strict},
+        }
+        chunks: list[str] = []
+        completed = False
+        stream = await self._client.responses.create(**kwargs)
+        async for event in stream:
+            if event.type == "response.output_text.delta":
+                chunks.append(event.delta)
+            elif event.type == "response.completed":
+                completed = True
+                break
+            elif event.type in ("response.failed", "response.incomplete", "error"):
+                message, code = _describe_failure(event)
+                raise LLMStreamError(message, code=code)
+        if not completed:
+            raise LLMStreamError("Responses stream ended before response.completed", code="stream_incomplete")
+        return check_required(parse_json_object("".join(chunks)), schema)
+
     def build_tool_result_message(
         self,
         tool_calls: list[PendingToolCall],
