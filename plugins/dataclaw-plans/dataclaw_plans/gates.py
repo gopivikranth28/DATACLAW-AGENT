@@ -22,7 +22,10 @@ from dataclaw.state import AgentState
 
 from dataclaw_plans.store import append_snapshot, read_proposals, write_proposals
 
-GATE_STATUSES = {"pass", "fail", "unknown", "accepted"}
+# "warn" is advisory (e.g. the decision-model pre-check): it never blocks on
+# its own, but a gate the policy marks required still blocks until it passes.
+GATE_STATUSES = {"pass", "fail", "unknown", "accepted", "warn"}
+BLOCKING_STATUSES = {"fail", "unknown", "warn"}
 GateResolver = Callable[[dict[str, Any], dict[str, Any]], dict[str, Any] | Awaitable[dict[str, Any]]]
 GATE_RESOLVERS: dict[str, GateResolver] = {}
 
@@ -209,7 +212,7 @@ async def blocking_gates(proposal: dict[str, Any], step: dict[str, Any]) -> list
             continue
         if _gate_has_audited_acceptance(gate):
             continue
-        if gate.get("status") in {"fail", "unknown"}:
+        if gate.get("status") in BLOCKING_STATUSES:
             blockers.append(gate)
     return blockers
 
@@ -437,7 +440,7 @@ def plan_completion_warnings_sync(proposal_id: str) -> list[str]:
             for gate in gates.values()
             if gate.get("required")
             and not gate.get("accepted")
-            and gate.get("status") in {"fail", "unknown"}
+            and gate.get("status") in BLOCKING_STATUSES
         ]
         if blockers:
             names = ", ".join(str(g.get("name") or "gate") for g in blockers)

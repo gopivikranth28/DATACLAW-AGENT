@@ -57,6 +57,7 @@ from dataclaw.providers.llm.provider import (
     TurnCompleteEvent,
     UsageEvent,
 )
+from dataclaw.providers.compaction.early import should_compact_early
 from dataclaw.providers.tool.llm_redact import redact_for_llm
 from dataclaw.schema import Message
 from dataclaw.storage import sessions
@@ -351,8 +352,16 @@ async def _run_agent_loop(
             "max_tokens": int(resolve("compaction.max_tokens", "DATACLAW_COMPACTION_MAX_TOKENS", "100000")),
         }
         current_messages = state.get("messages", messages)
-        if providers.compaction.will_compact(current_messages, max_messages=compact_kwargs["max_messages"], max_tokens=compact_kwargs["max_tokens"]):
+        compact_required = providers.compaction.will_compact(current_messages, max_messages=compact_kwargs["max_messages"], max_tokens=compact_kwargs["max_tokens"])
+        # Optional decision-model trigger (decision.routing.compaction): may
+        # compact before the thresholds, never skips a required compaction.
+        compact_early = not compact_required and await should_compact_early(
+            providers.compaction, current_messages, **compact_kwargs
+        )
+        if compact_required or compact_early:
             state = await hooks.run("preCompactionHook", state)
+            if compact_early:
+                compact_kwargs = {**compact_kwargs, "max_messages": compact_kwargs["keep_recent"]}
             compacted = await providers.compaction.compact(current_messages, **compact_kwargs)
 
             # A compactor can decline or fail safely and return the original
