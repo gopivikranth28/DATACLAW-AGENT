@@ -32,9 +32,11 @@ def test_native_reasoning_kwargs_maps_effort_per_provider():
     Unknown = type("SomeOtherModel", (), {})
 
     assert _native_reasoning_kwargs(ChatOpenAI(), "low") == {"reasoning_effort": "low"}
-    assert _native_reasoning_kwargs(ChatAnthropic(), "medium") == {"effort": "medium"}
+    # Anthropic takes effort inside output_config; a bare top-level `effort`
+    # kwarg is forwarded verbatim and rejected by the anthropic SDK.
+    assert _native_reasoning_kwargs(ChatAnthropic(), "medium") == {"output_config": {"effort": "medium"}}
     # Anthropic 'effort' has no 'minimal' tier — fold it into 'low'.
-    assert _native_reasoning_kwargs(ChatAnthropic(), "minimal") == {"effort": "low"}
+    assert _native_reasoning_kwargs(ChatAnthropic(), "minimal") == {"output_config": {"effort": "low"}}
     assert _native_reasoning_kwargs(ChatGoogleGenerativeAI(), "minimal") == {"thinking_level": "minimal"}
     # No effort, or an unrecognized model, leaves the call unchanged.
     assert _native_reasoning_kwargs(ChatOpenAI(), None) == {}
@@ -60,6 +62,8 @@ async def test_langchain_stream_binds_reasoning_effort():
             yield _FakeChunk()
 
     class ChatGoogleGenerativeAI:  # name drives the mapping
+        model = "gemini-3-flash"  # thinking_level is Gemini 3+
+
         def bind_tools(self, tools):
             return self
         def bind(self, **kwargs):

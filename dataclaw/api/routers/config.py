@@ -128,16 +128,31 @@ def _hot_reload_agent(request: Request) -> None:
 
 
 def _reload_llm_agent(providers: Any, backend: str) -> None:
-    """Reload the LLM-based agent provider."""
+    """Reload the LLM-based agent provider.
+
+    ``backend`` is the agent runtime ("dataclaw" or "mock"), or a direct model
+    backend from legacy callers. The DataClaw runtime runs on the configured
+    utility model provider, so map the runtime to that before building the
+    LLM — the same mapping build_direct_bundle uses.
+    """
+    from dataclaw.config.resolver import resolve_utility_backend, resolve_utility_model
     from dataclaw.providers.llm.implementations.factory import llm_from_config
     from dataclaw.providers.agent.implementations.langchain_agent import LangChainAgentProvider
     from dataclaw.providers.compaction.implementations.llm_summarizer import LLMSummarizingCompactor
 
-    llm = llm_from_config(backend=backend)
+    if backend == "mock":
+        llm_backend = "mock"
+    elif backend == "dataclaw":
+        llm_backend = resolve_utility_backend()
+    else:
+        llm_backend = backend
+    model = None if llm_backend == "mock" else (resolve_utility_model(llm_backend) or None)
+
+    llm = llm_from_config(backend=llm_backend, model=model)
     providers.llm = llm
     providers.agent = LangChainAgentProvider(llm)
     providers.compaction = LLMSummarizingCompactor(llm)
-    logger.info("Hot-reloaded agent: %s LLM", backend)
+    logger.info("Hot-reloaded agent: runtime %s, %s LLM", backend, llm_backend)
 
 
 def _hot_reload_memory(request: Request) -> None:

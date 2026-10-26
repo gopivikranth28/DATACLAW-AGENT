@@ -7,8 +7,6 @@ in canonical format.
 
 from __future__ import annotations
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Protocol, runtime_checkable, TYPE_CHECKING
 
@@ -46,7 +44,51 @@ class TurnCompleteEvent:
     skip_persist: bool = False  # True when an external system handles message persistence
 
 
-BrokerEvent = TextDeltaEvent | ToolUseStartEvent | PendingToolCall | TurnCompleteEvent
+@dataclass
+class UsageEvent:
+    """Token accounting for one LLM turn, emitted before TurnCompleteEvent.
+
+    ``input_tokens`` is the provider-reported prompt size including cached
+    tokens; ``cached_input_tokens`` and ``reasoning_tokens`` are the subsets
+    served from the prompt cache and spent on hidden reasoning (0 when the
+    provider does not report them).  Consumers may ignore this event.
+    """
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_input_tokens: int = 0
+    reasoning_tokens: int = 0
+
+
+@dataclass
+class ErrorEvent:
+    """The provider reported a terminal failure for this turn.
+
+    Yielded instead of TurnCompleteEvent (e.g. Responses ``response.failed``
+    or a truncated ``response.incomplete``).  Providers raise
+    ``LLMStreamError`` right after yielding it, so a consumer that does not
+    recognise the event still stops instead of treating the turn as a
+    silent, empty success.
+    """
+    message: str
+    code: str | None = None
+
+
+class LLMStreamError(RuntimeError):
+    """Raised by a provider after it yields an ErrorEvent."""
+
+    def __init__(self, message: str, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+BrokerEvent = (
+    TextDeltaEvent
+    | ToolUseStartEvent
+    | PendingToolCall
+    | UsageEvent
+    | ErrorEvent
+    | TurnCompleteEvent
+)
 
 
 # ── Provider protocol ───────────────────────────────────────────────────────
