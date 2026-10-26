@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
@@ -302,12 +302,16 @@ def create_app() -> FastAPI:
     app.include_router(codex_auth.router, prefix="/api/codex", tags=["codex-auth"])
     app.include_router(models.router, prefix="/api/models", tags=["models"])
 
+    @app.get("/api/health", tags=["health"])
+    async def health() -> dict[str, str]:
+        return {"status": "ok"}
+
     return app
 
 
-def _mount_spa(app: FastAPI) -> None:
+def _mount_spa(app: FastAPI, ui_dir: Path | None = None) -> None:
     """Mount SPA static files. Called after all routes (including plugin routes) are registered."""
-    ui_dir = Path(__file__).parent.parent.parent / "ui" / "dist"
+    ui_dir = ui_dir or Path(__file__).parent.parent.parent / "ui" / "dist"
     if not ui_dir.is_dir():
         return
 
@@ -317,10 +321,16 @@ def _mount_spa(app: FastAPI) -> None:
     if assets_dir.is_dir():
         app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="static-assets")
 
+    ui_root = ui_dir.resolve()
+
     @app.get("/{path:path}")
     async def spa_fallback(path: str):
         """Serve the UI. API routes take precedence over this catch-all."""
-        file = ui_dir / path
-        if file.is_file() and ".." not in path:
+        if path == "api" or path.startswith("api/"):
+            raise HTTPException(status_code=404)
+        # Resolve before checking containment: an absolute `path` (from a
+        # request like `//etc/passwd`) would otherwise replace ui_dir entirely.
+        file = (ui_root / path).resolve()
+        if file.is_relative_to(ui_root) and file.is_file():
             return FileResponse(file)
-        return FileResponse(ui_dir / "index.html")
+        return FileResponse(ui_root / "index.html")
