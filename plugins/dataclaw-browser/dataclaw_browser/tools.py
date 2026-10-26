@@ -8,11 +8,41 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# browser-use's own opt-out switch for its anonymized PostHog telemetry.
+_TELEMETRY_ENV = "ANONYMIZED_TELEMETRY"
+
+
+def disable_browser_use_telemetry() -> None:
+    """Start browser-use's telemetry singleton with PostHog off.
+
+    browser-use sends anonymized usage events to PostHog unless
+    ``ANONYMIZED_TELEMETRY`` is false. Its ``ProductTelemetry`` is a
+    process-wide singleton that reads the variable once, when first created,
+    so creating it here with the variable set to false keeps telemetry off for
+    every later Agent. The variable is restored right away, so other code and
+    child processes never see it. If the user set ``ANONYMIZED_TELEMETRY``
+    themselves, their choice is left alone.
+    """
+    if _TELEMETRY_ENV in os.environ:
+        return
+    try:
+        from browser_use.telemetry.service import ProductTelemetry
+    except ImportError:
+        return
+    os.environ[_TELEMETRY_ENV] = "false"
+    try:
+        ProductTelemetry()
+    except Exception:
+        logger.debug("Could not initialise browser-use telemetry", exc_info=True)
+    finally:
+        os.environ.pop(_TELEMETRY_ENV, None)
 
 
 async def browser_use(
@@ -40,6 +70,7 @@ async def browser_use(
         from browser_use import Agent as BrowserAgent, BrowserProfile
     except ImportError:
         return {"error": "browser-use is not installed. Run: pip install browser-use"}
+    disable_browser_use_telemetry()
 
     # Set up LLM
     llm = _create_llm(llm_provider, llm_model, api_key)

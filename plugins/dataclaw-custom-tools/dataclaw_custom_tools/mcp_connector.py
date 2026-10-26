@@ -121,13 +121,13 @@ class MCPConnector:
             if hasattr(item, "text"):
                 content_parts.append(item.text)
             elif hasattr(item, "data"):
-                content_parts.append(f"[binary: {item.mimeType or 'unknown'}]")
+                content_parts.append(f"[binary: {item.mime_type or 'unknown'}]")
             else:
                 content_parts.append(str(item))
 
         return {
             "content": "\n".join(content_parts),
-            "is_error": result.isError or False,
+            "is_error": result.is_error or False,
         }
 
     async def _discover_tools(self) -> list[ToolProvider]:
@@ -145,7 +145,7 @@ class MCPConnector:
             source = f"mcp:{self.name}"
 
             # Build JSON Schema from MCP tool schema
-            parameters = mcp_tool.inputSchema or {
+            parameters = mcp_tool.input_schema or {
                 "type": "object",
                 "properties": {},
             }

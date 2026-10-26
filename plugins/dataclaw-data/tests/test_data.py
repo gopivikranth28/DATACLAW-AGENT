@@ -494,7 +494,7 @@ async def test_dataframe_export_table_path_returns_all_rows(large_csv, tmp_path)
     result_path.write_bytes(response.content)
     conn = duckdb.connect()
     try:
-        assert conn.sql(
+        assert conn.execute(
             f"SELECT COUNT(*) FROM read_parquet('{result_path.as_posix()}')"
         ).fetchone()[0] == n
     finally:
