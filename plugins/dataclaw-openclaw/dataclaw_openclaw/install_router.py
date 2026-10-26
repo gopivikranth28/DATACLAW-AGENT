@@ -32,6 +32,14 @@ PLUGIN_IDS = ["dataclaw"]
 # tools.alsoAllow gate normally requires.
 _PLUGINS_REQUIRING_TOOLS_ALLOW = {"dataclaw"}
 
+# install.sh accepts `--version <semver>`; pin it so a fresh install matches
+# the plugin's `openclaw.install.minHostVersion` instead of tracking `latest`.
+_OPENCLAW_VERSION = openclaw_install_service.MIN_OPENCLAW_VERSION
+_INSTALL_SH_CMD = (
+    "curl -fsSL --proto '=https' --tlsv1.2 https://openclaw.ai/install.sh"
+    f" | bash -s -- --no-onboard --version {_OPENCLAW_VERSION}"
+)
+
 # Default path to the TypeScript plugin sources (relative to this file)
 _DEFAULT_PLUGINS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "openclaw-plugins"
 
@@ -135,7 +143,19 @@ async def check_openclaw(request: Request):
         stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
         if proc.returncode == 0:
             version = stdout_bytes.decode().strip()
-            return {"installed": True, "version": version}
+            supported = openclaw_install_service.is_supported_openclaw_version(version)
+            if supported is False:
+                logger.warning(
+                    "OpenClaw %s is older than the supported minimum %s",
+                    version, openclaw_install_service.MIN_OPENCLAW_VERSION,
+                )
+            return {
+                "installed": True,
+                "version": version,
+                # None when the version string couldn't be parsed.
+                "supported": supported,
+                "min_version": openclaw_install_service.MIN_OPENCLAW_VERSION,
+            }
         return {"installed": False, "version": None}
     except (FileNotFoundError, asyncio.TimeoutError, OSError):
         return {"installed": False, "version": None}
@@ -167,12 +187,13 @@ async def install_openclaw(request: Request):
         proc_env["TERM"] = "xterm-256color"
         proc_env.setdefault("DISPLAY", ":0")
 
-        # Step 1: Install OpenClaw via curl script
-        yield _sse({"line": "=== Step 1: Install OpenClaw ==="})
+        # Step 1: Install OpenClaw via curl script, pinned to the version the
+        # dataclaw plugin is built against.
+        yield _sse({"line": f"=== Step 1: Install OpenClaw {_OPENCLAW_VERSION} ==="})
 
         install_proc = await asyncio.create_subprocess_exec(
             "bash", "-c",
-            "curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard",
+            _INSTALL_SH_CMD,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             env=proc_env,
@@ -314,8 +335,8 @@ BOOTSTRAP_SCRIPT = """\
 #!/bin/bash
 set -e
 
-echo "=== Step 1: Install OpenClaw ==="
-curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard
+echo "=== Step 1: Install OpenClaw {openclaw_version} ==="
+{install_sh_cmd}
 
 export PATH="$(npm prefix -g 2>/dev/null)/bin:$HOME/.openclaw/bin:$PATH"
 hash -r 2>/dev/null
@@ -444,6 +465,8 @@ async def generate_bootstrap_script(request: Request):
 
     script = BOOTSTRAP_SCRIPT.format(
         gateway_port=gateway_port,
+        openclaw_version=_OPENCLAW_VERSION,
+        install_sh_cmd=_INSTALL_SH_CMD,
     )
 
     script_path = Path("/tmp/dataclaw-bootstrap.sh")
@@ -494,11 +517,21 @@ async def plugin_status(plugin_id: str, request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to run openclaw: {e}")
 
+    return parse_plugin_inspect_output(output)
+
+
+def parse_plugin_inspect_output(output: str) -> dict[str, Any]:
+    """Summarize ``openclaw plugins inspect <id> --json`` (stdout+stderr merged).
+
+    Only ``plugin.{status,version,enabled}`` are read; in 2026.10.7 the
+    payload also carries ``install`` (incl. the accepted capability surface),
+    ``capabilities``, ``diagnostics`` etc.
+    """
     if "Plugin not found" in output:
         return {"installed": False}
 
-    # `inspect --json` may emit non-JSON warnings before the JSON object.
-    # Extract from the first `{` to the end and parse.
+    # Warnings (e.g. state-dir ownership) can land on stderr ahead of the JSON
+    # object. Extract from the first `{` to the end and parse.
     start = output.find("{")
     if start < 0:
         return {"installed": False, "raw": output[:500]}

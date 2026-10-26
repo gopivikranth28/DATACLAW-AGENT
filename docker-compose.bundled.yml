@@ -34,6 +34,9 @@ services:
       # LLM provider API keys
       ANTHROPIC_API_KEY:
       OPENAI_API_KEY:
+      # Dataclaw's Gemini provider reads GOOGLE_API_KEY; OpenClaw's google
+      # provider accepts either. Pass both through.
+      GOOGLE_API_KEY:
       GEMINI_API_KEY:
     env_file:
       - path: .env

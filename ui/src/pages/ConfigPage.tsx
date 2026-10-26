@@ -538,7 +538,7 @@ export default function ConfigPage({ plugins }: Props) {
   }
 
   // OpenClaw CLI + plugin management state
-  const [openclawStatus, setOpenclawStatus] = useState<{ installed: boolean; version?: string | null } | null>(null)
+  const [openclawStatus, setOpenclawStatus] = useState<{ installed: boolean; version?: string | null; supported?: boolean | null; min_version?: string } | null>(null)
   const [checkingOpenclaw, setCheckingOpenclaw] = useState(false)
   const [pluginStatus, setPluginStatus] = useState<Record<string, { installed: boolean; status?: string; version?: string } | null>>({})
   const [, setChecking] = useState<Record<string, boolean>>({})
@@ -1329,7 +1329,7 @@ export default function ConfigPage({ plugins }: Props) {
                     <SectionTitle title="OpenClaw installation and authentication" description="Install or maintain the CLI, then authenticate its model provider. These credentials belong to OpenClaw." />
                     <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
                       <Space wrap>
-                        {checkingOpenclaw ? <Tag icon={<LoadingOutlined />} color="processing">Checking</Tag> : openclawStatus?.installed ? <Tag icon={<CheckCircleOutlined />} color="success">{openclawStatus.version || 'Installed'}</Tag> : <Tag icon={<CloseCircleOutlined />}>{openclawStatus === null ? 'Status unknown' : 'Not installed'}</Tag>}
+                        {checkingOpenclaw ? <Tag icon={<LoadingOutlined />} color="processing">Checking</Tag> : openclawStatus?.installed ? (openclawStatus.supported === false ? <Tag icon={<CloseCircleOutlined />} color="warning">{`${openclawStatus.version} — requires ${openclawStatus.min_version} or newer`}</Tag> : <Tag icon={<CheckCircleOutlined />} color="success">{openclawStatus.version || 'Installed'}</Tag>) : <Tag icon={<CloseCircleOutlined />}>{openclawStatus === null ? 'Status unknown' : 'Not installed'}</Tag>}
                         <Button onClick={checkOpenclawInstalled} loading={checkingOpenclaw}>Check status</Button>
                         <Button type="primary" icon={<DownloadOutlined />} onClick={handleOpenclawInstall}>Install</Button>
                         {openclawStatus?.installed && <Button icon={<LoginOutlined />} onClick={() => openTerminal('openclaw', 'openclaw models auth login --set-default')}>Configure model / sign in</Button>}

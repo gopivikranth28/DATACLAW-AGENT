@@ -1,12 +1,14 @@
+import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk/channel-core";
 import { resolveDataclawFrontendAccount } from "./config.js";
 import { responseBroker } from "./response-broker.js";
-import { CHANNEL_ID, DEFAULT_ACCOUNT_ID, type OpenClawConfigLike, type DataclawInboundMessage } from "./types.js";
+import { CHANNEL_ID, DEFAULT_ACCOUNT_ID, type DataclawInboundMessage } from "./types.js";
 
-type RuntimeApi = Record<string, unknown>;
-type ReplyPayload = { text?: string; mediaUrl?: string; mediaUrls?: string[] };
+type DispatchParams = Parameters<PluginRuntime["channel"]["reply"]["dispatchReplyWithBufferedBlockDispatcher"]>[0];
+type InboundContext = DispatchParams["ctx"];
+type ReplyPayload = Parameters<DispatchParams["dispatcherOptions"]["deliver"]>[0];
 
 async function persistToDataclawApi(
-  cfg: OpenClawConfigLike,
+  cfg: OpenClawConfig,
   sessionId: string,
   text: string,
   messageId: string,
@@ -33,23 +35,11 @@ async function persistToDataclawApi(
   }
 }
 
-type InboundContext = {
-  Body: string; RawBody: string; CommandBody: string; CommandAuthorized: boolean;
-  From: string; To: string; SessionKey: string; AccountId: string;
-  ChatType: "direct"; ConversationLabel: string; SenderName: string; SenderId: string;
-  Provider: typeof CHANNEL_ID; Surface: typeof CHANNEL_ID;
-  OriginatingChannel: typeof CHANNEL_ID; OriginatingTo: string;
-  MessageSid: string; Timestamp: number;
-  ProjectId?: string; WorkspaceId?: string;
-};
-
 export async function dispatchDataclawFrontendInbound(
-  api: RuntimeApi,
-  cfg: OpenClawConfigLike,
+  runtime: PluginRuntime,
+  cfg: OpenClawConfig,
   message: DataclawInboundMessage,
 ): Promise<void> {
-  const runtime = resolveRuntime(api);
-
   // Resolve the route with peer.kind: "channel" so the resulting sessionKey is
   // per-chat (`agent:main:dataclaw:channel:<chat_id>`) and never collapses to
   // the agent's main session via the dmScope default.
@@ -128,24 +118,5 @@ function buildContext(message: DataclawInboundMessage, sessionKey: string, accou
     Provider: CHANNEL_ID, Surface: CHANNEL_ID,
     OriginatingChannel: CHANNEL_ID, OriginatingTo: message.sessionId,
     MessageSid: messageId, Timestamp: Date.now(),
-    ProjectId: message.projectId, WorkspaceId: message.workspaceId,
-  };
-}
-
-function resolveRuntime(api: RuntimeApi) {
-  const runtime = api.runtime as Record<string, unknown> | undefined;
-  const channel = runtime?.channel as Record<string, unknown> | undefined;
-  const reply = channel?.reply as Record<string, unknown> | undefined;
-  const routing = channel?.routing as Record<string, unknown> | undefined;
-  const dispatch = reply?.dispatchReplyWithBufferedBlockDispatcher;
-  const resolveAgentRoute = routing?.resolveAgentRoute;
-  if (typeof dispatch !== "function" || typeof resolveAgentRoute !== "function") {
-    throw new Error("[dataclaw] Runtime missing required channel methods");
-  }
-  return {
-    channel: {
-      reply: { dispatchReplyWithBufferedBlockDispatcher: dispatch as (p: unknown) => Promise<void> },
-      routing: { resolveAgentRoute: resolveAgentRoute as (p: unknown) => { sessionKey: string; accountId: string } },
-    },
   };
 }

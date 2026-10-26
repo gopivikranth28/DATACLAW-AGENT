@@ -172,6 +172,8 @@ docker compose -f docker-compose.bundled.yml up --build
 
 This builds a single container with both Dataclaw and OpenClaw pre-installed. On first start it bootstraps the OpenClaw gateway, installs the `dataclaw` plugin, and configures default tokens. All state persists under `docker-data/`.
 
+**Supported OpenClaw version: 2026.10.7.** The image pins `OPENCLAW_VERSION=2026.10.7` (Node 24.22.1), and the `dataclaw` plugin declares `minHostVersion >=2026.10.7`, so plugin installs refuse older OpenClaw releases (including `extended-stable` 2026.9.x).
+
 **First-run setup:**
 
 1. Start the container — it will bootstrap OpenClaw automatically
@@ -207,7 +209,7 @@ Open the Config page at http://localhost:8000/config.
 **OpenClaw** — a full-featured agent runtime with multi-model support, memory, and tool orchestration.
 
 1. Select **OpenClaw** as the Agent Backend
-2. Click **Install OpenClaw** and follow the prompts
+2. Click **Install OpenClaw** and follow the prompts (this installs OpenClaw 2026.10.7, the supported version; an existing install must be 2026.10.7 or newer, which needs Node `>=24.22.1 <25` or `>=26.12.1`)
 3. Once installed, configure the OpenClaw model (e.g. Claude, GPT-4, Gemini) via the model selector
 
 **Direct LLM** — connect directly to an LLM API without OpenClaw.
@@ -237,6 +239,8 @@ After OpenClaw is installed and running, install the consolidated Dataclaw plugi
 2. Click **Install** next to `dataclaw` — one plugin that exposes Dataclaw's tools to the OpenClaw agent, routes UI messages between Dataclaw and OpenClaw, and registers the Dataclaw channel.
 
 The plugin is located at `openclaw-plugins/dataclaw/` and installs in a single click with the correct tokens, API URL, and tool allowlist entry. Each install also snapshots the current tool list and surfaces a drift banner on the Config and Tools pages when you add or remove tools, so you know when to re-install.
+
+Clicking **Install** is also your consent to the plugin's declared OpenClaw capabilities (the `dataclaw` channel, its tools, and its bundled skills): the installer passes `--accept-capabilities` and logs the accepted surface. OpenClaw asks again whenever that surface grows, e.g. after you add a tool, which the next Install covers. Skills synced from the Skills page are written to OpenClaw's managed skills directory (`~/.openclaw/skills/`), so plugin reinstalls don't remove them.
 
 ### 3. Create a Project
 

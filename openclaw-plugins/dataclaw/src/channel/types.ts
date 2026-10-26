@@ -30,6 +30,10 @@ export type DataclawOutboundMessage = {
   metadata?: Record<string, unknown>;
 };
 
+/**
+ * The slice of OpenClaw config the channel reads. Structural so both the SDK's
+ * `OpenClawConfig` and the DeepReadonly `runtime.config.current()` view fit.
+ */
 export type OpenClawConfigLike = {
-  channels?: Record<string, unknown>;
+  channels?: object;
 };

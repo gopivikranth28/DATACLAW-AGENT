@@ -1,9 +1,9 @@
 """OpenClaw plugin install orchestration.
 
-Pure-ish service module: parses the plugin manifest, resolves env-var values
-from Dataclaw config, builds an atomic batch-config payload, and runs the
-``openclaw config set --batch-json`` + ``openclaw plugins install`` sequence
-through subprocesses. Yields SSE-shaped event dicts so the FastAPI router can
+Pure-ish service module: parses the plugin manifest, resolves the plugin's
+OpenClaw config values from Dataclaw config, builds an atomic batch-config
+payload, and runs the ``openclaw plugins install`` + ``openclaw config set
+--batch-json`` sequence through subprocesses. Yields SSE-shaped event dicts so the FastAPI router can
 forward them verbatim to the UI.
 
 Designed to be unit-testable without FastAPI: import the module and feed it
@@ -15,6 +15,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
+import shutil
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -39,13 +41,9 @@ _REPORT_TOOL_REQUIRED_PROPERTIES: dict[str, set[str]] = {
 }
 
 
-# OpenClaw 2026.5's install scanner blocks any plugin bundle that mixes
-# `process.env` access with a network send (`fetch(`/`post(`/`http.request(`).
-# DataClaw's plugin legitimately reads its token + API URL and POSTs replies
-# back to the dataclaw API, so we sidestep the heuristic by writing the same
-# values into structured OpenClaw config instead of `env.vars.DATACLAW_*`.
-# The plugin reads them out of cfg with no `process.env` fallback — see
-# `src/channel/config.ts` and `src/tools/config.ts`.
+# The plugin reads its connection settings from structured OpenClaw config
+# (no `process.env` fallback) — see `src/channel/config.ts` and
+# `src/tools/config.ts` — so the installer writes them there.
 #
 # Connection settings (token + API URL) live under `channels.dataclaw.*`
 # because the Dataclaw chat is the channel's auth/transport surface and the
@@ -65,6 +63,56 @@ PLUGIN_ENTRY_CFG_KEY_MAP: dict[str, tuple[str, Any]] = {
 CHANNEL_TOKEN_PATHS: frozenset[str] = frozenset(
     {f"channels.{CHANNEL_SECTION_ID}.token"}
 )
+
+# Oldest OpenClaw the plugin is built and tested against. Keep in sync with
+# `openclaw.install.minHostVersion` in openclaw-plugins/dataclaw/package.json
+# and OPENCLAW_VERSION in Dockerfile.bundled.
+MIN_OPENCLAW_VERSION = "2026.10.7"
+
+_OPENCLAW_VERSION_RE = re.compile(r"(\d{4})\.(\d{1,2})\.(\d{1,3})(?:-([0-9A-Za-z.]+))?")
+
+
+def parse_openclaw_version(text: str) -> tuple[int, int, int, bool] | None:
+    """Parse ``openclaw --version`` output into ``(year, month, patch, prerelease)``.
+
+    The CLI prints the version inside a banner (``OpenClaw 2026.10.7 (abc1234)``),
+    so search rather than match. ``-beta.N``/``-rc.N`` suffixes are pre-releases
+    of that version; a purely numeric suffix (``2026.5.3-1``) is a re-publish of
+    it and compares equal.
+    """
+    m = _OPENCLAW_VERSION_RE.search(text or "")
+    if not m:
+        return None
+    suffix = m.group(4) or ""
+    prerelease = bool(suffix) and not suffix.isdigit()
+    return int(m.group(1)), int(m.group(2)), int(m.group(3)), prerelease
+
+
+def is_supported_openclaw_version(text: str) -> bool | None:
+    """True/False against MIN_OPENCLAW_VERSION, or None when unparseable."""
+    found = parse_openclaw_version(text)
+    if found is None:
+        return None
+    minimum = parse_openclaw_version(MIN_OPENCLAW_VERSION)
+    assert minimum is not None
+    # A pre-release sorts below its release: (y, m, p, not prerelease).
+    return (*found[:3], not found[3]) >= (*minimum[:3], not minimum[3])
+
+
+async def fetch_openclaw_version(argv: list[str]) -> str | None:
+    """Run ``openclaw --version``; return its stdout, or None on failure."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv, "--version",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+    except (asyncio.TimeoutError, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return out.decode(errors="replace").strip() or None
 
 
 def read_plugin_manifest(plugin_dir: Path) -> dict[str, Any]:
@@ -380,23 +428,26 @@ async def _stream_subprocess(
 
 
 async def build_plugin_runtime(plugin_dir: Path) -> AsyncIterator[dict[str, Any]]:
-    """Compile the plugin's TS entry points to JS so OpenClaw 2026.5+ can install.
+    """Compile the plugin's TS entry point to ``dist/index.js``.
 
-    OpenClaw's discovery used to load TypeScript directly; 2026.5 requires the
-    runtime entry to exist on disk as JS at one of the inferred paths
-    (``./dist/index.js``, ``./index.js``, etc.). The plugin's ``package.json``
-    build script runs esbuild against ``./index.ts`` and emits
-    ``./dist/index.js`` with all ``openclaw/*`` imports left external (the host
+    OpenClaw installs require compiled JS (``openclaw.runtimeExtensions`` in
+    the plugin's package.json). The ``build`` script runs esbuild against
+    ``./index.ts`` with all ``openclaw/*`` imports left external (the host
     resolves them at runtime). esbuild lives in devDependencies so we install
     those first (idempotent — fast when ``node_modules`` is already populated)
     before invoking the build script.
     """
     # `--include=dev` forces devDependencies even when NODE_ENV=production —
     # esbuild lives there and we need it to build the runtime entry.
-    yield _sse({"line": f"$ npm install --no-audit --no-fund --include=dev --silent (cwd: {plugin_dir})"})
+    # `--ignore-scripts`: the `openclaw` devDependency (types only) has a
+    # preinstall that hard-fails on Node < 24.22.1, which would block the build
+    # on a host whose Node only runs Dataclaw. esbuild works without its
+    # postinstall (that step only swaps in the native binary for speed).
+    npm_install = ["npm", "install", "--no-audit", "--no-fund", "--include=dev", "--ignore-scripts", "--silent"]
+    yield _sse({"line": f"$ {' '.join(npm_install)} (cwd: {plugin_dir})"})
     install_rc: int | None = None
     async for event in _stream_subprocess(
-        ["npm", "install", "--no-audit", "--no-fund", "--include=dev", "--silent"],
+        npm_install,
         cwd=plugin_dir,
     ):
         if "_rc" in event:
@@ -425,7 +476,7 @@ async def build_plugin_runtime(plugin_dir: Path) -> AsyncIterator[dict[str, Any]
     if build_rc not in (0,):
         yield _sse(
             {
-                "error": f"npm run build failed (exit {build_rc}). openclaw 2026.5 requires compiled runtime entries at ./dist/index.js.",
+                "error": f"npm run build failed (exit {build_rc}). OpenClaw installs the compiled runtime entry at ./dist/index.js.",
                 "exit_code": build_rc or 1,
             }
         )
@@ -551,6 +602,57 @@ def write_plugin_manifest_contracts_tools(
     return True, f"refreshed {manifest_path.name} contracts.tools: {len(declared)} entries"
 
 
+# Files copied into the install package. Everything else in the plugin source
+# dir (node_modules with the full `openclaw` devDependency tree, TS sources,
+# lockfile) is build-time only; copying it made `plugins install` ~10x slower.
+INSTALL_PACKAGE_DIRNAME = ".openclaw-package"
+_INSTALL_PACKAGE_FILES = ("package.json", PLUGIN_MANIFEST_FILENAME, "HOOK.md")
+_INSTALL_PACKAGE_DIRS = ("dist", "skills")
+
+
+def stage_install_package(plugin_dir: Path) -> Path:
+    """Copy the runtime files of the built plugin into a clean package dir.
+
+    Returns the staged directory (``<plugin_dir>/.openclaw-package``), which is
+    what ``openclaw plugins install`` receives. Raises ``FileNotFoundError``
+    when the build output is missing.
+    """
+    entry = plugin_dir / "dist" / "index.js"
+    if not entry.is_file():
+        raise FileNotFoundError(f"Built runtime entry not found: {entry}")
+    stage = plugin_dir / INSTALL_PACKAGE_DIRNAME
+    if stage.exists():
+        shutil.rmtree(stage)
+    stage.mkdir()
+    for name in _INSTALL_PACKAGE_FILES:
+        src = plugin_dir / name
+        if src.is_file():
+            shutil.copy2(src, stage / name)
+    for name in _INSTALL_PACKAGE_DIRS:
+        src = plugin_dir / name
+        if src.is_dir():
+            shutil.copytree(src, stage / name)
+    return stage
+
+
+def describe_declared_capabilities(manifest: dict[str, Any]) -> str:
+    """One-line summary of what the manifest asks OpenClaw to accept.
+
+    OpenClaw records the accepted surface (channels, tools, skills, hooks, …)
+    at install time and requires fresh consent whenever it widens — e.g. when
+    a new Dataclaw tool lands in ``contracts.tools``.
+    """
+    channels = manifest.get("channels") or []
+    contracts = manifest.get("contracts") if isinstance(manifest.get("contracts"), dict) else {}
+    tools = contracts.get("tools") or []
+    skills = manifest.get("skills") or []
+    return (
+        f"channels={','.join(channels) or 'none'} "
+        f"tools={len(tools)} "
+        f"skills={','.join(skills) or 'none'}"
+    )
+
+
 async def install_plugin_atomic(
     plugin_dir: Path,
     openclaw_cfg: dict[str, Any],
@@ -559,16 +661,21 @@ async def install_plugin_atomic(
     tools: list[dict[str, Any]] | None = None,
     install_dir: Path | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
-    """Install an openclaw plugin with one batch config write + one plugins-install.
+    """Install an openclaw plugin with one plugins-install + one batch config write.
 
-    Steps (each followed by a single gateway-restart wait when needed):
+    Works the same whether or not the gateway is running: with a running
+    gateway, ``plugins install`` applies the new plugin generation through it
+    and ``config set`` hot-reloads; without one (the bundled bootstrap), both
+    are saved for the next gateway start.
 
-    1. Pre-flight: plugin dir exists and contains the manifest.
-    2. Write ``tool-manifest.json`` from the caller-supplied in-process tool list.
-    3. Read manifest → derive env vars → fetch current alsoAllow + plugins.allow.
-    4. Run ``openclaw config set --batch-json '...'`` once with env vars,
-       optional tools.alsoAllow merge, plugin enable flag, plugins.allow merge.
-    5. Run ``openclaw plugins install <plugin_dir> --force``.
+    1. Pre-flight: manifest present, live tool registry consistent, OpenClaw
+       version supported.
+    2. Write ``tool-manifest.generated.ts`` + ``contracts.tools``.
+    3. Build ``dist/index.js`` and stage the runtime files.
+    4. ``openclaw plugins install <staged> --force --accept-capabilities``.
+    5. ``openclaw config set --batch-json '...'`` with only the values that
+       would change (channel connection settings, tools knobs, tool allowlist,
+       plugin enable flag, plugins.allow merge).
     """
     # Step 1: pre-flight
     try:
@@ -579,9 +686,6 @@ async def install_plugin_atomic(
 
     plugin_id = manifest["id"]
 
-    # Step 2: write fresh tool manifest from in-process registry, and
-    # mirror it into openclaw.plugin.json contracts.tools so OpenClaw's
-    # tool-contract gate accepts each registerTool call.
     schema_gaps = validate_report_tool_manifest(tools)
     if schema_gaps:
         yield _sse({
@@ -589,6 +693,29 @@ async def install_plugin_atomic(
             "exit_code": 1,
         })
         return
+
+    version_text = await fetch_openclaw_version(argv)
+    supported = is_supported_openclaw_version(version_text or "")
+    if supported is False:
+        yield _sse({
+            "error": (
+                f"OpenClaw {version_text} is older than the supported minimum "
+                f"{MIN_OPENCLAW_VERSION}. Upgrade OpenClaw "
+                f"(npm install -g openclaw@{MIN_OPENCLAW_VERSION}) and retry."
+            ),
+            "exit_code": 1,
+        })
+        return
+    if supported is None:
+        yield _sse({
+            "line": f"warning: could not determine the OpenClaw version (need >= {MIN_OPENCLAW_VERSION}); continuing",
+        })
+    else:
+        yield _sse({"line": f"OpenClaw version: {version_text}"})
+
+    # Step 2: write fresh tool manifest from in-process registry, and
+    # mirror it into openclaw.plugin.json contracts.tools so OpenClaw's
+    # tool-contract gate accepts each registerTool call.
     ok, msg = write_tool_manifest(plugin_dir, tools)
     yield _sse({"line": ("$ " if ok else "warning: ") + msg})
     tools_prefix = str(
@@ -598,38 +725,7 @@ async def install_plugin_atomic(
     ok2, msg2 = write_plugin_manifest_contracts_tools(plugin_dir, tools, tools_prefix)
     yield _sse({"line": ("$ " if ok2 else "warning: ") + msg2})
 
-    # Step 3: pre-install — clear any orphan channels.<id> config from a prior
-    # failed install so OpenClaw 2026.5's plugin-install commit doesn't hard-
-    # fail with "channels.<id>: unknown channel id" during config validation.
-    # The install command's commit goes through writeConfigFile in strict
-    # mode.  OpenClaw 2026.6 validates ``config set --batch-json`` before
-    # applying it, so a ``null`` value cannot delete a channel section here;
-    # use the dedicated unset command instead.
-    pre_install_section = await fetch_current_channel_section(argv)
-    if pre_install_section:
-        channel_path = f"channels.{plugin_id}"
-        yield _sse({"line": f"$ openclaw config unset {channel_path} (clear stale channel section)"})
-        rc_clear: int | None = None
-        async for event in _stream_subprocess([
-            *argv, "config", "unset", channel_path,
-        ]):
-            if "_rc" in event:
-                rc_clear = int(event["_rc"])
-            else:
-                yield event
-        if rc_clear not in (0, 137):
-            yield _sse({
-                "error": f"failed to clear stale channels.{plugin_id} (exit {rc_clear})",
-                "exit_code": rc_clear or 1,
-            })
-            return
-        yield _sse({"line": "Waiting for OpenClaw to restart..."})
-        async for event in _wait_for_gateway(_healthz_url_from_cfg(openclaw_cfg)):
-            yield event
-            if "error" in event:
-                return
-
-    # Step 4: build the TS entry points (OpenClaw 2026.5+ requires JS on disk).
+    # Step 3: build the TS entry point, then stage only the runtime files.
     build_failed = False
     async for event in build_plugin_runtime(plugin_dir):
         if "error" in event:
@@ -637,44 +733,63 @@ async def install_plugin_atomic(
         yield event
     if build_failed:
         return
+    try:
+        stage_install_package(plugin_dir)
+    except OSError as e:
+        yield _sse({"error": f"failed to stage the plugin package: {e}", "exit_code": 1})
+        return
 
-    # Step 5: plugin install (--force so this also works as an update / reinstall).
-    # Use the OpenClaw-side path here — may differ from plugin_dir when openclaw
-    # is in Docker and the source is mounted at a different mount point.
-    install_target = install_dir or plugin_dir
+    # Step 4: plugin install. --force confirms the local (non-ClawHub) source
+    # and replaces an existing install. --accept-capabilities records consent
+    # for the manifest's declared surface: the operator clicking Install (or
+    # the bundled bootstrap the operator started) is that consent, and the
+    # surface widens whenever a Dataclaw tool is added, so it is needed on
+    # reinstalls too. Use the OpenClaw-side path — it may differ from
+    # plugin_dir when openclaw runs in Docker with the source mounted elsewhere.
+    install_target = (install_dir or plugin_dir) / INSTALL_PACKAGE_DIRNAME
+    refreshed = read_plugin_manifest(plugin_dir)
     yield _sse({"line": f"=== Installing {plugin_id} ==="})
-    yield _sse({"line": f"$ openclaw plugins install {install_target} --force"})
+    yield _sse({"line": f"Accepting declared capabilities: {describe_declared_capabilities(refreshed)}"})
+    yield _sse({"line": f"$ openclaw plugins install {install_target} --force --accept-capabilities"})
     install_rc: int | None = None
+    consent_refused = False
     async for event in _stream_subprocess([
-        *argv, "plugins", "install", str(install_target), "--force",
+        *argv, "plugins", "install", str(install_target), "--force", "--accept-capabilities",
     ]):
         if "_rc" in event:
             install_rc = int(event["_rc"])
         else:
+            # The CLI exits 0 when it refuses an install for missing consent.
+            if "was not installed" in str(event.get("line", "")):
+                consent_refused = True
             yield event
 
-    if install_rc not in (0, 137):
+    if install_rc not in (0, 137) or consent_refused:
         yield _sse({"error": f"plugins install failed (exit {install_rc}).",
                     "exit_code": install_rc or 1})
         return
 
-    yield _sse({"line": "Waiting for OpenClaw to restart after plugin install..."})
+    yield _sse({"line": "Waiting for OpenClaw to apply the plugin..."})
     async for event in _wait_for_gateway(_healthz_url_from_cfg(openclaw_cfg)):
         yield event
         if "error" in event:
             return
 
-    # Step 6: post-install config. Now that the plugin is loaded, channels.<id>
-    # is a known section and plugins.entries.<id> is a known plugin, so the
-    # validator accepts these writes without warnings or blocking.
+    # Step 5: post-install config. Now that the plugin is installed,
+    # channels.<id> is a known section and plugins.entries.<id> is a known
+    # plugin, so the validator accepts these writes.
     channel_values = resolve_channel_section_values(openclaw_cfg)
     plugin_entry_config_values = resolve_plugin_entry_config_values(openclaw_cfg)
     current_also_allow = await fetch_current_also_allow(argv)
     current_tools_allow = await fetch_current_tools_allow(argv)
     current_tools_profile = await fetch_current_tools_profile(argv)
     current_plugins_allow = await fetch_current_plugins_allow(argv)
+    # `config get` redacts secrets, so the token never compares equal and is
+    # rewritten each time; an unchanged value is a no-op write in OpenClaw.
     current_channel_section = await fetch_current_channel_section(argv)
     current_plugin_entry_config = await fetch_current_plugin_entry_config(argv, plugin_id)
+    # Reinstalls preserve an authored `enabled: false` (e.g. left behind by
+    # `plugins uninstall`), so the enable flag is part of the batch.
     current_plugin_enabled = await fetch_current_plugin_enabled(argv, plugin_id)
     batch_entries = build_batch_entries(
         channel_values,
@@ -692,34 +807,32 @@ async def install_plugin_atomic(
 
     if not batch_entries:
         yield _sse({"line": "No config changes needed (channel config + alsoAllow already correct)."})
-        yield _sse({"exit_code": 0})
-        return
+    else:
+        masked = [
+            {"path": e["path"], "value": "****" if e["path"] in CHANNEL_TOKEN_PATHS else e["value"]}
+            for e in batch_entries
+        ]
+        yield _sse({"line": f"$ openclaw config set --batch-json (entries: {len(batch_entries)})"})
+        yield _sse({"line": f"  payload: {json.dumps(masked)}"})
 
-    masked = [
-        {"path": e["path"], "value": "****" if e["path"] in CHANNEL_TOKEN_PATHS else e["value"]}
-        for e in batch_entries
-    ]
-    yield _sse({"line": f"$ openclaw config set --batch-json (entries: {len(batch_entries)})"})
-    yield _sse({"line": f"  payload: {json.dumps(masked)}"})
-
-    rc: int | None = None
-    async for event in _stream_subprocess([
-        *argv, "config", "set", "--batch-json", json.dumps(batch_entries),
-    ]):
-        if "_rc" in event:
-            rc = int(event["_rc"])
-        else:
-            yield event
-    if rc not in (0, 137):
-        yield _sse({"error": f"post-install config set failed (exit {rc}).",
-                    "exit_code": rc or 1})
-        return
-
-    yield _sse({"line": "Waiting for OpenClaw to restart..."})
-    async for event in _wait_for_gateway(_healthz_url_from_cfg(openclaw_cfg)):
-        yield event
-        if "error" in event:
+        rc: int | None = None
+        async for event in _stream_subprocess([
+            *argv, "config", "set", "--batch-json", json.dumps(batch_entries),
+        ]):
+            if "_rc" in event:
+                rc = int(event["_rc"])
+            else:
+                yield event
+        if rc not in (0, 137):
+            yield _sse({"error": f"post-install config set failed (exit {rc}).",
+                        "exit_code": rc or 1})
             return
+
+        yield _sse({"line": "Waiting for OpenClaw to apply the config..."})
+        async for event in _wait_for_gateway(_healthz_url_from_cfg(openclaw_cfg)):
+            yield event
+            if "error" in event:
+                return
 
     # Snapshot the tools that were just installed into OpenClaw so the UI can
     # later diff against the live registry and prompt the user to reinstall

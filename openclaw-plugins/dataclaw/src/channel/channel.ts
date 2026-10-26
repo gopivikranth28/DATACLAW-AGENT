@@ -1,19 +1,25 @@
 import {
   createChannelPluginBase,
   createChatChannelPlugin,
+  type ChannelPlugin,
+  type OpenClawConfig,
 } from "openclaw/plugin-sdk/channel-core";
-import type { OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
+import type {
+  ChannelMessageActionAdapter,
+  ChannelOutboundContext,
+} from "openclaw/plugin-sdk/channel-contract";
 import { resolveDataclawFrontendAccount } from "./config.js";
 import { responseBroker } from "./response-broker.js";
-import { CHANNEL_ID, type DataclawFrontendAccount } from "./types.js";
+import { CHANNEL_ID, DEFAULT_ACCOUNT_ID, type DataclawFrontendAccount } from "./types.js";
 
 /** POST a message to Dataclaw's API for persistence (fire-and-forget). */
 async function pushToDataclawApi(
+  cfg: OpenClawConfig,
   sessionId: string,
   messageId: string,
   content: string,
 ): Promise<void> {
-  const account = resolveDataclawFrontendAccount({});
+  const account = resolveDataclawFrontendAccount(cfg);
   const apiUrl = account.dataclawApiUrl;
   if (!apiUrl) return;
 
@@ -38,16 +44,106 @@ function resolveTargetSession(params: Record<string, unknown>): string {
   return target;
 }
 
+function newOutboundMessageId(): string {
+  return `dc-out-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+/** Outbound sends just fan out to whoever is listening on /dataclaw/events. */
+function publishOutbound(ctx: ChannelOutboundContext, text: string, metadata?: Record<string, unknown>) {
+  const messageId = newOutboundMessageId();
+  responseBroker.publish({
+    sessionId: resolveTargetSession(ctx), text, messageId, type: "message",
+    createdAt: new Date().toISOString(), metadata,
+  });
+  return { messageId };
+}
+
+const configAdapter: ChannelPlugin<DataclawFrontendAccount>["config"] = {
+  listAccountIds(cfg) {
+    const section = (cfg.channels as Record<string, { accounts?: Record<string, unknown> }> | undefined)?.[CHANNEL_ID];
+    const accounts = section?.accounts ? Object.keys(section.accounts) : [];
+    return accounts.length > 0 ? accounts : [DEFAULT_ACCOUNT_ID];
+  },
+  resolveAccount: (cfg, accountId) => resolveDataclawFrontendAccount(cfg, accountId),
+  inspectAccount(cfg, accountId) {
+    const account = resolveDataclawFrontendAccount(cfg, accountId);
+    return {
+      enabled: account.enabled,
+      configured: true,
+      tokenStatus: account.token ? "available" : "missing",
+    };
+  },
+  isEnabled: (account) => account.enabled,
+  // The channel has no required credential: an unset token just disables the
+  // X-Dataclaw-Token check, which is what the local bundled install relies on.
+  isConfigured: () => true,
+};
+
+const actionsAdapter: ChannelMessageActionAdapter = {
+  describeMessageTool: () => ({ actions: ["send", "edit"], capabilities: [] }),
+  // Only "edit" is plugin-owned. Reporting "send" as unsupported routes it
+  // through the canonical outbound adapter (sendText/sendPayload) below.
+  supportsAction: ({ action }) => action === "edit",
+  async handleAction(ctx) {
+    if (ctx.action !== "edit") throw new Error(`dataclaw: unsupported message action ${ctx.action}`);
+    const messageId = String(ctx.params.messageId ?? "").trim();
+    const text = String(ctx.params.message ?? ctx.params.text ?? "").trim();
+    const sessionId = resolveTargetSession(ctx.params);
+    if (!messageId) throw new Error("dataclaw edit requires messageId");
+    if (!text) throw new Error("dataclaw edit requires text");
+
+    responseBroker.publish({ sessionId, text, messageId, type: "edit", createdAt: new Date().toISOString() });
+    void pushToDataclawApi(ctx.cfg, sessionId, messageId, text);
+
+    return {
+      content: [{ type: "text", text: JSON.stringify({ ok: true, messageId }) }],
+      details: { ok: true, channel: CHANNEL_ID, action: "edit", messageId },
+    };
+  },
+};
+
 const builtPlugin = createChatChannelPlugin<DataclawFrontendAccount>({
-  base: createChannelPluginBase({
-    id: CHANNEL_ID,
-    setup: {
-      resolveAccount(cfg: OpenClawConfig, accountId?: string | null) {
-        return resolveDataclawFrontendAccount(cfg, accountId);
+  base: {
+    ...createChannelPluginBase<DataclawFrontendAccount>({
+      id: CHANNEL_ID,
+      meta: {
+        label: "Dataclaw",
+        selectionLabel: "Dataclaw",
+        // The host's default for a channel without docs; set explicitly so it
+        // doesn't warn "registered incomplete metadata" on every reload.
+        docsPath: "/channels/dataclaw",
+        blurb: "Connect OpenClaw to the Dataclaw web frontend.",
       },
-      inspectAccount() { return { enabled: true, configured: true, tokenStatus: "available" }; },
+    }),
+    // createChannelPluginBase types `config` as optional; the chat-plugin
+    // builder needs it present, so set it on the composed base directly.
+    config: configAdapter,
+    messaging: {
+      resolveSessionConversation({ rawId }) {
+        const [baseConversationId, threadId] = rawId.split(":thread:", 2);
+        return {
+          id: baseConversationId,
+          threadId: threadId ?? null,
+          baseConversationId,
+          parentConversationCandidates: threadId ? [baseConversationId] : [],
+        };
+      },
+      inferTargetChatType: () => "channel",
+      targetResolver: {
+        hint: "Provide the dataclaw chat session id (uuid).",
+        // Any non-empty string is a valid dataclaw chat target — there's no
+        // separate directory to look up. Without this, host directory lookup
+        // throws unknownTargetError for bare UUID chat ids.
+        looksLikeId: (raw, normalized) => Boolean((normalized ?? raw).trim()),
+        resolveTarget: async ({ input, normalized }) => {
+          const to = (normalized ?? input).trim();
+          if (!to) return null;
+          return { to, kind: "channel", source: "normalized" };
+        },
+      },
     },
-  }),
+    actions: actionsAdapter,
+  },
 
   security: {
     dm: {
@@ -61,97 +157,21 @@ const builtPlugin = createChatChannelPlugin<DataclawFrontendAccount>({
   threading: { topLevelReplyToMode: "reply" },
 
   outbound: {
-    attachedResults: {
-      sendText: async (params: Record<string, unknown>) => {
-        const sessionId = resolveTargetSession(params);
-        const text = typeof params.text === "string" ? params.text : "";
-        const messageId = `dc-out-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        responseBroker.publish({ sessionId, text, messageId, type: "message", createdAt: new Date().toISOString() });
-        return { messageId };
-      },
-      sendPayload: async (params: Record<string, unknown>) => {
-        const sessionId = resolveTargetSession(params);
-        const text = typeof params.text === "string" ? params.text : JSON.stringify(params.payload);
-        const messageId = `dc-out-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        responseBroker.publish({
-          sessionId, text, messageId, type: "message", createdAt: new Date().toISOString(),
-          metadata: params.payload as Record<string, unknown>,
-        });
-        return { messageId };
+    base: {
+      deliveryMode: "direct",
+      async sendPayload(ctx) {
+        const text = ctx.payload.text || ctx.text || JSON.stringify(ctx.payload);
+        return {
+          channel: CHANNEL_ID,
+          ...publishOutbound(ctx, text, { payload: ctx.payload as unknown as Record<string, unknown> }),
+        };
       },
     },
+    attachedResults: {
+      channel: CHANNEL_ID,
+      sendText: (ctx) => publishOutbound(ctx, ctx.text),
+    },
   },
-
 });
 
-const messagingAdapter = {
-  resolveSessionConversation(params: { kind: "group" | "channel"; rawId: string }) {
-    const [baseConversationId, threadId] = params.rawId.split(":thread:", 2);
-    return {
-      id: baseConversationId,
-      threadId: threadId ?? null,
-      baseConversationId,
-      parentConversationCandidates: threadId ? [baseConversationId] : [],
-    };
-  },
-  inferTargetChatType: () => "channel" as const,
-  targetResolver: {
-    hint: "Provide the dataclaw chat session id (uuid).",
-    // Any non-empty string is a valid dataclaw chat target — there's no
-    // separate directory to look up. Without this, host directory lookup
-    // throws unknownTargetError for bare UUID chat ids.
-    looksLikeId: (raw: string, normalized?: string) => Boolean((normalized ?? raw).trim()),
-    resolveTarget: async ({ input, normalized }: { input: string; normalized: string }) => {
-      const to = (normalized ?? input).trim();
-      if (!to) return null;
-      return { to, kind: "channel" as const, source: "normalized" as const };
-    },
-  },
-};
-
-const actionsAdapter = {
-  describeMessageTool() { return { actions: ["send", "edit"], capabilities: [] }; },
-  supportsAction({ action }: { action: string }) { return action === "send" || action === "edit"; },
-  async handleAction(ctx: { action: string; params: Record<string, unknown> }) {
-    if (ctx.action !== "edit") return null;
-    const messageId = String(ctx.params.messageId ?? "").trim();
-    const text = String(ctx.params.message ?? ctx.params.text ?? "").trim();
-    const sessionId = resolveTargetSession(ctx.params);
-    if (!messageId) throw new Error("dataclaw edit requires messageId");
-    if (!text) throw new Error("dataclaw edit requires text");
-
-    responseBroker.publish({ sessionId, text, messageId, type: "edit", createdAt: new Date().toISOString() });
-    void pushToDataclawApi(sessionId, messageId, text);
-
-    return {
-      content: [{ type: "text", text: JSON.stringify({ ok: true, messageId }) }],
-      details: { ok: true, channel: CHANNEL_ID, action: "edit", messageId },
-    };
-  },
-};
-
-export const dataclawFrontendPlugin = {
-  ...builtPlugin,
-  messaging: messagingAdapter,
-  actions: actionsAdapter,
-  config: {
-    ...(builtPlugin as Record<string, unknown>).config,
-    listAccountIds(cfg: any): string[] {
-      const section = cfg?.channels?.[CHANNEL_ID];
-      const accounts = section?.accounts ? Object.keys(section.accounts) : [];
-      return accounts.length > 0 ? accounts : ["default"];
-    },
-    resolveAccount(cfg: any, accountId?: string | null) {
-      return resolveDataclawFrontendAccount(cfg, accountId);
-    },
-    inspectAccount(_cfg: any, _accountId?: string | null) {
-      return { enabled: true, configured: true, tokenStatus: "available" };
-    },
-    isEnabled(cfg: any, accountId?: string | null): boolean {
-      return resolveDataclawFrontendAccount(cfg, accountId).enabled;
-    },
-    isConfigured(cfg: any, accountId?: string | null): boolean {
-      return resolveDataclawFrontendAccount(cfg, accountId).enabled;
-    },
-  },
-};
+export const dataclawFrontendPlugin: ChannelPlugin<DataclawFrontendAccount> = builtPlugin;
