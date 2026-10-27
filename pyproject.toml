@@ -13,7 +13,7 @@ dependencies = [
     "langchain-anthropic>=0.3",
     "langchain-openai>=0.3",
     "langchain-google-genai>=2.0",
-    "ag-ui-protocol>=0.1",
+    "ag-ui-protocol>=1.0.0",
     "dataclaw-workspace",
     "dataclaw-data",
     "dataclaw-plans",
