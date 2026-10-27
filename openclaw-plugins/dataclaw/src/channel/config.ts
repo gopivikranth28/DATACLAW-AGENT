@@ -23,11 +23,9 @@ export function resolveDataclawFrontendAccount(
 ): DataclawFrontendAccount {
   const accountKey = accountId ?? DEFAULT_ACCOUNT_ID;
   const section = resolveAccountSection(cfg, accountKey);
-  // All config reads come from cfg.channels.dataclaw.* — never from
-  // environment variables. The 2026.5 install scanner blocks any plugin
-  // that mixes env-var reads with outbound HTTP, which the structured-
-  // config approach avoids. The install service writes these values to
-  // channels.dataclaw.* directly.
+  // All config reads come from cfg.channels.dataclaw.* (validated by the
+  // manifest's channelConfigs schema), never from environment variables.
+  // The install service writes these values to channels.dataclaw.* directly.
   return {
     accountId: accountKey,
     enabled: section.enabled !== false,
@@ -43,7 +41,7 @@ export function resolveDataclawFrontendAccount(
 }
 
 function resolveSection(cfg: OpenClawConfigLike): DataclawFrontendConfig {
-  const section = cfg.channels?.[CHANNEL_ID];
+  const section = (cfg.channels as Record<string, unknown> | undefined)?.[CHANNEL_ID];
   if (!section || typeof section !== "object") return {};
   return section as DataclawFrontendConfig;
 }

@@ -1,0 +1,81 @@
+{
+  "workspaceDir": "/root/.openclaw/workspace",
+  "plugin": {
+    "id": "dataclaw",
+    "name": "Dataclaw",
+    "description": "Dataclaw integration: registers Python tools and routes UI messages between Dataclaw and OpenClaw.",
+    "packageVersion": "0.1.0",
+    "version": "0.1.0",
+    "builtWithOpenClawVersion": "2026.10.7",
+    "packageName": "@dataclaw/openclaw-dataclaw",
+    "format": "openclaw",
+    "source": "/root/.openclaw/extensions/dataclaw/dist/index.js",
+    "rootDir": "/root/.openclaw/extensions/dataclaw",
+    "origin": "global",
+    "trust": {
+      "reason": "origin-path",
+      "registryPath": "/root/.openclaw/state/openclaw.sqlite",
+      "origin": "global",
+      "installSource": "path"
+    },
+    "enabled": true,
+    "explicitlyEnabled": true,
+    "activated": true,
+    "activationSource": "explicit",
+    "activationReason": "enabled in config",
+    "status": "loaded",
+    "toolNames": [],
+    "channelIds": [
+      "dataclaw"
+    ],
+    "httpRoutes": 0
+  },
+  "shape": "plain-capability",
+  "capabilityMode": "plain",
+  "capabilityCount": 1,
+  "capabilities": [
+    {
+      "kind": "channel",
+      "ids": [
+        "dataclaw"
+      ]
+    }
+  ],
+  "tools": [],
+  "httpRouteCount": 0,
+  "diagnostics": [],
+  "compatibility": [],
+  "install": {
+    "source": "path",
+    "sourcePath": "/dataclaw/openclaw-plugins/dataclaw",
+    "installPath": "/root/.openclaw/extensions/dataclaw",
+    "version": "0.1.0",
+    "installedAt": "2026-10-26T22:29:26.275Z",
+    "acceptedSurface": {
+      "channels": [
+        "dataclaw"
+      ],
+      "providers": [],
+      "tools": [
+        "dataclaw_accept_gate_risk",
+        "dataclaw_close_notebook",
+        "dataclaw_data_describe_column"
+      ],
+      "contracts": [
+        "tools: dataclaw_accept_gate_risk",
+        "tools: dataclaw_close_notebook",
+        "tools: dataclaw_data_describe_column"
+      ],
+      "hooks": [],
+      "mcpServers": [],
+      "cliCommands": [],
+      "cliBackends": [],
+      "skills": [
+        "./skills"
+      ],
+      "dangerousConfigFlags": []
+    },
+    "acceptedSurfaceHash": "4489083032a201d8c2b8db7835185300c7b5c30a2f4642fc1e95f9ab61ec7e25",
+    "acceptedSurfaceAt": "2026-10-26T22:29:26.272Z"
+  }
+}

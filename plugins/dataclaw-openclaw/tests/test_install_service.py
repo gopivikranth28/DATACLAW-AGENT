@@ -390,20 +390,35 @@ async def test_install_plugin_atomic_refuses_to_reuse_a_stale_generated_manifest
     assert "live Dataclaw tool registry is unavailable" in events[0]["error"]
 
 
-@pytest.mark.asyncio
-async def test_install_plugin_atomic_happy_path(tmp_path: Path) -> None:
+def _write_built_plugin(tmp_path: Path) -> Path:
+    """A plugin dir that looks like it went through `npm run build`."""
     plugin_dir = _write_manifest(
         tmp_path,
-        {"id": "dataclaw"},
+        {"id": "dataclaw", "channels": ["dataclaw"], "skills": ["./skills"]},
     )
+    (plugin_dir / "package.json").write_text('{"name": "@dataclaw/openclaw-dataclaw"}')
+    (plugin_dir / "dist").mkdir()
+    (plugin_dir / "dist" / "index.js").write_text("export default {};\n")
+    (plugin_dir / "skills" / "dataclaw").mkdir(parents=True)
+    (plugin_dir / "skills" / "dataclaw" / "SKILL.md").write_text("---\nname: dataclaw\n---\n")
+    (plugin_dir / "node_modules" / "openclaw").mkdir(parents=True)
+    return plugin_dir
+
+
+@pytest.mark.asyncio
+async def test_install_plugin_atomic_happy_path(tmp_path: Path) -> None:
+    plugin_dir = _write_built_plugin(tmp_path)
 
     # Mock subprocess: every spawn returns a process whose stdout yields one
-    # line and that exits 0.
+    # line and that exits 0. `--version` reports the supported minimum.
     async def fake_subprocess_exec(*args, **kwargs):
         proc = AsyncMock()
         proc.stdout.__aiter__.return_value = iter([b"line one\n"])
         proc.wait.return_value = 0
-        proc.communicate.return_value = (b"[]", b"")
+        if args[-1] == "--version":
+            proc.communicate.return_value = (b"OpenClaw 2026.10.7 (157d8c2)\n", b"")
+        else:
+            proc.communicate.return_value = (b"[]", b"")
         proc.returncode = 0
         return proc
 
@@ -469,15 +484,14 @@ async def test_install_plugin_atomic_happy_path(tmp_path: Path) -> None:
     ]
 
     # Expected subprocess calls (in order). Channel config writes happen AFTER
-    # plugin install: OpenClaw 2026.5's plugin-install commit hard-fails on
-    # orphan channel sections, and writing channels.<id> before the plugin is
-    # registered creates exactly that orphan. So pre-install we only check
-    # whether the channel section already exists (and would clear it if so);
-    # post-install we batch all the real config writes.
-    #    1. config get channels.dataclaw --json    (pre-install: any stale section?)
+    # plugin install so channels.<id> and plugins.entries.<id> are known to
+    # the validator. Nothing is written before the install: OpenClaw 2026.10
+    # no longer rejects a leftover channels.<id> section, so the old
+    # pre-install `config unset` is gone.
+    #    1. openclaw --version                      (minimum-version gate)
     #    2. npm install                             (devDeps for esbuild)
     #    3. npm run build                           (esbuild → dist/index.js)
-    #    4. plugins install <dir> --force
+    #    4. plugins install <dir>/.openclaw-package --force --accept-capabilities
     #    5. config get tools.alsoAllow --json
     #    6. config get tools.allow --json
     #    7. config get tools.profile --json         (picks allow vs alsoAllow target)
@@ -488,11 +502,15 @@ async def test_install_plugin_atomic_happy_path(tmp_path: Path) -> None:
     #   12. config set --batch-json ...             (atomic config write)
     spawn_argvs = [c.args for c in spawn.call_args_list]
     assert len(spawn_argvs) == 12
-    assert spawn_argvs[0][:5] == ("openclaw", "config", "get", "channels.dataclaw", "--json")
+    assert spawn_argvs[0] == ("openclaw", "--version")
     assert spawn_argvs[1][:2] == ("npm", "install")
+    assert "--ignore-scripts" in spawn_argvs[1]
     assert spawn_argvs[2][:3] == ("npm", "run", "build")
-    assert spawn_argvs[3][:3] == ("openclaw", "plugins", "install")
-    assert "--force" in spawn_argvs[3]
+    assert spawn_argvs[3] == (
+        "openclaw", "plugins", "install",
+        str(plugin_dir / ".openclaw-package"),
+        "--force", "--accept-capabilities",
+    )
     assert spawn_argvs[4][:5] == ("openclaw", "config", "get", "tools.alsoAllow", "--json")
     assert spawn_argvs[5][:5] == ("openclaw", "config", "get", "tools.allow", "--json")
     assert spawn_argvs[6][:5] == ("openclaw", "config", "get", "tools.profile", "--json")
@@ -505,6 +523,23 @@ async def test_install_plugin_atomic_happy_path(tmp_path: Path) -> None:
 
     # Final event reports success.
     assert events[-1] == {"exit_code": 0}
+
+    # Only runtime files are staged for the install — never node_modules or
+    # the TypeScript sources.
+    staged = plugin_dir / ".openclaw-package"
+    assert sorted(p.name for p in staged.iterdir()) == [
+        "dist", PLUGIN_MANIFEST_FILENAME, "package.json", "skills",
+    ]
+    assert (staged / "dist" / "index.js").is_file()
+    assert (staged / "skills" / "dataclaw" / "SKILL.md").is_file()
+
+    # The declared capability surface is logged before consenting to it.
+    lines = [e.get("line", "") for e in events]
+    assert any(
+        line.startswith("Accepting declared capabilities:")
+        and "channels=dataclaw" in line and "tools=2" in line and "skills=./skills" in line
+        for line in lines
+    )
 
     # Batch payload splits config across two namespaces:
     # - channels.dataclaw.{token, dataclawApiUrl} for auth/transport.
@@ -530,42 +565,198 @@ async def test_install_plugin_atomic_happy_path(tmp_path: Path) -> None:
     assert "plugins.allow" not in paths
 
 
-@pytest.mark.asyncio
-async def test_install_plugin_uses_config_unset_for_existing_orphan_channel(tmp_path: Path, monkeypatch) -> None:
-    plugin_dir = _write_manifest(tmp_path, {"id": "dataclaw"})
+def _patch_install_flow(monkeypatch, *, version: str | None = "OpenClaw 2026.10.7 (157d8c2)",
+                        install_lines: list[str] | None = None, plugin_enabled: bool = False):
+    """Stub every subprocess-backed step of install_plugin_atomic.
+
+    Returns the list that records each `_stream_subprocess` argv.
+    """
     calls: list[list[str]] = []
 
     async def fake_stream(argv: list[str], cwd: Path | None = None):
         calls.append(argv)
+        if argv[1:3] == ["plugins", "install"]:
+            for line in install_lines or []:
+                yield {"line": line}
         yield {"_rc": 0}
 
     async def fake_build(_plugin_dir: Path):
         yield {"line": "built"}
 
-    async def fake_channel_section(*_args, **_kwargs):
-        return {"dataclawApiUrl": "http://legacy"}
-
     monkeypatch.setattr(install_service, "_stream_subprocess", fake_stream)
     monkeypatch.setattr(install_service, "build_plugin_runtime", fake_build)
     monkeypatch.setattr(install_service, "_wait_for_gateway", _empty_async_events)
-    monkeypatch.setattr(install_service, "fetch_current_channel_section", fake_channel_section)
+    monkeypatch.setattr(install_service, "fetch_openclaw_version", AsyncMock(return_value=version))
+    monkeypatch.setattr(
+        install_service, "fetch_current_channel_section",
+        AsyncMock(return_value={"dataclawApiUrl": "http://legacy"}),
+    )
     monkeypatch.setattr(install_service, "fetch_current_also_allow", AsyncMock(return_value=[]))
     monkeypatch.setattr(install_service, "fetch_current_tools_allow", AsyncMock(return_value=[]))
     monkeypatch.setattr(install_service, "fetch_current_tools_profile", AsyncMock(return_value=None))
     monkeypatch.setattr(install_service, "fetch_current_plugins_allow", AsyncMock(return_value=[]))
     monkeypatch.setattr(install_service, "fetch_current_plugin_entry_config", AsyncMock(return_value={}))
-    monkeypatch.setattr(install_service, "fetch_current_plugin_enabled", AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        install_service, "fetch_current_plugin_enabled", AsyncMock(return_value=plugin_enabled),
+    )
+    return calls
 
-    events = [
+
+async def _run_install(plugin_dir: Path, **kwargs) -> list[dict]:
+    return [
         event
         async for event in install_plugin_atomic(
             plugin_dir=plugin_dir,
-            openclaw_cfg={},
+            openclaw_cfg=kwargs.pop("openclaw_cfg", {}),
             argv=["openclaw"],
             tools=[{"name": "demo", "description": "Demo tool", "parameters": {}}],
+            **kwargs,
         )
     ]
 
-    assert ["openclaw", "config", "unset", "channels.dataclaw"] in calls
-    assert not any("--batch-json" in call and "channels.dataclaw" in call for call in calls)
+
+@pytest.mark.asyncio
+async def test_install_plugin_does_not_unset_an_existing_channel_section(tmp_path: Path, monkeypatch) -> None:
+    plugin_dir = _write_built_plugin(tmp_path)
+    calls = _patch_install_flow(monkeypatch)
+
+    events = await _run_install(plugin_dir)
+
+    assert not any(call[1:3] == ["config", "unset"] for call in calls)
+    # The existing section is updated in place by the post-install batch.
+    batch_calls = [call for call in calls if "--batch-json" in call]
+    assert len(batch_calls) == 1
+    batch = json.loads(batch_calls[0][batch_calls[0].index("--batch-json") + 1])
+    assert {"path": "channels.dataclaw.dataclawApiUrl", "value": "http://localhost:8000"} in batch
     assert events[-1] == {"exit_code": 0}
+
+
+@pytest.mark.asyncio
+async def test_install_plugin_installs_from_the_openclaw_side_staged_package(tmp_path: Path, monkeypatch) -> None:
+    plugin_dir = _write_built_plugin(tmp_path)
+    calls = _patch_install_flow(monkeypatch)
+
+    events = await _run_install(plugin_dir, install_dir=Path("/dataclaw/openclaw-plugins/dataclaw"))
+
+    assert [
+        "openclaw", "plugins", "install",
+        "/dataclaw/openclaw-plugins/dataclaw/.openclaw-package",
+        "--force", "--accept-capabilities",
+    ] in calls
+    assert events[-1] == {"exit_code": 0}
+
+
+@pytest.mark.asyncio
+async def test_install_plugin_blocks_unsupported_openclaw_before_writing(tmp_path: Path, monkeypatch) -> None:
+    plugin_dir = _write_built_plugin(tmp_path)
+    calls = _patch_install_flow(monkeypatch, version="OpenClaw 2026.5.3-1 (abc1234)")
+
+    events = await _run_install(plugin_dir)
+
+    assert events[-1]["exit_code"] == 1
+    assert "older than the supported minimum 2026.10.7" in events[-1]["error"]
+    assert calls == []
+    assert not (plugin_dir / "src" / "tools" / "tool-manifest.generated.ts").exists()
+
+
+@pytest.mark.asyncio
+async def test_install_plugin_continues_when_version_is_unknown(tmp_path: Path, monkeypatch) -> None:
+    plugin_dir = _write_built_plugin(tmp_path)
+    _patch_install_flow(monkeypatch, version=None)
+
+    events = await _run_install(plugin_dir)
+
+    assert any("could not determine the OpenClaw version" in e.get("line", "") for e in events)
+    assert events[-1] == {"exit_code": 0}
+
+
+@pytest.mark.asyncio
+async def test_install_plugin_fails_when_capability_consent_is_refused(tmp_path: Path, monkeypatch) -> None:
+    # The CLI exits 0 when it refuses an install for missing consent.
+    plugin_dir = _write_built_plugin(tmp_path)
+    calls = _patch_install_flow(monkeypatch, install_lines=[
+        'Plugin "dataclaw" requires capability consent. The plugin was not installed. Re-run ...',
+    ])
+
+    events = await _run_install(plugin_dir)
+
+    assert events[-1]["exit_code"] == 1
+    assert "plugins install failed" in events[-1]["error"]
+    assert not any("--batch-json" in call for call in calls)
+
+
+@pytest.mark.asyncio
+async def test_install_plugin_fails_when_build_output_is_missing(tmp_path: Path, monkeypatch) -> None:
+    plugin_dir = _write_built_plugin(tmp_path)
+    (plugin_dir / "dist" / "index.js").unlink()
+    calls = _patch_install_flow(monkeypatch)
+
+    events = await _run_install(plugin_dir)
+
+    assert events[-1]["exit_code"] == 1
+    assert "dist/index.js" in events[-1]["error"]
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_install_plugin_records_state_when_config_is_already_current(tmp_path: Path, monkeypatch) -> None:
+    plugin_dir = _write_built_plugin(tmp_path)
+    calls = _patch_install_flow(monkeypatch, plugin_enabled=True)
+    monkeypatch.setattr(install_service, "build_batch_entries", lambda *a, **k: [])
+
+    events = await _run_install(plugin_dir)
+
+    assert not any("--batch-json" in call for call in calls)
+    assert events[-1] == {"exit_code": 0}
+    assert install_service.read_install_state("dataclaw")["tool_names"] == ["demo"]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("OpenClaw 2026.10.7 (157d8c2)", True),
+        ("2026.10.7", True),
+        ("OpenClaw 2026.10.12 (deadbee)", True),
+        ("OpenClaw 2026.11.0", True),
+        ("OpenClaw 2027.1.1", True),
+        ("OpenClaw 2026.10.7-1", True),
+        ("OpenClaw 2026.10.7-beta.2", False),
+        ("OpenClaw 2026.10.6", False),
+        ("OpenClaw 2026.9.34 (extended-stable)", False),
+        ("OpenClaw 2026.5.3-1", False),
+        ("openclaw: command not found", None),
+        ("", None),
+    ],
+)
+def test_is_supported_openclaw_version(text: str, expected: bool | None) -> None:
+    assert install_service.is_supported_openclaw_version(text) is expected
+
+
+def test_describe_declared_capabilities() -> None:
+    manifest = {
+        "channels": ["dataclaw"],
+        "skills": ["./skills"],
+        "contracts": {"tools": ["dataclaw_a", "dataclaw_b"]},
+    }
+    assert install_service.describe_declared_capabilities(manifest) == (
+        "channels=dataclaw tools=2 skills=./skills"
+    )
+    assert install_service.describe_declared_capabilities({}) == "channels=none tools=0 skills=none"
+
+
+def test_parse_plugin_inspect_output_reads_real_2026_10_7_payload() -> None:
+    from dataclaw_openclaw.install_router import parse_plugin_inspect_output
+
+    fixture = Path(__file__).parent / "fixtures" / "plugins_inspect_dataclaw_2026.10.7.json"
+    # stdout and stderr are merged; a state-dir warning can precede the JSON.
+    output = (
+        'State directory root "/root/.openclaw" is owned by another user: uid 1000, gid 1000; '
+        "leaving mode 755.\n" + fixture.read_text()
+    )
+    assert parse_plugin_inspect_output(output) == {
+        "installed": True,
+        "status": "loaded",
+        "version": "0.1.0",
+        "enabled": True,
+    }
+    assert parse_plugin_inspect_output('Plugin not found: dataclaw') == {"installed": False}

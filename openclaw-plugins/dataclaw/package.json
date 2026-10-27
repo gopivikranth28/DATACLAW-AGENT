@@ -13,22 +13,33 @@
     "extensions": [
       "./index.ts"
     ],
+    "runtimeExtensions": [
+      "./dist/index.js"
+    ],
     "channel": {
       "id": "dataclaw",
       "label": "Dataclaw",
       "blurb": "Connect OpenClaw to the Dataclaw web frontend."
     },
     "compat": {
-      "pluginApi": ">=2026.3.24-beta.2",
-      "minGatewayVersion": "2026.3.24-beta.2"
+      "pluginApi": ">=2026.10.7",
+      "minGatewayVersion": "2026.10.7"
+    },
+    "install": {
+      "minHostVersion": ">=2026.10.7"
+    },
+    "build": {
+      "openclawVersion": "2026.10.7",
+      "pluginSdkVersion": "2026.10.7"
     }
   },
   "peerDependencies": {
-    "openclaw": "*"
+    "openclaw": ">=2026.10.7 <2027"
   },
   "devDependencies": {
     "@types/node": "^24.12.2",
     "esbuild": "^0.24.0",
+    "openclaw": "2026.10.7",
     "typescript": "^6.0.2"
   }
 }

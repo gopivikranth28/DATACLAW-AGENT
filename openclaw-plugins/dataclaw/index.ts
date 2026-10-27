@@ -1,3 +1,8 @@
+import {
+  defineChannelPluginEntry,
+  type OpenClawPluginApi,
+} from "openclaw/plugin-sdk/channel-core";
+import type { AnyAgentTool, OpenClawPluginToolContext } from "openclaw/plugin-sdk/core";
 import { dataclawFrontendPlugin } from "./src/channel/channel.js";
 import { registerDataclawFrontendRoutes } from "./src/channel/http-routes.js";
 import { createDataclawToolsClient } from "./src/tools/client.js";
@@ -5,112 +10,66 @@ import { resolveDataclawToolsConfig } from "./src/tools/config.js";
 import { DATACLAW_TOOL_MANIFEST } from "./src/tools/tool-manifest.js";
 import { toOpenClawToolResult } from "./src/tools/tool-result.js";
 
-type ToolContext = {
-  sessionId?: string;
-  sessionKey?: string;
-  agentId?: string;
-};
-
-type ApiWithChannel = {
-  registerChannel?: (registration: { plugin: unknown }) => void;
-  registerHttpRoute?: (route: unknown) => void;
-  registerTool: (factory: unknown, opts?: unknown) => void;
-  registrationMode?: string;
-  runtime?: { config?: { current?: () => unknown } };
-  logger?: { info?: (m: string) => void };
-};
-
 /**
- * Custom plugin entry. We can't use `defineChannelPluginEntry` because its
- * wrapper gates `registerFull(api)` on `api.registrationMode === "full"`,
- * which means tool factories never register during the "discovery" mode load
- * OpenClaw uses for tool-execution lookup (`activate: false, toolDiscovery: true`
- * in `tools.runtimeMissing` resolution). The agent then sees the tool
- * descriptor (declared in `contracts.tools`) but execution fails with
- * "plugin tool runtime missing".
- *
- * Mode handling here:
- *   - "cli-metadata":         do nothing (no live registrations).
- *   - "discovery" / "full":   register channel + tool factories. Tool
- *                             factories are cheap — they're called only when
- *                             the agent actually invokes a tool — so
- *                             registering them in discovery mode just makes
- *                             the lookup path find them.
- *   - "full" only:            register HTTP routes (need the live HTTP server).
- *
- * `channelPlugin` is also exposed on the entry object so OpenClaw's
- * setup-time channel-plugin discovery picks it up before the runtime register
- * runs (matches what `defineChannelPluginEntry` returns).
+ * `defineChannelPluginEntry` registers the channel in every runtime mode and
+ * calls `registerFull` in both "full" and "tool-discovery" mode. The latter is
+ * the scoped load OpenClaw uses to resolve plugin tools at execution time, so
+ * the tool factories must be registered from `registerFull`. HTTP routes bind
+ * to the live gateway server and are registered in "full" mode only.
  */
-export default {
+export default defineChannelPluginEntry({
   id: "dataclaw",
   name: "Dataclaw",
   description:
     "Dataclaw integration: registers Python tools and routes UI messages between Dataclaw and OpenClaw.",
-  channelPlugin: dataclawFrontendPlugin,
-  register(api: ApiWithChannel) {
-    const mode = api.registrationMode;
-    if (mode === "cli-metadata") return;
-
-    api.registerChannel?.({ plugin: dataclawFrontendPlugin });
-
-    // Tool factories: register in discovery + full so the tool-execution
-    // lookup path (which loads with activate: false → discovery mode) can
-    // resolve `dataclaw_*` runtime tools.
-    const fullCfg = api.runtime?.config?.current?.();
-    const cfg = resolveDataclawToolsConfig(fullCfg as never);
-    const client = createDataclawToolsClient(cfg);
-    const registered = new Set<string>();
-    for (const tool of DATACLAW_TOOL_MANIFEST) {
-      const openClawName = `${cfg.prefix}${tool.name}`;
-      if (registered.has(openClawName)) continue;
-      registered.add(openClawName);
-      // IMPORTANT: pass `name` in the options object. When the second arg
-      // to registerTool is a factory (not a static tool), OpenClaw's
-      // registry stores the entry with `names: []` and falls back to the
-      // plugin's full `declaredNames` list (every name from
-      // contracts.tools) at lookup time. With every entry matching every
-      // declared name, the tool-execution lookup's `Array.find(...)` just
-      // returns the FIRST registered entry, whose factory produces the
-      // wrong tool → "plugin tool runtime missing". Setting `opts.name`
-      // pins each entry to one specific tool name so lookup picks the
-      // right factory.
-      api.registerTool(
-        (ctx: ToolContext) => ({
-          name: openClawName,
-          description: tool.description,
-          // OpenClaw types `parameters` as a TypeBox TSchema but only reads it
-          // as JSON Schema. We pass the schema directly — pulling in
-          // @sinclair/typebox would fail at runtime because directory-mode
-          // `openclaw plugins install` skips npm install for plugin deps.
-          parameters: tool.parameters as unknown as never,
-          async execute(_id: string, params: Record<string, unknown>) {
-            const toolParams = withContext(params as Record<string, unknown>, ctx);
-            logToolCall(api, tool.name, toolParams);
-            const result = await client.callTool(tool.name, toolParams, _id);
-            return toOpenClawToolResult(result);
-          },
-        }),
-        { name: openClawName, ...(cfg.optional ? { optional: true } : {}) },
-      );
-    }
-
-    // HTTP routes only in full mode — they bind to the live gateway HTTP
-    // server. Discovery loads happen out of band and have no live server.
-    if (mode === "full" && typeof api.registerHttpRoute === "function") {
-      registerDataclawFrontendRoutes(api as Record<string, unknown> & {
-        registerHttpRoute: (route: unknown) => void;
-      });
-    }
+  plugin: dataclawFrontendPlugin,
+  registerFull(api) {
+    registerDataclawTools(api);
+    if (api.registrationMode === "full") registerDataclawFrontendRoutes(api);
   },
-};
+});
+
+function registerDataclawTools(api: OpenClawPluginApi): void {
+  // Prefix/optional come from plugins.entries.dataclaw.config and only matter
+  // at registration. Connection settings (URL, token) are re-read on every
+  // call so a `config set channels.dataclaw.*` hot reload takes effect.
+  const { prefix, optional } = resolveDataclawToolsConfig(api.config, api.pluginConfig);
+  const registered = new Set<string>();
+  for (const tool of DATACLAW_TOOL_MANIFEST) {
+    const openClawName = `${prefix}${tool.name}`;
+    if (registered.has(openClawName)) continue;
+    registered.add(openClawName);
+    // Pass `name` in the options object so each factory is pinned to one
+    // tool name. Without it the registry falls back to every name in
+    // contracts.tools for each factory and tool lookup can pick the wrong one.
+    api.registerTool(
+      (ctx: OpenClawPluginToolContext): AnyAgentTool => ({
+        name: openClawName,
+        label: openClawName,
+        description: tool.description,
+        // The SDK types `parameters` as a TypeBox TSchema but only reads it as
+        // JSON Schema, which is what the Dataclaw manifest provides. Pulling in
+        // TypeBox just to wrap it would add a runtime dependency to the bundle.
+        parameters: tool.parameters as unknown as AnyAgentTool["parameters"],
+        async execute(toolCallId, params) {
+          const toolParams = withContext((params ?? {}) as Record<string, unknown>, ctx);
+          logToolCall(api, tool.name, toolParams);
+          const cfg = resolveDataclawToolsConfig(api.runtime.config.current(), api.pluginConfig);
+          const result = await createDataclawToolsClient(cfg).callTool(tool.name, toolParams, toolCallId);
+          return toOpenClawToolResult(result);
+        },
+      }),
+      { name: openClawName, ...(optional ? { optional: true } : {}) },
+    );
+  }
+}
 
 function extractFromSessionKey(key: string): string | undefined {
-  // OpenClaw 2026.5 routes Dataclaw chats through a channel-kind peer, so the
-  // sessionKey shape is `agent:<agentId>:dataclaw:channel:<chat_id>`. Older
-  // builds used `:explicit:<chat_id>`; accept both so re-installs of existing
-  // chats keep working. Strip an optional thread suffix the agent runner may
-  // append for forked subsessions.
+  // Dataclaw chats route through a channel-kind peer, so the sessionKey shape
+  // is `agent:<agentId>:dataclaw:channel:<chat_id>`. Pre-2026.5 builds used
+  // `:explicit:<chat_id>`; accept both so existing chats keep working. Strip
+  // an optional thread suffix the agent runner may append for forked
+  // subsessions.
   for (const marker of [":dataclaw:channel:", ":explicit:"]) {
     const idx = key.indexOf(marker);
     if (idx < 0) continue;
@@ -121,7 +80,7 @@ function extractFromSessionKey(key: string): string | undefined {
   return undefined;
 }
 
-function withContext(params: Record<string, unknown>, ctx: ToolContext): Record<string, unknown> {
+function withContext(params: Record<string, unknown>, ctx: OpenClawPluginToolContext): Record<string, unknown> {
   const next = { ...params };
 
   // Dataclaw indexes datasets/plans/notebooks by the dataclaw chat id (the
@@ -152,18 +111,13 @@ function withContext(params: Record<string, unknown>, ctx: ToolContext): Record<
   return next;
 }
 
-function logToolCall(
-  api: { logger?: { info?: (m: string) => void } },
-  toolName: string,
-  params: Record<string, unknown>,
-): void {
-  const msg =
+function logToolCall(api: OpenClawPluginApi, toolName: string, params: Record<string, unknown>): void {
+  api.logger.info(
     `[dataclaw] tool ${toolName}: ` +
     `sessionId=${stringOrEmpty(params.titan_session_id)} ` +
     `sessionKey=${stringOrEmpty(params.openclaw_session_key)} ` +
-    `agentId=${stringOrEmpty(params.openclaw_agent_id)}`;
-  if (typeof api.logger?.info === "function") api.logger.info(msg);
-  else console.log(msg);
+    `agentId=${stringOrEmpty(params.openclaw_agent_id)}`,
+  );
 }
 
 function hasString(value: unknown): value is string {

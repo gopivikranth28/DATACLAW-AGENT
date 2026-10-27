@@ -35,6 +35,9 @@ class ToolCallBody(BaseModel):
     titan_session_id: str | None = None  # backward compat
     openclaw_session_key: str | None = None
     openclaw_agent_id: str | None = None
+    # OpenClaw's own tool-call id, so the persisted tool_call message and
+    # tracker events line up with the agent transcript.
+    tool_call_id: str | None = None
 
 
 def _extract_from_session_key(key: str) -> str | None:
@@ -105,7 +108,7 @@ async def tool_call_proxy(tool_name: str, body: ToolCallBody, request: Request) 
         raise HTTPException(404, "Session not found")
     project_id: str | None = session_data.get("projectId")
 
-    call_id = f"oc-{uuid.uuid4().hex[:8]}"
+    call_id = body.tool_call_id or f"oc-{uuid.uuid4().hex[:8]}"
     clean_params = {k: v for k, v in body.params.items() if k not in _CONTEXT_KEYS}
 
     # Build state and run preToolCallHook (injects session/project context into tool params)
@@ -236,7 +239,8 @@ async def tool_call_proxy(tool_name: str, body: ToolCallBody, request: Request) 
     }
     state = await hooks.run("postToolCallHook", state)
 
-    # Persist to session storage
+    # Persist to session storage. This is the only place OpenClaw tool calls
+    # are persisted; the TS plugin client does not post its own copy.
     await sessions.append_message(session_id, {
         "role": "tool_call", "messageId": f"tc-{call_id}",
         "toolCallId": call_id, "toolName": tool_name,

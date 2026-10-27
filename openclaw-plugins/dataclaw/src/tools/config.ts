@@ -4,13 +4,7 @@ const DEFAULT_BASE_URL = "http://localhost:8000";
 const DEFAULT_PREFIX = "dataclaw_";
 const PLUGIN_ID = "dataclaw";
 
-type LooseConfig =
-  | {
-      channels?: Record<string, unknown>;
-      plugins?: { entries?: Record<string, unknown> };
-    }
-  | undefined
-  | null;
+type LooseConfig = { channels?: object } | undefined | null;
 
 /**
  * Read tools-side runtime config out of OpenClaw config. Connection settings
@@ -21,18 +15,19 @@ type LooseConfig =
  * manifest's top-level `configSchema`.
  *
  * Config is read exclusively from OpenClaw's structured config — never from
- * environment variables. The 2026.5 install scanner blocks any plugin that
- * mixes env-var reads with outbound HTTP, which this approach avoids. The
- * install service writes both surfaces directly.
+ * environment variables. The install service writes both surfaces directly.
+ *
+ * `pluginConfig` is `api.pluginConfig` (the host's already-resolved
+ * `plugins.entries.dataclaw.config`); the channel section comes from the
+ * full config so connection changes are picked up per call.
  */
-export function resolveDataclawToolsConfig(cfg: LooseConfig): DataclawToolsConfig {
-  const channelSection = cfg?.channels?.[PLUGIN_ID];
+export function resolveDataclawToolsConfig(
+  cfg: LooseConfig,
+  pluginConfig: Record<string, unknown> = {},
+): DataclawToolsConfig {
+  const channelSection = (cfg?.channels as Record<string, unknown> | undefined)?.[PLUGIN_ID];
   const channel = channelSection && typeof channelSection === "object"
     ? (channelSection as Record<string, unknown>)
-    : {};
-  const pluginEntry = cfg?.plugins?.entries?.[PLUGIN_ID];
-  const pluginConfig = pluginEntry && typeof pluginEntry === "object"
-    ? ((pluginEntry as Record<string, unknown>).config as Record<string, unknown> | undefined) ?? {}
     : {};
 
   const baseUrl = typeof channel.dataclawApiUrl === "string" && channel.dataclawApiUrl.trim()

@@ -156,3 +156,27 @@ def test_openclaw_tool_proxy_runs_artifact_post_hooks(tmp_path, monkeypatch):
         events = read_manifest_events(living["artifact_id"])
         assert events[0]["kind"] == "artifact_published"
         assert events[0]["payload"]["artifact_id"] == result["artifact_id"]
+
+
+def test_openclaw_tool_proxy_persists_one_tool_call_under_the_openclaw_id(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "DATACLAW_HOME", tmp_path)
+
+    with TestClient(create_app()) as client:
+        session_id = client.post(
+            "/api/chat/sessions",
+            json={"title": "OpenClaw tool session"},
+        ).json()["id"]
+        response = client.post("/api/tools/list_skills/call", json={
+            "session_id": session_id,
+            "openclaw_session_key": f"agent:main:dataclaw:channel:{session_id}",
+            "tool_call_id": "toolu_openclaw_1",
+            "params": {},
+        })
+        assert response.status_code == 200
+
+        messages = client.get(f"/api/chat/sessions/{session_id}").json()["messages"]
+        tool_calls = [m for m in messages if m.get("role") == "tool_call"]
+        assert len(tool_calls) == 1
+        assert tool_calls[0]["toolCallId"] == "toolu_openclaw_1"
+        assert tool_calls[0]["messageId"] == "tc-toolu_openclaw_1"
+        assert tool_calls[0]["toolName"] == "list_skills"

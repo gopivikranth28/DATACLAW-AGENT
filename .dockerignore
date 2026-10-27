@@ -5,6 +5,7 @@ ui/build/
 node_modules/
 openclaw-plugins/*/node_modules/
 openclaw-plugins/*/dist/
+openclaw-plugins/*/.openclaw-package/
 __pycache__/
 *.pyc
 .git/

@@ -38,10 +38,7 @@ RUN apt-get update \
 # "OpenAI Codex" agent backend (the Python SDK alone isn't enough).
 ARG OPENCLAW_VERSION=2026.10.7
 ARG CODEX_CLI_VERSION=0.164.0
-RUN npm install -g openclaw@${OPENCLAW_VERSION} @openai/codex@${CODEX_CLI_VERSION} \
-    # Symlink ws into global node_modules so the OpenClaw CLI can resolve it
-    # when invoked from any working directory (e.g. docker exec).
-    && ln -sf /usr/local/lib/node_modules/openclaw/node_modules/ws /usr/local/lib/node_modules/ws
+RUN npm install -g openclaw@${OPENCLAW_VERSION} @openai/codex@${CODEX_CLI_VERSION}
 
 WORKDIR /dataclaw
 
@@ -64,10 +61,11 @@ COPY --from=ui-build /build/dist ui/dist/
 # Copy OpenClaw plugins source
 COPY openclaw-plugins/ openclaw-plugins/
 
-# Build the dataclaw plugin: openclaw 2026.5+ requires the runtime entry to
-# exist on disk as JS at ./dist/index.js. The build script (esbuild from
+# Build the dataclaw plugin: OpenClaw installs the compiled runtime entry
+# ./dist/index.js (openclaw.runtimeExtensions). The build script (esbuild from
 # devDependencies) bundles ./index.ts → ./dist/index.js with openclaw/* left
 # external. devDeps are required for the build, so don't pass --omit=dev here.
+# The bootstrap rebuilds it with the live tool manifest before installing.
 RUN cd openclaw-plugins/dataclaw \
     && npm ci --no-audit --no-fund \
     && npm run build

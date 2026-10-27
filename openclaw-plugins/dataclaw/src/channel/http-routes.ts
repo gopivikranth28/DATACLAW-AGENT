@@ -1,26 +1,20 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { OpenClawConfig, OpenClawPluginApi } from "openclaw/plugin-sdk/channel-core";
 import { resolveDataclawFrontendAccount } from "./config.js";
 import { dispatchDataclawFrontendInbound } from "./inbound.js";
 import { responseBroker } from "./response-broker.js";
-import type { OpenClawConfigLike, DataclawInboundMessage } from "./types.js";
-
-type RuntimeApi = {
-  registerHttpRoute(route: {
-    path: string; auth: string;
-    handler: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>;
-  }): void;
-} & Record<string, unknown>;
+import type { DataclawInboundMessage } from "./types.js";
 
 type MessageRequest = DataclawInboundMessage & { waitForResponseMs?: number };
 
-export function registerDataclawFrontendRoutes(api: RuntimeApi): void {
+export function registerDataclawFrontendRoutes(api: OpenClawPluginApi): void {
   // POST /dataclaw/message — receive user message, dispatch to agent, return response
   api.registerHttpRoute({
     path: "/dataclaw/message",
     auth: "plugin",
     handler: async (req, res) => {
       try {
-        const cfg = await resolveConfig(api);
+        const cfg = currentConfig(api);
         const account = resolveDataclawFrontendAccount(cfg);
         assertAuthorized(req, account.token);
 
@@ -30,7 +24,7 @@ export function registerDataclawFrontendRoutes(api: RuntimeApi): void {
         const waitMs = typeof body.waitForResponseMs === "number" ? body.waitForResponseMs : account.responseTimeoutMs;
         const waitForResponse = waitMs > 0 ? responseBroker.waitForFinal(body.sessionId, waitMs) : Promise.resolve(null);
 
-        await dispatchDataclawFrontendInbound(api, cfg, body);
+        await dispatchDataclawFrontendInbound(api.runtime, cfg, body);
         const response = await waitForResponse;
 
         writeJson(res, 200, { ok: true, sessionId: body.sessionId, response, timedOut: !response });
@@ -47,7 +41,7 @@ export function registerDataclawFrontendRoutes(api: RuntimeApi): void {
     auth: "plugin",
     handler: async (req, res) => {
       try {
-        const cfg = await resolveConfig(api);
+        const cfg = currentConfig(api);
         const account = resolveDataclawFrontendAccount(cfg);
         assertAuthorized(req, account.token);
 
@@ -79,26 +73,21 @@ export function registerDataclawFrontendRoutes(api: RuntimeApi): void {
   });
 }
 
+/**
+ * Live gateway config, read per request rather than captured at registration
+ * so `channels.dataclaw.*` hot reloads reach the routes.
+ */
+function currentConfig(api: OpenClawPluginApi): OpenClawConfig {
+  // runtime.config.current() returns a DeepReadonly view; the reply
+  // dispatcher is typed to take the mutable OpenClawConfig but only reads it.
+  return api.runtime.config.current() as OpenClawConfig;
+}
+
 function validateMessage(body: Partial<MessageRequest>): asserts body is MessageRequest {
   if (!body || typeof body !== "object") throw badRequest("JSON body required");
   if (!body.sessionId || typeof body.sessionId !== "string") throw badRequest("sessionId required");
   if (!body.userId || typeof body.userId !== "string") throw badRequest("userId required");
   if (!body.text || typeof body.text !== "string") throw badRequest("text required");
-}
-
-async function resolveConfig(api: Record<string, unknown>): Promise<OpenClawConfigLike> {
-  const configAccessors = [
-    ["runtime", "config", "current"],
-    ["runtime", "config", "getConfig"],
-    ["config", "get"],
-    ["getConfig"],
-  ];
-  for (const path of configAccessors) {
-    const result = getNestedFn(api, path);
-    if (result) return (await result.fn.call(result.owner)) as OpenClawConfigLike;
-  }
-  console.warn("[dataclaw] Could not resolve OpenClaw runtime config; using built-in model fallback.");
-  return {};
 }
 
 function assertAuthorized(req: IncomingMessage, token?: string): void {
@@ -124,13 +113,4 @@ function writeJson(res: ServerResponse, status: number, body: unknown): void {
 }
 
 function badRequest(msg: string): Error { const e = new Error(msg); Object.assign(e, { statusCode: 400 }); return e; }
-function statusForError(err: unknown): number { return err && typeof err === "object" && "statusCode" in err ? Number((err as any).statusCode) : 500; }
-
-function getNestedFn(root: unknown, path: string[]): { owner: unknown; fn: Function } | null {
-  let cur = root, owner = root;
-  for (const seg of path) {
-    if (!cur || typeof cur !== "object" || !(seg in cur)) return null;
-    owner = cur; cur = (cur as any)[seg];
-  }
-  return typeof cur === "function" ? { owner, fn: cur } : null;
-}
+function statusForError(err: unknown): number { return err && typeof err === "object" && "statusCode" in err ? Number(err.statusCode) : 500; }

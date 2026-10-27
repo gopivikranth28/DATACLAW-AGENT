@@ -3,13 +3,13 @@
     "target": "ES2022",
     "module": "Node16",
     "moduleResolution": "Node16",
-    "outDir": "dist",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "declaration": true
+    // Typecheck only: esbuild produces dist/index.js (see the build script).
+    "noEmit": true
   },
-  "include": ["index.ts", "setup-entry.ts", "src/**/*.ts"]
+  "include": ["index.ts", "src/**/*.ts"]
 }

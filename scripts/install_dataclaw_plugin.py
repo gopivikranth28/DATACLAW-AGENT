@@ -11,10 +11,11 @@ keeps the bundled image's bootstrap behaviorally identical to the UI flow:
   ``tool-manifest.ts`` is just a re-export of the generated file (which is
   gitignored), so without this step the bundled image's plugin would load
   with zero tools registered.
-- Clear orphan ``channels.<id>`` left behind by a prior failed install.
-- ``npm run build``.
-- ``openclaw plugins install <dir> --force``.
-- Wait for gateway restart.
+- Refuse an OpenClaw older than the supported minimum (2026.10.7).
+- ``npm run build`` and stage the runtime files into ``.openclaw-package/``.
+- ``openclaw plugins install <dir>/.openclaw-package --force
+  --accept-capabilities`` (running this bootstrap is the operator's consent
+  to the plugin's declared capabilities).
 - Atomic batch config write: ``channels.<id>.*``,
   ``plugins.entries.<id>.config.*``, the right tool-allowlist field
   (``tools.alsoAllow`` when ``tools.profile`` is set, ``tools.allow``
@@ -91,10 +92,9 @@ async def main() -> int:
 
     # The bundled entrypoint runs this BEFORE starting the gateway — there's no
     # /healthz endpoint to poll. install_plugin_atomic calls _wait_for_gateway
-    # twice (after `plugins install` and after the post-install batch config
-    # set) to let an already-running gateway re-load on its own time. With no
-    # gateway up, we replace those waits with a no-op so the bootstrap doesn't
-    # stall for ~30s per call.
+    # after `plugins install` and after the batch config set so a running
+    # gateway can apply them. With no gateway up, both are saved for the next
+    # start, so replace those waits with a no-op instead of stalling ~30s each.
     async def _no_wait(_url: str):
         if False:
             yield {}

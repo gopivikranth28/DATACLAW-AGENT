@@ -58,7 +58,11 @@ jobs:
           cache: npm
           cache-dependency-path: openclaw-plugins/dataclaw/package-lock.json
       - run: npm ci --no-audit --no-fund
+      # `prebuild` creates the gitignored tool-manifest.generated.ts that tsc
+      # needs, so build first. esbuild doesn't typecheck; tsc does, against the
+      # exact openclaw devDependency the runtime image pins.
       - run: npm run build
+      - run: npx tsc --noEmit -p .
 
   docker:
     runs-on: ubuntu-latest
