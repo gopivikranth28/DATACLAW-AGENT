@@ -16,6 +16,8 @@ from dataclaw.providers.llm.provider import (
     ToolUseStartEvent,
     PendingToolCall,
     TurnCompleteEvent,
+    UsageEvent,
+    ErrorEvent,
 )
 from dataclaw.providers.agent.provider import AgentProvider, ConfigField
 from dataclaw.providers.sub_agent.provider import SubAgentProvider
@@ -33,6 +35,8 @@ __all__ = [
     "ToolUseStartEvent",
     "PendingToolCall",
     "TurnCompleteEvent",
+    "UsageEvent",
+    "ErrorEvent",
     "AgentProvider",
     "ConfigField",
     "SubAgentProvider",

@@ -7,6 +7,9 @@ from dataclaw.providers.llm.provider import (
     ToolUseStartEvent,
     PendingToolCall,
     TurnCompleteEvent,
+    UsageEvent,
+    ErrorEvent,
+    LLMStreamError,
 )
 
 __all__ = [
@@ -16,4 +19,7 @@ __all__ = [
     "ToolUseStartEvent",
     "PendingToolCall",
     "TurnCompleteEvent",
+    "UsageEvent",
+    "ErrorEvent",
+    "LLMStreamError",
 ]

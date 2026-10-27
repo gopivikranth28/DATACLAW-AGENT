@@ -48,7 +48,15 @@ from dataclaw.pending_actions import (
     resolve_guardrail_action,
 )
 from dataclaw.plugins.registry import ProviderRegistry
-from dataclaw.providers.llm.provider import PendingToolCall, TextDeltaEvent, ToolUseStartEvent, TurnCompleteEvent
+from dataclaw.providers.llm.provider import (
+    ErrorEvent,
+    LLMStreamError,
+    PendingToolCall,
+    TextDeltaEvent,
+    ToolUseStartEvent,
+    TurnCompleteEvent,
+    UsageEvent,
+)
 from dataclaw.providers.tool.llm_redact import redact_for_llm
 from dataclaw.schema import Message
 from dataclaw.storage import sessions
@@ -447,6 +455,13 @@ async def _run_agent_loop(
         max_turns = int(resolve("app.max_turns", "DATACLAW_MAX_TURNS", "30"))
         _text_chunks: list[str] = []
         tool_started_at: dict[str, str] = {}
+        # Token usage summed over every LLM turn of this run (UsageEvent).
+        run_usage = {
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "cachedInputTokens": 0,
+            "reasoningTokens": 0,
+        }
 
         def tool_timing(call_id: str) -> dict[str, str]:
             """Persist the user-visible span of a tool call.
@@ -488,6 +503,30 @@ async def _run_agent_loop(
                         json.dumps(event.tool_input, default=str),
                     ))
                     emit(emitter.tool_call_end(event.call_id))
+
+                elif isinstance(event, UsageEvent):
+                    for key, value in (
+                        ("inputTokens", event.input_tokens),
+                        ("outputTokens", event.output_tokens),
+                        ("cachedInputTokens", event.cached_input_tokens),
+                        ("reasoningTokens", event.reasoning_tokens),
+                    ):
+                        run_usage[key] += value
+                    emit(emitter.custom("llm:usage", {
+                        "turn": turn + 1,
+                        "inputTokens": event.input_tokens,
+                        "outputTokens": event.output_tokens,
+                        "cachedInputTokens": event.cached_input_tokens,
+                        "reasoningTokens": event.reasoning_tokens,
+                        "runTotals": dict(run_usage),
+                    }))
+
+                elif isinstance(event, ErrorEvent):
+                    # Terminal provider failure: close any open text message,
+                    # then fail the run with the provider's message.
+                    if message_started:
+                        emit(emitter.text_message_end(msg_id))
+                    raise LLMStreamError(event.message, code=event.code)
 
                 elif isinstance(event, TurnCompleteEvent):
                     if not event.has_pending_tool_calls:
@@ -974,6 +1013,16 @@ async def _run_agent_loop(
 
     except HookError as e:
         await persist_capability_receipt("failed", reason="hook_error")
+        await _terminalize_run(
+            thread_id,
+            outcome="failure",
+            emitter=emitter,
+            error=str(e),
+        )
+
+    except LLMStreamError as e:
+        logger.warning("LLM turn failed for thread %s: %s", thread_id, e)
+        await persist_capability_receipt("failed", reason="llm_error")
         await _terminalize_run(
             thread_id,
             outcome="failure",

@@ -6,27 +6,47 @@ supports both the standard OpenAI API and the ChatGPT backend API
 
 This bypasses LangChain entirely — the Responses API is a different
 endpoint from chat completions and needs its own message translation.
+
+Requests are stateless (``store=False``; the ChatGPT backend requires it),
+so everything the model needs on the next request of a tool loop is sent
+back explicitly: function calls by their ``call_id`` and the turn's
+reasoning items via their ``encrypted_content``.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from collections import OrderedDict
 from contextvars import ContextVar
 from typing import Any, AsyncIterator
 
 from openai import AsyncOpenAI
 
+from dataclaw.providers.llm.capabilities import (
+    OPENAI,
+    supports_reasoning_effort,
+    supports_text_verbosity,
+)
 from dataclaw.providers.llm.provider import (
     BrokerEvent,
+    ErrorEvent,
+    LLMStreamError,
     PendingToolCall,
     TextDeltaEvent,
     ToolUseStartEvent,
     TurnCompleteEvent,
+    UsageEvent,
 )
 from dataclaw.schema import Message
 
 logger = logging.getLogger(__name__)
+
+# Tag for Message.provider_state written and replayed by this provider.
+PROVIDER_TAG = "openai_responses"
+
+# Upper bound on remembered tool-call turns; see OpenAIResponsesLLM._turns.
+_TURN_STATE_LIMIT = 256
 
 
 class OpenAIResponsesLLM:
@@ -52,6 +72,10 @@ class OpenAIResponsesLLM:
         self._prompt_cache_key: ContextVar[str | None] = ContextVar(
             f"openai_prompt_cache_key_{id(self)}", default=None
         )
+        # Reasoning items of turns that ended in tool calls, keyed by call_id
+        # (unique across runs, unlike "the last turn" on a shared instance).
+        # Consumed by build_tool_result_message.
+        self._turns: OrderedDict[str, list[dict[str, Any]]] = OrderedDict()
 
     @property
     def prompt_cache_key(self) -> str | None:
@@ -97,31 +121,15 @@ class OpenAIResponsesLLM:
                 [f"#{i}({r}):{c}items" for i, r, c in top],
             )
 
-        kwargs: dict[str, Any] = {
-            "model": self._model,
-            "input": input_items,
-            "stream": True,
-            "store": False,
-        }
-        if self.prompt_cache_key:
-            kwargs["prompt_cache_key"] = self.prompt_cache_key
-        # Static system prompt goes in instructions (stable, cached separately)
-        if system:
-            kwargs["instructions"] = system
-        if api_tools:
-            kwargs["tools"] = api_tools
-        # Reasoning / verbosity controls — used by the compactor to keep
-        # gpt-5-class reasoning models from emitting scratchpad output as
-        # the final answer. Not set by default for normal chat turns.
-        if reasoning_effort:
-            kwargs["reasoning"] = {"effort": reasoning_effort}
-        if text_verbosity:
-            kwargs["text"] = {"verbosity": text_verbosity}
+        kwargs = self._request_kwargs(
+            input_items, system, api_tools, reasoning_effort, text_verbosity
+        )
 
         completed_tool_calls: list[dict[str, Any]] = []
-        pending_calls: dict[str, dict[str, Any]] = {}
-        seen_call_ids: set[str] = set()
+        started_call_ids: set[str] = set()
+        reasoning_items: list[dict[str, Any]] = []
         reasoning_chunks: list[str] = []
+        completed = False
 
         stream = await self._client.responses.create(**kwargs)
 
@@ -144,41 +152,67 @@ class OpenAIResponsesLLM:
                 if delta:
                     reasoning_chunks.append(delta)
 
-            # Tool call argument deltas — track start
-            elif event_type == "response.function_call_arguments.delta":
-                call_id = event.item_id
-                if call_id not in seen_call_ids:
-                    seen_call_ids.add(call_id)
-                if call_id not in pending_calls:
-                    pending_calls[call_id] = {"id": call_id, "name": "", "args": ""}
-                pending_calls[call_id]["args"] += event.delta
+            # A function call item has started — name and call_id are known
+            # before the arguments stream in.
+            elif event_type == "response.output_item.added":
+                item = event.item
+                if item.type == "function_call":
+                    call_id = _call_id(item)
+                    if call_id not in started_call_ids:
+                        started_call_ids.add(call_id)
+                        yield ToolUseStartEvent(tool_name=item.name, call_id=call_id)
 
-            # Output item done — capture completed tool calls and text
+            # Output item done — capture completed tool calls and reasoning
             elif event_type == "response.output_item.done":
                 item = event.item
                 if item.type == "function_call":
-                    call_id = item.id
-                    name = item.name
+                    # ``call_id`` pairs the call with its function_call_output;
+                    # ``id`` is the output item's own id (fc_...), a different
+                    # value.
+                    call_id = _call_id(item)
                     raw_args = item.arguments
                     try:
                         args = json.loads(raw_args) if raw_args else {}
                     except json.JSONDecodeError:
                         args = {}
 
-                    # Emit tool start if we haven't yet
-                    if call_id not in seen_call_ids:
-                        seen_call_ids.add(call_id)
-                    yield ToolUseStartEvent(tool_name=name, call_id=call_id)
+                    if call_id not in started_call_ids:
+                        started_call_ids.add(call_id)
+                        yield ToolUseStartEvent(tool_name=item.name, call_id=call_id)
 
                     completed_tool_calls.append({
                         "id": call_id,
-                        "name": name,
+                        "name": item.name,
                         "args": args,
                     })
+                elif item.type == "reasoning":
+                    replay = _reasoning_replay_item(item)
+                    if replay is not None:
+                        reasoning_items.append(replay)
 
-            # Response completed
+            # Terminal events
             elif event_type == "response.completed":
+                completed = True
+                usage = _usage_event(getattr(event.response, "usage", None))
+                if usage is not None:
+                    yield usage
                 break
+
+            elif event_type in ("response.failed", "response.incomplete", "error"):
+                if event_type != "error":
+                    usage = _usage_event(getattr(event.response, "usage", None))
+                    if usage is not None:
+                        yield usage
+                message, code = _describe_failure(event)
+                logger.warning("OpenAIResponses turn failed (%s): %s", code, message)
+                yield ErrorEvent(message=message, code=code)
+                raise LLMStreamError(message, code=code)
+
+        if not completed:
+            message = "Responses stream ended before response.completed"
+            logger.warning("OpenAIResponses: %s", message)
+            yield ErrorEvent(message=message, code="stream_incomplete")
+            raise LLMStreamError(message, code="stream_incomplete")
 
         if reasoning_chunks:
             joined = "".join(reasoning_chunks)
@@ -187,6 +221,12 @@ class OpenAIResponsesLLM:
                 len(joined),
                 joined[:500],
             )
+
+        if completed_tool_calls:
+            for tc in completed_tool_calls:
+                self._turns[tc["id"]] = reasoning_items
+            while len(self._turns) > _TURN_STATE_LIMIT:
+                self._turns.popitem(last=False)
 
         # Yield pending tool calls
         for tc in completed_tool_calls:
@@ -198,12 +238,67 @@ class OpenAIResponsesLLM:
 
         yield TurnCompleteEvent(has_pending_tool_calls=bool(completed_tool_calls))
 
+    def _request_kwargs(
+        self,
+        input_items: list[dict[str, Any]],
+        system: str,
+        api_tools: list[dict[str, Any]],
+        reasoning_effort: str | None,
+        text_verbosity: str | None,
+    ) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
+            "model": self._model,
+            "input": input_items,
+            "stream": True,
+            "store": False,
+        }
+        if self.prompt_cache_key:
+            kwargs["prompt_cache_key"] = self.prompt_cache_key
+        # Static system prompt goes in instructions (stable, cached separately)
+        if system:
+            kwargs["instructions"] = system
+        if api_tools:
+            kwargs["tools"] = api_tools
+        reasoning_model = supports_reasoning_effort(OPENAI, self._model)
+        if reasoning_model:
+            # With store=False the server keeps nothing between requests;
+            # ask for the encrypted reasoning so it can be replayed.
+            kwargs["include"] = ["reasoning.encrypted_content"]
+        # Reasoning / verbosity controls — used by the compactor to keep
+        # gpt-5-class reasoning models from emitting scratchpad output as
+        # the final answer. Not set by default for normal chat turns, and
+        # dropped for models that would reject them.
+        if reasoning_effort:
+            if reasoning_model:
+                kwargs["reasoning"] = {"effort": reasoning_effort}
+            else:
+                logger.debug(
+                    "Skipping reasoning_effort=%r: not supported by %r",
+                    reasoning_effort, self._model,
+                )
+        if text_verbosity:
+            if supports_text_verbosity(OPENAI, self._model):
+                kwargs["text"] = {"verbosity": text_verbosity}
+            else:
+                logger.debug(
+                    "Skipping text_verbosity=%r: not supported by %r",
+                    text_verbosity, self._model,
+                )
+        return kwargs
+
     def build_tool_result_message(
         self,
         tool_calls: list[PendingToolCall],
         results: list[dict[str, Any]],
         errors: list[Exception | None],
     ) -> list[Message]:
+        reasoning = next(
+            (self._turns[tc.call_id] for tc in tool_calls if tc.call_id in self._turns),
+            None,
+        )
+        for tc in tool_calls:
+            self._turns.pop(tc.call_id, None)
+
         assistant_content: list[dict[str, Any]] = []
         for tc in tool_calls:
             assistant_content.append({
@@ -222,8 +317,11 @@ class OpenAIResponsesLLM:
                 "is_error": err is not None,
             })
 
+        provider_state = (
+            {"provider": PROVIDER_TAG, "reasoning": reasoning} if reasoning else None
+        )
         return [
-            Message.tool_call(assistant_content),
+            Message.tool_call(assistant_content, provider_state=provider_state),
             Message.tool_result(tool_results),
         ]
 
@@ -231,11 +329,77 @@ class OpenAIResponsesLLM:
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
-def _fc_id(raw_id: str) -> str:
-    """Ensure a tool call ID has the ``fc_`` prefix the Responses API requires."""
-    if raw_id.startswith("fc_"):
-        return raw_id
-    return f"fc_{raw_id}"
+def _call_id(item: Any) -> str:
+    """The id that pairs a function_call with its function_call_output."""
+    return getattr(item, "call_id", None) or getattr(item, "id", None) or ""
+
+
+def _reasoning_replay_item(item: Any) -> dict[str, Any] | None:
+    """Input-shaped copy of a reasoning output item, or None if unusable.
+
+    Without ``encrypted_content`` a reasoning item can only be referenced by
+    id, which fails with store=False, so such items are not replayed. The
+    item ``id`` is omitted for the same reason (the Codex client sends
+    reasoning items the same way); the encrypted content carries the state.
+    """
+    encrypted = getattr(item, "encrypted_content", None)
+    if not encrypted:
+        return None
+    summary = [
+        {"type": "summary_text", "text": getattr(s, "text", "")}
+        for s in (getattr(item, "summary", None) or [])
+    ]
+    return {"type": "reasoning", "summary": summary, "encrypted_content": encrypted}
+
+
+def _usage_event(usage: Any) -> UsageEvent | None:
+    """Convert a Responses ``ResponseUsage`` to a UsageEvent."""
+    if usage is None:
+        return None
+    input_details = getattr(usage, "input_tokens_details", None)
+    output_details = getattr(usage, "output_tokens_details", None)
+    return UsageEvent(
+        input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
+        output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
+        cached_input_tokens=int(getattr(input_details, "cached_tokens", 0) or 0),
+        reasoning_tokens=int(getattr(output_details, "reasoning_tokens", 0) or 0),
+    )
+
+
+def _describe_failure(event: Any) -> tuple[str, str | None]:
+    """Human-readable message and code for a failed/incomplete/error event."""
+    if event.type == "error":
+        code = getattr(event, "code", None)
+        return f"Model API error: {getattr(event, 'message', '') or 'unknown error'}", code
+    response = getattr(event, "response", None)
+    if event.type == "response.incomplete":
+        details = getattr(response, "incomplete_details", None)
+        reason = getattr(details, "reason", None) or "unknown"
+        return f"Model response incomplete ({reason})", f"incomplete:{reason}"
+    error = getattr(response, "error", None)
+    code = getattr(error, "code", None)
+    message = getattr(error, "message", None) or "unknown error"
+    return f"Model response failed: {message}", code
+
+
+def _replay_reasoning(msg: Message) -> list[dict[str, Any]]:
+    """Reasoning items this provider stored on a tool_call message."""
+    state = msg.provider_state
+    if not state or state.get("provider") != PROVIDER_TAG:
+        return []
+    return [r for r in state.get("reasoning") or [] if isinstance(r, dict)]
+
+
+def _function_call_item(block: dict[str, Any]) -> dict[str, Any]:
+    # Only ``call_id`` is sent. The output item ``id`` (fc_...) is optional
+    # on input, and naming items by id under store=False makes the API
+    # demand their paired reasoning items by id as well.
+    return {
+        "type": "function_call",
+        "call_id": block["id"],
+        "name": block["name"],
+        "arguments": json.dumps(block.get("input", {})),
+    }
 
 
 def _build_input(messages: list[Message]) -> list[dict[str, Any]]:
@@ -267,56 +431,32 @@ def _build_input(messages: list[Message]) -> list[dict[str, Any]]:
                     if block.get("type") == "tool_result":
                         items.append({
                             "type": "function_call_output",
-                            "call_id": _fc_id(block["call_id"]),
+                            "call_id": block["call_id"],
                             "output": block.get("content", ""),
                         })
                     elif block.get("type") == "text" and block.get("text"):
                         items.append({"role": "user", "content": block["text"]})
 
-        elif role == "assistant":
-            if isinstance(content, str) and content:
+        elif role == "assistant" and isinstance(content, str):
+            if content:
                 items.append({"role": "assistant", "content": content})
-            elif isinstance(content, list):
-                text_parts = []
-                for block in content:
-                    if block.get("type") == "text":
-                        text_parts.append(block.get("text", ""))
-                    elif block.get("type") == "tool_call":
-                        # Emit text before tool call
-                        if text_parts:
-                            items.append({"role": "assistant", "content": "".join(text_parts)})
-                            text_parts = []
-                        fc_id = _fc_id(block["id"])
-                        items.append({
-                            "type": "function_call",
-                            "id": fc_id,
-                            "name": block["name"],
-                            "arguments": json.dumps(block.get("input", {})),
-                            "call_id": fc_id,
-                        })
-                if text_parts:
-                    items.append({"role": "assistant", "content": "".join(text_parts)})
 
-        elif role == "tool_call":
-            if isinstance(content, list):
-                text_parts = []
-                for block in content:
-                    if block.get("type") == "text":
-                        text_parts.append(block.get("text", ""))
-                    elif block.get("type") == "tool_call":
-                        if text_parts:
-                            items.append({"role": "assistant", "content": "".join(text_parts)})
-                            text_parts = []
-                        fc_id = _fc_id(block["id"])
-                        items.append({
-                            "type": "function_call",
-                            "id": fc_id,
-                            "name": block["name"],
-                            "arguments": json.dumps(block.get("input", {})),
-                            "call_id": fc_id,
-                        })
-                if text_parts:
-                    items.append({"role": "assistant", "content": "".join(text_parts)})
+        elif role in ("assistant", "tool_call") and isinstance(content, list):
+            # The turn's reasoning preceded its output in the response, so
+            # replay it first.
+            items.extend(_replay_reasoning(msg))
+            text_parts: list[str] = []
+            for block in content:
+                if block.get("type") == "text":
+                    text_parts.append(block.get("text", ""))
+                elif block.get("type") == "tool_call":
+                    # Emit text before tool call
+                    if text_parts:
+                        items.append({"role": "assistant", "content": "".join(text_parts)})
+                        text_parts = []
+                    items.append(_function_call_item(block))
+            if text_parts:
+                items.append({"role": "assistant", "content": "".join(text_parts)})
 
         elif role == "tool_result":
             if isinstance(content, list):
@@ -324,7 +464,7 @@ def _build_input(messages: list[Message]) -> list[dict[str, Any]]:
                     if block.get("type") == "tool_result":
                         items.append({
                             "type": "function_call_output",
-                            "call_id": _fc_id(block["call_id"]),
+                            "call_id": block["call_id"],
                             "output": block.get("content", ""),
                         })
 

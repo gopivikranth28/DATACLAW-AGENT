@@ -64,6 +64,13 @@ class Message:
     """
     role: str  # "user" | "assistant" | "system" | "tool_call" | "tool_result"
     content: str | list[ContentBlock] = ""
+    # Opaque, provider-native state the backend that produced this message
+    # needs to see again on the next request (Anthropic thinking blocks with
+    # signatures, Gemini thought signatures, Responses reasoning items). It
+    # is tagged with the producing provider, ignored by every other backend,
+    # and must stay JSON-serializable. ``content`` remains the canonical,
+    # provider-neutral view.
+    provider_state: dict[str, Any] | None = None
 
     def text(self) -> str:
         """Extract plain text from content, regardless of format."""
@@ -81,12 +88,20 @@ class Message:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain dict for JSON storage."""
-        return {"role": self.role, "content": self.content}
+        d: dict[str, Any] = {"role": self.role, "content": self.content}
+        if self.provider_state:
+            d["provider_state"] = self.provider_state
+        return d
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Message:
         """Deserialize from a plain dict."""
-        return cls(role=d.get("role", "user"), content=d.get("content", ""))
+        state = d.get("provider_state")
+        return cls(
+            role=d.get("role", "user"),
+            content=d.get("content", ""),
+            provider_state=state if isinstance(state, dict) else None,
+        )
 
     @classmethod
     def user(cls, text: str) -> Message:
@@ -101,9 +116,13 @@ class Message:
         return cls(role="system", content=text)
 
     @classmethod
-    def tool_call(cls, tool_calls: list[ContentBlock]) -> Message:
+    def tool_call(
+        cls,
+        tool_calls: list[ContentBlock],
+        provider_state: dict[str, Any] | None = None,
+    ) -> Message:
         """Create a tool_call message from a list of tool_call content blocks."""
-        return cls(role="tool_call", content=tool_calls)
+        return cls(role="tool_call", content=tool_calls, provider_state=provider_state)
 
     @classmethod
     def tool_result(cls, tool_results: list[ContentBlock]) -> Message:
