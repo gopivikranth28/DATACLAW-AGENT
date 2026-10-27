@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from dataclaw.api.security import api_token
+from dataclaw.config.secure_io import write_private_text
 from dataclaw_hermes.config import HERMES_COMPAT_VERSION, HermesConfig
 
 
@@ -144,12 +146,17 @@ def check_installation(config: HermesConfig) -> dict[str, Any]:
 
 
 def extension_environment(config: HermesConfig) -> dict[str, str]:
-    return {
+    env = {
         "DATACLAW_API_URL": config.dataclaw_api_url,
         "DATACLAW_HERMES_TOOL_TIMEOUT_SECONDS": str(
             config.tool_callback_timeout_seconds
         ),
     }
+    # The extension's callbacks into Dataclaw authenticate with the API token.
+    token = api_token()
+    if token:
+        env["DATACLAW_TOKEN"] = token
+    return env
 
 
 def install_extension(
@@ -183,7 +190,7 @@ def install_extension(
             shutil.rmtree(stage)
         raise
     env_path = target / ".dataclaw-env.json"
-    env_path.write_text(json.dumps(extension_environment(config), indent=2))
+    write_private_text(env_path, json.dumps(extension_environment(config), indent=2))
     return {
         "installed": True,
         "path": str(target),
@@ -261,7 +268,8 @@ def _write_restricted_profile(config: HermesConfig) -> Path:
                 gateway.pop("api_server", None)
         if not gateway:
             raw.pop("gateway", None)
-    path.write_text(yaml.safe_dump(raw, sort_keys=False))
+    # Holds the Hermes API server key.
+    write_private_text(path, yaml.safe_dump(raw, sort_keys=False))
     return path
 
 

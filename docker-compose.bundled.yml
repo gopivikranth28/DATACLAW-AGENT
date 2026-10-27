@@ -3,15 +3,19 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.bundled
+    # Published on the host's loopback interface only. Set
+    # DATACLAW_PUBLISH_ADDR=0.0.0.0 to reach Dataclaw from other machines
+    # (the API requires the access token either way).
     ports:
-      - "${DATACLAW_PORT:-8000}:${DATACLAW_PORT:-8000}"
-      - "${OPENCLAW_GATEWAY_PORT:-18789}:${OPENCLAW_GATEWAY_PORT:-18789}"
-      - "${OPENCLAW_BRIDGE_PORT:-18790}:${OPENCLAW_BRIDGE_PORT:-18790}"
+      - "${DATACLAW_PUBLISH_ADDR:-127.0.0.1}:${DATACLAW_PORT:-8000}:${DATACLAW_PORT:-8000}"
+      - "${DATACLAW_PUBLISH_ADDR:-127.0.0.1}:${OPENCLAW_GATEWAY_PORT:-18789}:${OPENCLAW_GATEWAY_PORT:-18789}"
+      - "${DATACLAW_PUBLISH_ADDR:-127.0.0.1}:${OPENCLAW_BRIDGE_PORT:-18790}:${OPENCLAW_BRIDGE_PORT:-18790}"
     volumes:
       - ${DOCKER_DATA_DIR:-./docker-data}/openclaw:/root/.openclaw
       - ${DOCKER_DATA_DIR:-./docker-data}/dataclaw:/root/.dataclaw
     environment:
-      # Core ports/host — always passed
+      # Core ports/host — always passed. Dataclaw listens on all container
+      # interfaces, so the API token is always required in this image.
       DATACLAW_HOST: ${DATACLAW_HOST:-0.0.0.0}
       DATACLAW_PORT: ${DATACLAW_PORT:-8000}
       OPENCLAW_GATEWAY_PORT: ${OPENCLAW_GATEWAY_PORT:-18789}
@@ -26,9 +30,13 @@ services:
       # When unset, the entrypoint derives sensible defaults
       # (tokens default to the gateway token, API URL to loopback).
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
-      # Shared bearer token for the consolidated `dataclaw` plugin (channel +
-      # tools). Leave unset to let the entrypoint default to "dataclaw-local".
+      # Dataclaw API token, also shared with the `dataclaw` OpenClaw plugin
+      # (channel + tools). Leave unset to have the entrypoint generate one and
+      # keep it in ${DOCKER_DATA_DIR}/dataclaw/api-token.
       DATACLAW_TOKEN:
+      # Extra browser origins / Host names allowed to use the API.
+      DATACLAW_ALLOWED_ORIGINS:
+      DATACLAW_ALLOWED_HOSTS:
       DATACLAW_API_URL:
       DATACLAW_OPENCLAW_URL:
       # LLM provider API keys

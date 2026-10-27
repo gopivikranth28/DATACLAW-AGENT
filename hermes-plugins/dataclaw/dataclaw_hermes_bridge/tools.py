@@ -44,7 +44,7 @@ _run_locks: dict[str, threading.Lock] = {}
 _run_locks_guard = threading.Lock()
 
 
-def _settings() -> tuple[str, float]:
+def _settings() -> tuple[str, float, dict[str, str]]:
     values: dict[str, Any] = {}
     path = Path(__file__).resolve().parents[1] / ".dataclaw-env.json"
     if path.exists():
@@ -64,7 +64,10 @@ def _settings() -> tuple[str, float]:
         or values.get("DATACLAW_HERMES_TOOL_TIMEOUT_SECONDS")
         or 330
     )
-    return base_url, timeout
+    # Dataclaw's API token, written by the installer next to the extension.
+    token = str(os.environ.get("DATACLAW_TOKEN") or values.get("DATACLAW_TOKEN") or "")
+    headers = {"X-Dataclaw-Token": token} if token else {}
+    return base_url, timeout, headers
 
 
 def _run_lock(run_id: str) -> threading.Lock:
@@ -98,13 +101,15 @@ def dispatch_tool(params: dict[str, Any], **kwargs: Any) -> str:
             raise ValueError("Hermes did not supply a stable tool_call_id")
         correlation = decode_correlation(task_id)
         run_id = correlation["runId"]
-        base_url, timeout = _settings()
+        base_url, timeout, headers = _settings()
 
         # Acquire before creating/sending the callback request. Time spent
         # queued behind another Dataclaw call does not consume the configured
         # HTTP callback timeout; Hermes may retry if its own outer wait expires.
         with _run_lock(run_id):
-            with httpx.Client(base_url=base_url, timeout=timeout) as client:
+            with httpx.Client(
+                base_url=base_url, timeout=timeout, headers=headers
+            ) as client:
                 context_response = client.get(
                     f"/api/hermes/runs/{quote(run_id, safe='')}/context"
                 )

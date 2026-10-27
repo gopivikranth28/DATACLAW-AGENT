@@ -1314,7 +1314,7 @@ export default function ConfigPage({ plugins }: Props) {
                     </Field>
                     <Field label="Token" description="Shared by DataClaw and the OpenClaw gateway.">
                       <Space.Compact style={{ width: '100%' }}>
-                        <Input.Password value={openclawConfig.token || ''} onChange={e => updatePluginConfig('openclaw', 'token', e.target.value)} placeholder="dataclaw-local" />
+                        <Input.Password value={openclawConfig.token || ''} onChange={e => updatePluginConfig('openclaw', 'token', e.target.value)} placeholder="(Dataclaw API token)" />
                         <Button onClick={fetchOpenClawToken}>Load token</Button>
                       </Space.Compact>
                     </Field>

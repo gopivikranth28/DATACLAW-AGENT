@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from dataclaw.config.paths import mcp_servers_path
+from dataclaw.config.secure_io import write_private_text
 from dataclaw.providers.tool.implementations.registry import DefaultToolAvailability
 
 from dataclaw_custom_tools.mcp_connector import MCPConnector
@@ -188,7 +189,6 @@ class MCPRegistry:
         """
         if not self._loaded:
             return
-        path = mcp_servers_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
+        # Server definitions can carry API keys in env vars and headers.
         data = [config.to_dict() for config in self._configs.values()]
-        path.write_text(json.dumps(data, indent=2) + "\n")
+        write_private_text(mcp_servers_path(), json.dumps(data, indent=2) + "\n")

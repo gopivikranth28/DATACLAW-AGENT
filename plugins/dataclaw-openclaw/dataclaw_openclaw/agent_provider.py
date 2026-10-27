@@ -128,9 +128,14 @@ class OpenClawAgentProvider:
                 resp = data.get("response")
                 if resp and resp.get("text"):
                     try:
+                        from dataclaw.api.security import local_api_url
+
+                        # The shared token is the API token whenever API
+                        # authentication is enforced.
                         async with httpx.AsyncClient(timeout=10) as cb_client:
                             await cb_client.post(
-                                f"http://127.0.0.1:8000/api/agent/callback/{session_id}",
+                                f"{local_api_url()}/api/agent/callback/{session_id}",
+                                headers={"X-Dataclaw-Token": self._token} if self._token else {},
                                 json={"text": resp["text"]},
                             )
                     except Exception:

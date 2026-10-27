@@ -236,6 +236,7 @@ async def login_api_key(request: Request) -> dict[str, Any]:
     # Write to config
     from dataclaw.config.paths import config_path
     from dataclaw.config.resolver import invalidate_cache
+    from dataclaw.config.secure_io import write_private_text
 
     import json as _json
 
@@ -243,8 +244,7 @@ async def login_api_key(request: Request) -> dict[str, Any]:
     raw = _json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
     raw.setdefault("llm", {}).setdefault("codex", {})["api_key"] = api_key
     raw["llm"]["codex"]["auth_mode"] = "api_key"
-    cfg_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg_path.write_text(_json.dumps(raw, indent=2) + "\n")
+    write_private_text(cfg_path, _json.dumps(raw, indent=2) + "\n")
     invalidate_cache()
 
     return {"success": True}

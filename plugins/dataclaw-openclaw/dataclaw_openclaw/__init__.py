@@ -52,15 +52,9 @@ class OpenClawPlugin:
                 "DATACLAW_OPENCLAW_URL",
                 "http://127.0.0.1:18789",
             )
-            token = resolve(
-                "plugins.openclaw.token",
-                "DATACLAW_TOKEN",
-                resolve(
-                    "plugins.openclaw.frontend_token",
-                    "DATACLAW_FRONTEND_TOKEN",
-                    "",
-                ),
-            )
+            from dataclaw_openclaw.shared_token import resolve_shared_token
+
+            token = resolve_shared_token()
             wait_ms = int(
                 resolve(
                     "plugins.openclaw.wait_ms",
@@ -114,8 +108,8 @@ class OpenClawPlugin:
                     name="token",
                     field_type="string",
                     label="Shared Token",
-                    description="Bearer token shared between Dataclaw and OpenClaw (sent in X-Dataclaw-Token header in both directions). Must match DATACLAW_TOKEN on the OpenClaw side.",
-                    default="dataclaw-local",
+                    description="Token shared between Dataclaw and OpenClaw (sent in the X-Dataclaw-Token header in both directions). Leave empty to use the Dataclaw API token; when API authentication is enforced the API token is always used. Reinstall the plugin after changing it.",
+                    default="",
                 ),
                 PluginConfigField(
                     name="tools_api_url",

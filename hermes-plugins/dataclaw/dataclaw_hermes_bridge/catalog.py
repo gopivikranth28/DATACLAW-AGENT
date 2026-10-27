@@ -33,7 +33,7 @@ SEARCH_SCHEMA = {
 }
 
 
-def _settings() -> tuple[str, float]:
+def _settings() -> tuple[str, float, dict[str, str]]:
     values: dict[str, Any] = {}
     path = Path(__file__).resolve().parents[1] / ".dataclaw-env.json"
     if path.exists():
@@ -54,19 +54,26 @@ def _settings() -> tuple[str, float]:
             or values.get("DATACLAW_HERMES_TOOL_TIMEOUT_SECONDS")
             or 330
         ),
+        _auth_headers(values),
     )
+
+
+def _auth_headers(values: dict[str, Any]) -> dict[str, str]:
+    # Dataclaw's API token, written by the installer next to the extension.
+    token = str(os.environ.get("DATACLAW_TOKEN") or values.get("DATACLAW_TOKEN") or "")
+    return {"X-Dataclaw-Token": token} if token else {}
 
 
 def search_catalog(params: dict[str, Any], **kwargs: Any) -> str:
     try:
         correlation = decode_correlation(str(kwargs.get("task_id") or ""))
-        base_url, timeout = _settings()
+        base_url, timeout, headers = _settings()
         body = {
             **correlation,
             "query": str(params.get("query") or "")[:2000],
             "limit": max(1, min(int(params.get("limit") or 8), 100)),
         }
-        with httpx.Client(base_url=base_url, timeout=timeout) as client:
+        with httpx.Client(base_url=base_url, timeout=timeout, headers=headers) as client:
             response = client.post("/api/hermes/tools/search", json=body)
             response.raise_for_status()
             return json.dumps(response.json(), default=str)

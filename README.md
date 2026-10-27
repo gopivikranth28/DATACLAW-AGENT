@@ -157,6 +157,8 @@ docker compose up --build
 
 This builds and runs Dataclaw in a container with the UI pre-built. The server starts on http://localhost:8000. You can also configure the LLM API key from the Config page.
 
+Because Dataclaw listens on the container interface, the API requires an access token (see [Access control](#access-control)). On first start the server logs a one-time login URL; the token is also stored in `${DOCKER_DATA_DIR:-./docker-data}/dataclaw/api-token`. The port is published on the host's loopback interface only; set `DATACLAW_PUBLISH_ADDR=0.0.0.0` to reach it from other machines.
+
 | | |
 |---|---|
 | **Port** | `8000` — Dataclaw UI and API |
@@ -170,14 +172,16 @@ For the full experience with OpenClaw as the agent runtime:
 docker compose -f docker-compose.bundled.yml up --build
 ```
 
-This builds a single container with both Dataclaw and OpenClaw pre-installed. On first start it bootstraps the OpenClaw gateway, installs the `dataclaw` plugin, and configures default tokens. All state persists under `docker-data/`.
+This builds a single container with both Dataclaw and OpenClaw pre-installed. On first start it bootstraps the OpenClaw gateway, installs the `dataclaw` plugin, and generates the gateway token and the Dataclaw access token. All state persists under `docker-data/`.
+
+The Dataclaw API requires the access token in this setup. On first start the container log prints a login URL (`http://localhost:8000/?token=...`); the token is kept in `${DOCKER_DATA_DIR:-./docker-data}/dataclaw/api-token` (`docker compose -f docker-compose.bundled.yml exec dataclaw cat /root/.dataclaw/api-token`). Set `DATACLAW_TOKEN` to choose your own. All ports are published on the host's loopback interface only; set `DATACLAW_PUBLISH_ADDR=0.0.0.0` to expose them on your network.
 
 **Supported OpenClaw version: 2026.10.7.** The image pins `OPENCLAW_VERSION=2026.10.7` (Node 24.22.1), and the `dataclaw` plugin declares `minHostVersion >=2026.10.7`, so plugin installs refuse older OpenClaw releases (including `extended-stable` 2026.9.x).
 
 **First-run setup:**
 
 1. Start the container — it will bootstrap OpenClaw automatically
-2. Open http://localhost:8000/config
+2. Open the login URL from the container log (or http://localhost:8000 and paste the access token), then go to http://localhost:8000/config
 3. Click **Configure Model** to authenticate your model provider through the embedded terminal — when you close the modal a popup will remind you to restart OpenClaw so the new model takes effect (`openclaw gateway restart`, or restart the container)
 4. Start using Dataclaw at http://localhost:8000
 
@@ -478,7 +482,8 @@ All runtime data under `~/.dataclaw/` (override with `$DATACLAW_HOME`):
 
 ```
 ~/.dataclaw/
-  dataclaw.config.json     # Main config (credentials stored as plain text)
+  dataclaw.config.json     # Main config (credentials stored as plain text, mode 0600)
+  api-token                # Generated API access token (mode 0600)
   sessions/                # Chat session JSON files
   skills/                  # Skill markdown files
   workspaces/              # Per-workspace file storage + notebooks
@@ -500,7 +505,10 @@ All runtime data under `~/.dataclaw/` (override with `$DATACLAW_HOME`):
 | `DATACLAW_MAX_TURNS` | `app.max_turns` | `30` |
 | `DATACLAW_HOST` | `app.host` | `127.0.0.1` |
 | `DATACLAW_PORT` | `app.port` | `8000` |
-| `DATACLAW_TOKEN` | `plugins.openclaw.token` | `dataclaw-local` |
+| `DATACLAW_TOKEN` | `app.token` | Generated into `~/.dataclaw/api-token` |
+| `DATACLAW_AUTH` | `app.auth` | `auto` — token required for non-loopback binds; `token` — always |
+| `DATACLAW_ALLOWED_ORIGINS` | `app.allowed_origins` | Extra browser origins (comma-separated) |
+| `DATACLAW_ALLOWED_HOSTS` | `app.allowed_hosts` | Extra `Host` names accepted on a loopback bind |
 | `DATACLAW_OPENCLAW_URL` | `plugins.openclaw.url` | `http://127.0.0.1:18789` |
 | `KAGGLE_API_TOKEN` | `plugins.kaggle.kaggle_api_token` | |
 | `KAGGLE_USERNAME` / `KAGGLE_KEY` | `plugins.kaggle.kaggle_username` / `plugins.kaggle.kaggle_key` | Legacy credentials |
@@ -519,12 +527,19 @@ Dataclaw is intended for **local/private use only**:
 
 - **Code execution**: The workspace plugin runs arbitrary shell commands. The notebook plugin executes arbitrary Python. Both run with the permissions of the host process.
 - **Credential storage**: API keys, tokens, and connection strings are stored as plain text in `~/.dataclaw/dataclaw.config.json`.
-- **No authentication**: The API has no authentication layer. Anyone who can reach port 8000 can access all data and execute commands.
+- **Access control**: see [Access control](#access-control). On the default loopback bind the API has no login; anyone who can run code as a local user can reach it.
 - **Dataset queries**: SQL queries are restricted to read-only (SELECT/WITH/SHOW), but the shell execution tool has no such restriction.
-- **Network binding**: Direct `uv run dataclaw` starts on `127.0.0.1` by default. The Docker configurations listen on the container interface and publish port 8000, so they should be treated as network-accessible unless the host binding or firewall restricts them.
+- **Network binding**: Direct `uv run dataclaw` starts on `127.0.0.1` by default. The Docker configurations listen on the container interface (so the access token is required) and publish their ports on the host's loopback interface unless `DATACLAW_PUBLISH_ADDR` says otherwise.
 - **HTML output**: Raw workspace HTML and SVG are downloaded rather than executed at the app origin. Intentional HTML previews and published artifacts run in sandboxed frames with restrictive CSP and no network egress, but this does not sandbox shell or notebook execution.
 
-Do not expose Dataclaw to untrusted networks without adding authentication, TLS, and sandboxing.
+Do not expose Dataclaw to untrusted networks without TLS and sandboxing.
+
+### Access control
+
+- **Origin and Host checks (always on).** WebSocket handshakes (including the terminal) and state-changing requests are rejected when their `Origin` is not the app's own origin, one of the built-in development origins, or listed in `DATACLAW_ALLOWED_ORIGINS`. Requests without an `Origin` header (CLI tools, integrations) are unaffected. On a loopback bind the `Host` header must be a loopback name (`localhost`, `127.0.0.1`, `[::1]`, `*.localhost`) or listed in `DATACLAW_ALLOWED_HOSTS`.
+- **Access token.** Required whenever `DATACLAW_HOST` is not a loopback address (and on loopback when `DATACLAW_AUTH=token`). The token is `DATACLAW_TOKEN` / `app.token` when set; otherwise one is generated on first start into `~/.dataclaw/api-token` (mode 0600) and the server logs a login URL. Browsers log in once via `/?token=...` or the token prompt and then use an HttpOnly, SameSite=Strict cookie. Scripts send `Authorization: Bearer <token>` or `X-Dataclaw-Token: <token>`. `/api/health` stays open.
+- **Integrations.** The same token is the shared secret with the OpenClaw `dataclaw` plugin (sent in both directions), the Hermes extension and notebook kernels. After changing the token, reinstall the OpenClaw plugin and the Hermes extension from the Config page.
+- **Config files.** `dataclaw.config.json`, `mcp-servers.json` and the token file are written atomically with mode 0600.
 
 ---
 

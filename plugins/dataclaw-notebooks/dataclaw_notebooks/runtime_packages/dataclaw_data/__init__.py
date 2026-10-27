@@ -66,6 +66,7 @@ def _get_preview_dataframe(payload: dict[str, Any]) -> pd.DataFrame:
     response = requests.post(
         f"{_api_url()}/api/data/dataframe",
         json=payload,
+        headers=_auth_headers(),
         timeout=120,
     )
     if not response.ok:
@@ -92,6 +93,7 @@ def _get_full_dataframe(payload: dict[str, Any]) -> pd.DataFrame:
         with requests.post(
             f"{_api_url()}/api/data/dataframe/export",
             json=payload,
+            headers=_auth_headers(),
             stream=True,
             timeout=(10, 1800),
         ) as response:
@@ -144,3 +146,8 @@ def get_experiment_id() -> str | None:
 
 def _api_url() -> str:
     return os.environ.get("DATACLAW_API_URL", DEFAULT_API_URL).rstrip("/")
+
+
+def _auth_headers() -> dict[str, str]:
+    token = os.environ.get("DATACLAW_TOKEN")
+    return {"X-Dataclaw-Token": token} if token else {}

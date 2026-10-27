@@ -10,6 +10,7 @@ from urllib.parse import quote, urlsplit
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse
 
+from dataclaw.api.security import sign_url_params
 from dataclaw.config.paths import workspaces_dir
 
 router = APIRouter()
@@ -57,9 +58,13 @@ _RESIZE_REPORT_SCRIPT = """<script data-dc-preview-resize>
 
 
 def _workspace_file_href(path: Path, query: str = "", fragment: str = "") -> str:
-    href = f"../files?path={quote(str(path), safe='')}"
+    params = {"path": str(path)}
     if query:
-        href += f"&asset_query={quote(query, safe='')}"
+        params["asset_query"] = query
+    # The preview document runs in a sandboxed (opaque-origin) frame, so its
+    # asset requests carry no session cookie; sign them when auth is enforced.
+    params = sign_url_params("/api/workspace/files", params)
+    href = "../files?" + "&".join(f"{k}={quote(v, safe='')}" for k, v in params.items())
     if fragment:
         href += f"#{fragment}"
     return href

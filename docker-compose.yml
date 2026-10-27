@@ -1,8 +1,10 @@
 services:
   dataclaw:
     build: .
+    # Published on the host's loopback interface only. Set
+    # DATACLAW_PUBLISH_ADDR=0.0.0.0 to reach Dataclaw from other machines.
     ports:
-      - "8000:8000"
+      - "${DATACLAW_PUBLISH_ADDR:-127.0.0.1}:8000:8000"
     volumes:
       - ${DOCKER_DATA_DIR:-./docker-data}/dataclaw:/root/.dataclaw
     env_file:

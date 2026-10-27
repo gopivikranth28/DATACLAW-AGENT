@@ -54,8 +54,28 @@ PY
 fi
 export OPENCLAW_GATEWAY_TOKEN
 
-# Shared plugin token defaults to dataclaw-local (matches DataClaw API defaults)
-DATACLAW_TOKEN="${DATACLAW_TOKEN:-${DATACLAW_FRONTEND_TOKEN:-${DATACLAW_TOOLS_TOKEN:-dataclaw-local}}}"
+# --- Resolve the Dataclaw API token (env → persisted file → generate) ---
+# Dataclaw binds 0.0.0.0 in this container, so its API requires this token.
+# The same value is the shared secret for the OpenClaw `dataclaw` plugin, which
+# sends it on every call back into Dataclaw. It is kept under the mounted data
+# directory (the same file Dataclaw itself would generate) so restarts reuse it.
+DATACLAW_TOKEN_FILE="${DATACLAW_HOME:-$HOME/.dataclaw}/api-token"
+DATACLAW_TOKEN="${DATACLAW_TOKEN:-${DATACLAW_FRONTEND_TOKEN:-${DATACLAW_TOOLS_TOKEN:-}}}"
+if [[ -z "$DATACLAW_TOKEN" && -s "$DATACLAW_TOKEN_FILE" ]]; then
+  DATACLAW_TOKEN="$(tr -d '[:space:]' < "$DATACLAW_TOKEN_FILE")"
+  echo "Reusing Dataclaw API token from $DATACLAW_TOKEN_FILE"
+fi
+if [[ -z "$DATACLAW_TOKEN" ]]; then
+  if command -v openssl >/dev/null 2>&1; then
+    DATACLAW_TOKEN="$(openssl rand -hex 32)"
+  else
+    DATACLAW_TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+  fi
+  mkdir -p "$(dirname "$DATACLAW_TOKEN_FILE")"
+  (umask 077 && printf '%s\n' "$DATACLAW_TOKEN" > "$DATACLAW_TOKEN_FILE")
+  echo "Generated Dataclaw API token (stored in $DATACLAW_TOKEN_FILE)"
+  echo "Log in at: http://localhost:${DATACLAW_PORT}/?token=${DATACLAW_TOKEN}"
+fi
 DATACLAW_API_URL="${DATACLAW_API_URL:-http://127.0.0.1:${DATACLAW_PORT}}"
 export DATACLAW_TOKEN DATACLAW_API_URL
 

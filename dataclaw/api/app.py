@@ -17,8 +17,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from dataclaw.api.deps import init_providers
+from dataclaw.api.security import SecurityMiddleware, allowed_origins, log_startup_status
 from dataclaw.config.paths import config_path, ensure_dirs
 from dataclaw.config.schema import DataclawConfig
+from dataclaw.config.secure_io import restrict_permissions, write_private_text
 from dataclaw.hooks.registry import HookRegistry
 from dataclaw.plugins.base import PluginContext
 from dataclaw.plugins.loader import discover_plugins
@@ -59,8 +61,7 @@ def _bootstrap_core_schema_defaults(cfg_path: Path) -> None:
         return changed
 
     if _merge(raw, defaults):
-        cfg_path.parent.mkdir(parents=True, exist_ok=True)
-        cfg_path.write_text(json.dumps(raw, indent=2))
+        write_private_text(cfg_path, json.dumps(raw, indent=2))
         logger.info("Backfilled missing core schema defaults into %s", cfg_path)
 
 
@@ -90,8 +91,7 @@ def _bootstrap_plugin_defaults(plugins: list, cfg_path: Path) -> None:
                 changed = True
 
     if changed:
-        cfg_path.parent.mkdir(parents=True, exist_ok=True)
-        cfg_path.write_text(json.dumps(raw, indent=2))
+        write_private_text(cfg_path, json.dumps(raw, indent=2))
         logger.info("Bootstrapped plugin config defaults into %s", cfg_path)
 
 
@@ -119,16 +119,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Bootstrap default config on first run so settings are persisted
     cfg_path = config_path()
     if not cfg_path.exists():
-        cfg_path.parent.mkdir(parents=True, exist_ok=True)
-        cfg_path.write_text(json.dumps(DataclawConfig().model_dump(), indent=2))
+        write_private_text(cfg_path, json.dumps(DataclawConfig().model_dump(), indent=2))
         logger.info("Created default config at %s", cfg_path)
     else:
+        # Config files written by older versions used the default umask.
+        restrict_permissions(cfg_path)
         from dataclaw.config.migrations import migrate_runtime_utility_config
 
         try:
             raw = json.loads(cfg_path.read_text())
             if migrate_runtime_utility_config(raw):
-                cfg_path.write_text(json.dumps(raw, indent=2))
+                write_private_text(cfg_path, json.dumps(raw, indent=2))
                 logger.info(
                     "Separated agent runtime and utility model config in %s",
                     cfg_path,
@@ -137,6 +138,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.exception("Failed to migrate runtime/utility configuration")
         # File exists — backfill any new schema defaults the user is missing.
         _bootstrap_core_schema_defaults(cfg_path)
+
+    log_startup_status()
 
     config = _load_config()
     registry = ProviderRegistry()
@@ -275,19 +278,23 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # Origin/Host checks and token auth (see dataclaw.api.security). Added
+    # before CORS so CORS stays outermost and answers preflights itself.
+    app.add_middleware(SecurityMiddleware)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://localhost:8000", "http://localhost:3000"],
+        allow_origins=allowed_origins(),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
     # Core routers — all under /api
-    from dataclaw.api.routers import chat, config, skills, skill_library, tools, providers, files, terminal
+    from dataclaw.api.routers import auth, chat, config, skills, skill_library, tools, providers, files, terminal
     from dataclaw.api.routers import plugins_router, codex_auth, guardrails, models
     from dataclaw.api.routers.chat import agent_router
 
+    app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
     app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
     app.include_router(config.router, prefix="/api/config", tags=["config"])
     app.include_router(skills.router, prefix="/api/skills", tags=["skills"])

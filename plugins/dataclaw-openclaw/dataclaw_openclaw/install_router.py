@@ -52,16 +52,22 @@ def _get_openclaw_config(request: Request) -> dict[str, Any]:
     flow would write yesterday's tokens / API URL to OpenClaw env vars.
     """
     from dataclaw.config.paths import config_path
+    from dataclaw_openclaw.shared_token import resolve_shared_token
+
     path = config_path()
-    if not path.exists():
-        return {}
-    try:
-        cfg = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    plugins = cfg.get("plugins") if isinstance(cfg, dict) else None
-    openclaw = plugins.get("openclaw") if isinstance(plugins, dict) else None
-    return openclaw if isinstance(openclaw, dict) else {}
+    openclaw: Any = None
+    if path.exists():
+        try:
+            cfg = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            cfg = None
+        plugins = cfg.get("plugins") if isinstance(cfg, dict) else None
+        openclaw = plugins.get("openclaw") if isinstance(plugins, dict) else None
+    openclaw = dict(openclaw) if isinstance(openclaw, dict) else {}
+    # The installer writes this into channels.dataclaw.token; it must be the
+    # same value Dataclaw sends and (when auth is enforced) accepts.
+    openclaw["token"] = resolve_shared_token(openclaw)
+    return openclaw
 
 
 def _openclaw_argv(cfg: dict[str, Any]) -> list[str]:
