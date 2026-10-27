@@ -29,6 +29,16 @@ def tmp_home(tmp_path, monkeypatch):
     return tmp_path
 
 
+@pytest.fixture(autouse=True)
+def isolated_gate_resolvers(monkeypatch):
+    # Loading the app elsewhere in the session registers live resolvers (e.g.
+    # analysis_review) in this process-wide registry; these tests drive gates
+    # directly and must not see them.
+    import dataclaw_plans.gates as gates
+
+    monkeypatch.setattr(gates, "GATE_RESOLVERS", {})
+
+
 # ── MLflow compatibility ───────────────────────────────────────────────────
 
 

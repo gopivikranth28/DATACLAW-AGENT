@@ -27,6 +27,15 @@ def tmp_home(tmp_path, monkeypatch):
     return tmp_path
 
 
+@pytest.fixture(autouse=True)
+def isolated_gate_resolvers(monkeypatch):
+    # Start each test with an empty process-wide resolver registry so results
+    # don't depend on whether another test module loaded the app first.
+    import dataclaw_plans.gates as gates
+
+    monkeypatch.setattr(gates, "GATE_RESOLVERS", {})
+
+
 async def _high_risk_plan(session_id: str = "sess-1") -> tuple[str, str]:
     proposed = await propose_plan(
         name="Model plan",

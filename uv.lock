@@ -905,7 +905,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "dataclaw" },
-    { name = "openai-codex-app-server-sdk", git = "https://github.com/openai/codex.git?subdirectory=sdk%2Fpython" },
+    { name = "openai-codex-app-server-sdk", git = "https://github.com/openai/codex.git?subdirectory=sdk%2Fpython&rev=be1d3cff9300c7d72d4adab2b31c19e8a8bb27ca" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
 ]
@@ -3074,7 +3074,7 @@ wheels = [
 [[package]]
 name = "openai-codex-app-server-sdk"
 version = "0.116.0a1"
-source = { git = "https://github.com/openai/codex.git?subdirectory=sdk%2Fpython#be1d3cff9300c7d72d4adab2b31c19e8a8bb27ca" }
+source = { git = "https://github.com/openai/codex.git?subdirectory=sdk%2Fpython&rev=be1d3cff9300c7d72d4adab2b31c19e8a8bb27ca#be1d3cff9300c7d72d4adab2b31c19e8a8bb27ca" }
 dependencies = [
     { name = "pydantic" },
 ]

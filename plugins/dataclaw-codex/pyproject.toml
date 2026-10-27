@@ -12,7 +12,7 @@ dependencies = [
 dataclaw-codex = "dataclaw_codex:CodexPlugin"
 
 [tool.uv.sources]
-openai-codex-app-server-sdk = { git = "https://github.com/openai/codex.git", subdirectory = "sdk/python" }
+openai-codex-app-server-sdk = { git = "https://github.com/openai/codex.git", subdirectory = "sdk/python", rev = "be1d3cff9300c7d72d4adab2b31c19e8a8bb27ca" }
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
