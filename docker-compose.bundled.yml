@@ -46,6 +46,13 @@ services:
       # provider accepts either. Pass both through.
       GOOGLE_API_KEY:
       GEMINI_API_KEY:
+      # OpenClaw's bundled OpenRouter provider: stored in OpenClaw's auth
+      # profile at first start (when it has no OpenRouter credential yet).
+      OPENROUTER_API_KEY:
+      # Optional OpenClaw primary model, applied on every start, e.g.
+      # openrouter/anthropic/claude-opus-5.5 (defaults to openrouter/auto when
+      # only OPENROUTER_API_KEY is set and no model is configured).
+      DATACLAW_OPENCLAW_MODEL:
     env_file:
       - path: .env
         required: false

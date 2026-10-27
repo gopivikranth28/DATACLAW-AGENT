@@ -75,7 +75,9 @@ RUN cd openclaw-plugins/dataclaw \
 # button runs) so the bundled bootstrap stays in lockstep with the UI.
 COPY scripts/entrypoint-bundled.sh /entrypoint.sh
 COPY scripts/install_dataclaw_plugin.py /dataclaw/scripts/install_dataclaw_plugin.py
-RUN chmod +x /entrypoint.sh /dataclaw/scripts/install_dataclaw_plugin.py
+COPY scripts/configure_openclaw_model.py /dataclaw/scripts/configure_openclaw_model.py
+RUN chmod +x /entrypoint.sh /dataclaw/scripts/install_dataclaw_plugin.py \
+    /dataclaw/scripts/configure_openclaw_model.py
 
 # Environment
 ENV DISPLAY=:0

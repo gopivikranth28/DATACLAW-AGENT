@@ -573,7 +573,7 @@ def _patch_install_flow(monkeypatch, *, version: str | None = "OpenClaw 2026.10.
     """
     calls: list[list[str]] = []
 
-    async def fake_stream(argv: list[str], cwd: Path | None = None):
+    async def fake_stream(argv: list[str], cwd: Path | None = None, secrets=None):
         calls.append(argv)
         if argv[1:3] == ["plugins", "install"]:
             for line in install_lines or []:

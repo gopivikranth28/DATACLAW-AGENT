@@ -188,6 +188,18 @@ echo "==> Installing/refreshing dataclaw plugin (canonical flow)"
 ( cd /dataclaw && uv run --no-sync python3 scripts/install_dataclaw_plugin.py ) \
   || echo "Warning: dataclaw plugin install/refresh exited non-zero"
 
+# ---------------------------------------------------------------------------
+# Optional: OpenClaw's bundled OpenRouter provider. OPENROUTER_API_KEY is
+# stored in OpenClaw's auth-profile store (via stdin, never argv) when OpenClaw
+# has no OpenRouter credential yet; DATACLAW_OPENCLAW_MODEL, when set, becomes
+# the primary model on every start.
+# ---------------------------------------------------------------------------
+if [[ -n "${OPENROUTER_API_KEY:-}" || -n "${DATACLAW_OPENCLAW_MODEL:-}" ]]; then
+  echo "==> Configuring OpenClaw's OpenRouter provider"
+  ( cd /dataclaw && uv run --no-sync python3 scripts/configure_openclaw_model.py ) \
+    || echo "Warning: OpenRouter configuration exited non-zero"
+fi
+
 echo "==> Starting OpenClaw gateway on port $OPENCLAW_GATEWAY_PORT"
 openclaw gateway \
   --bind lan \

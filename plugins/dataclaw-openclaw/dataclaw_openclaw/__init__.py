@@ -13,6 +13,7 @@ from dataclaw.plugins.base import (
 )
 
 from dataclaw_openclaw.install_router import router as install_router
+from dataclaw_openclaw.model_router import router as openclaw_model_router
 from dataclaw_openclaw.skill_sync import router as skill_sync_router
 from dataclaw_openclaw.tool_proxy import router as tool_proxy_router
 
@@ -26,6 +27,7 @@ class OpenClawPlugin:
     def register(self, ctx: PluginContext) -> None:
         # Always register these routes — needed before OpenClaw is fully configured
         ctx.include_api_router(install_router, prefix="/openclaw", tags=["openclaw-install"])
+        ctx.include_api_router(openclaw_model_router, prefix="/openclaw", tags=["openclaw-model"])
         ctx.include_api_router(skill_sync_router, prefix="/openclaw", tags=["openclaw-skills"])
         ctx.include_api_router(tool_proxy_router, tags=["openclaw-tools"])
         if ctx.session_cleanup_registry is not None:

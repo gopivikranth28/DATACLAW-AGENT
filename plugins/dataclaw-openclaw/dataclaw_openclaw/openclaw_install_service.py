@@ -409,11 +409,18 @@ async def _wait_for_gateway(healthz_url: str) -> AsyncIterator[dict[str, Any]]:
 async def _stream_subprocess(
     argv: list[str],
     cwd: Path | None = None,
+    secrets: list[str | None] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Spawn a subprocess and yield each stdout/stderr line as an SSE event.
 
+    Lines are redacted (``secrets`` plus anything shaped like an OpenRouter
+    key) before they leave this function: ``config set --batch-json`` carries
+    secret values on argv and OpenClaw can echo them back in error output.
+
     The final event is ``{"_rc": <returncode>}`` so callers can inspect it.
     """
+    from dataclaw_openclaw.openrouter_config import redact
+
     proc = await asyncio.create_subprocess_exec(
         *argv,
         stdout=asyncio.subprocess.PIPE,
@@ -422,7 +429,7 @@ async def _stream_subprocess(
     )
     assert proc.stdout
     async for raw in proc.stdout:
-        yield _sse({"line": raw.decode(errors="replace").rstrip()})
+        yield _sse({"line": redact(raw.decode(errors="replace").rstrip(), secrets or ())})
     rc = await proc.wait()
     yield {"_rc": rc}
 
@@ -816,9 +823,12 @@ async def install_plugin_atomic(
         yield _sse({"line": f"  payload: {json.dumps(masked)}"})
 
         rc: int | None = None
+        secret_values = [
+            str(e["value"]) for e in batch_entries if e["path"] in CHANNEL_TOKEN_PATHS
+        ]
         async for event in _stream_subprocess([
             *argv, "config", "set", "--batch-json", json.dumps(batch_entries),
-        ]):
+        ], secrets=secret_values):
             if "_rc" in event:
                 rc = int(event["_rc"])
             else:

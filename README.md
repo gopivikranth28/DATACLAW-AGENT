@@ -187,6 +187,16 @@ The Dataclaw API requires the access token in this setup. On first start the con
 
 For full OpenClaw onboarding beyond the model provider, use the integrated terminal in the Dataclaw UI or `docker exec -it <container> bash`.
 
+#### OpenClaw + OpenRouter
+
+OpenClaw ships a built-in `openrouter` provider, and Dataclaw can configure it so the OpenClaw agent runs on any OpenRouter model. This covers the OpenClaw runtime only. Dataclaw's own utility model is configured separately.
+
+- **UI:** on **Config → Agent → OpenClaw → Model provider**, choose **OpenRouter**, paste an API key, choose a model, and set the privacy options if you want them: *Don't route to providers that store data* (`data_collection: "deny"`), *Require zero data retention* (`zdr`), and a provider sort. **Apply to OpenClaw** takes effect without a gateway restart. Choose *Other provider* to keep the terminal sign-in (`openclaw models auth login`).
+- **Bundled image:** set `OPENROUTER_API_KEY` (and optionally `DATACLAW_OPENCLAW_MODEL`, e.g. `openrouter/anthropic/claude-opus-5.5`) in `.env` or the environment. At start, the key is stored in OpenClaw only when it has no OpenRouter credential yet, so it never replaces a key set in the UI. The model is applied on every start. With only a key and no configured model, the model defaults to `openrouter/auto`.
+- **API:** `POST /api/openclaw/model` with `{"provider": "openrouter", "api_key": "…", "model": "openrouter/<vendor>/<model>", "routing": {"data_collection": "deny", "zdr": true, "sort": "price"}, "response_cache": {"enabled": true, "ttl_seconds": 300}}`. Every field except `provider` and `model` is optional; without `api_key`, the request uses `OPENROUTER_API_KEY` from Dataclaw's environment, or keeps OpenClaw's existing key. `GET /api/openclaw/model` reports the primary model, the routing settings and `configured` (whether a key exists; the key itself is never returned). `GET /api/openclaw/openrouter/models` is a cached proxy of OpenRouter's public model list.
+
+The key is piped to `openclaw models auth paste-api-key --provider openrouter` on stdin, so it never appears on a command line, in Dataclaw's logs or in its API responses. It lives in OpenClaw's credential store (`~/.openclaw/state/openclaw.sqlite`), not in `openclaw.json`. The model is set with `openclaw models set`, and routing and cache settings go to `agents.defaults.models["<ref>"].params`.
+
 | | |
 |---|---|
 | **Ports** | `8000` — Dataclaw UI and API |
