@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -70,16 +69,15 @@ async def set_model(request: Request):
     if catalog is not None and upstream not in {row["id"] for row in catalog}:
         raise HTTPException(status_code=400, detail=f"Unknown OpenRouter model: {upstream}")
 
-    api_key = body.api_key
-    if api_key is None:
-        env_key = os.environ.get(orc.API_KEY_ENV_VAR, "").strip()
-        if env_key:
-            try:
-                api_key = orc.validate_api_key(env_key)
-            except ValueError as exc:
-                warnings.append(f"Ignoring {orc.API_KEY_ENV_VAR} from the environment: {exc}")
-
     async with _write_lock:
+        # Checked under the lock: whether OpenClaw already has a credential
+        # decides if the environment key may be used.
+        api_key: str | None = None
+        try:
+            api_key, key_source = await orc.resolve_api_key(argv, body.api_key)
+        except ValueError as exc:
+            key_source = "existing"
+            warnings.append(f"Ignoring {orc.API_KEY_ENV_VAR} from the environment: {exc}")
         try:
             result = await orc.apply_model_config(
                 argv,
@@ -97,7 +95,13 @@ async def set_model(request: Request):
     state = await orc.read_model_state(argv)
     if not state["configured"]:
         warnings.append("No OpenRouter credential is configured in OpenClaw yet; add an API key or sign in.")
-    return {**state, "key_updated": result["key_updated"], "warnings": warnings}
+    return {
+        **state,
+        "key_updated": result["key_updated"],
+        "key_source": key_source,
+        "removed_models": result["removed"],
+        "warnings": warnings,
+    }
 
 
 @router.get("/openrouter/models")

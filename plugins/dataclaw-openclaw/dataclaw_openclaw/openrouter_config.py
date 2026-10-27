@@ -15,9 +15,15 @@ extension. This module drives it through the OpenClaw CLI:
   keyed on it.
 - **Routing / response cache** — per-model params at
   ``agents.defaults.models["<ref>"].params.{provider,responseCache,
-  responseCacheTtlSeconds}``, written with one ``config set --batch-json``
-  (hot-reloaded; no gateway restart). OpenClaw does not validate the
-  ``provider`` routing object, so Dataclaw does.
+  responseCacheTtlSeconds}``. OpenClaw does not validate the ``provider``
+  routing object, so Dataclaw does.
+- **Stale entries** — ``models set`` adds an ``agents.defaults.models[<ref>]``
+  entry per model. When the primary changes, the previous model's entry is
+  removed if it is empty or holds only the params Dataclaw writes.
+- Params and that removal go out as **one** ``config patch --stdin`` (one
+  write, hot-reloaded): ``null`` deletes a path, and ``--replace-path`` on
+  ``params.provider`` makes the routing object replace rather than merge.
+  ``config set --batch-json`` has no delete operation.
 - **Credential status** — ``openclaw models status --json``; only a boolean is
   derived from it (its ``labels``/``env`` fields carry key fragments).
 
@@ -51,6 +57,11 @@ REF_PREFIX = f"{PROVIDER_ID}/"
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 CATALOG_TTL_SECONDS = 600.0
 _CATALOG_MAX_BYTES = 16 * 1024 * 1024
+
+# Per-model params Dataclaw owns; an entry holding nothing else is removable.
+DATACLAW_PARAM_KEYS = frozenset({"provider", "responseCache", "responseCacheTtlSeconds"})
+
+KeySource = Literal["request", "env", "existing"]
 
 _REDACTED = "****"
 # OpenRouter keys look like ``sk-or-v1-<hex>``; redact anything key-shaped even
@@ -136,9 +147,13 @@ def openrouter_id_from_ref(ref: str | None) -> str | None:
         return None
 
 
+def model_entry_path(ref: str) -> str:
+    """Config path for a model entry; bracket-quotes the ref (it has dots)."""
+    return f"agents.defaults.models[{json.dumps(ref)}]"
+
+
 def model_params_path(ref: str, *leaf: str) -> str:
-    """Config path for a per-model param; bracket-quotes the ref (it has dots)."""
-    return ".".join([f"agents.defaults.models[{json.dumps(ref)}].params", *leaf])
+    return ".".join([f"{model_entry_path(ref)}.params", *leaf])
 
 
 # ── Request schema ──────────────────────────────────────────────────────────
@@ -208,28 +223,57 @@ class ModelConfigRequest(BaseModel):
         return validate_api_key(value)
 
 
-def build_model_param_entries(
+def build_model_params(
+    routing: RoutingSettings | None,
+    response_cache: ResponseCacheSettings | None,
+) -> dict[str, Any]:
+    """The ``params`` object to patch onto a model entry.
+
+    ``routing=None`` / ``response_cache=None`` leave the existing values
+    alone. A ``routing`` object replaces ``params.provider`` wholesale (see
+    :func:`build_model_config_patch`), so cleared toggles really clear.
+    """
+    params: dict[str, Any] = {}
+    if routing is not None:
+        params["provider"] = routing.to_openrouter()
+    if response_cache is not None:
+        params["responseCache"] = response_cache.enabled
+        if response_cache.ttl_seconds is not None:
+            params["responseCacheTtlSeconds"] = response_cache.ttl_seconds
+    return params
+
+
+def build_model_config_patch(
     ref: str,
     routing: RoutingSettings | None,
     response_cache: ResponseCacheSettings | None,
-) -> list[dict[str, Any]]:
-    """``config set --batch-json`` entries for one model's params.
+    remove_refs: Iterable[str] = (),
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """``(patch, replace_paths)`` for ``openclaw config patch --stdin``.
 
-    ``routing=None`` / ``response_cache=None`` leave the existing values
-    alone. A ``routing`` object replaces ``params.provider`` wholesale (``set``
-    replaces the object at a path), so cleared toggles really clear.
+    Returns ``(None, [])`` when there is nothing to write.
     """
-    entries: list[dict[str, Any]] = []
-    if routing is not None:
-        entries.append({"path": model_params_path(ref, "provider"), "value": routing.to_openrouter()})
-    if response_cache is not None:
-        entries.append({"path": model_params_path(ref, "responseCache"), "value": response_cache.enabled})
-        if response_cache.ttl_seconds is not None:
-            entries.append({
-                "path": model_params_path(ref, "responseCacheTtlSeconds"),
-                "value": response_cache.ttl_seconds,
-            })
-    return entries
+    models: dict[str, Any] = {}
+    params = build_model_params(routing, response_cache)
+    if params:
+        models[ref] = {"params": params}
+    for old in remove_refs:
+        if old != ref:
+            models[old] = None
+    if not models:
+        return None, []
+    replace_paths = [model_params_path(ref, "provider")] if "provider" in params else []
+    return {"agents": {"defaults": {"models": models}}}, replace_paths
+
+
+def is_dataclaw_owned_entry(entry: Any) -> bool:
+    """True when a model entry is empty or holds only params Dataclaw writes."""
+    if not isinstance(entry, dict):
+        return False
+    if set(entry) - {"params"}:
+        return False
+    params = entry.get("params", {})
+    return isinstance(params, dict) and not (set(params) - DATACLAW_PARAM_KEYS)
 
 
 # ── CLI plumbing ────────────────────────────────────────────────────────────
@@ -357,12 +401,40 @@ async def set_primary_model(argv: list[str], ref: str) -> str:
     return stored if isinstance(stored, str) and stored else ref
 
 
-async def apply_batch(argv: list[str], entries: list[dict[str, Any]]) -> None:
-    if not entries:
+async def apply_patch(argv: list[str], patch: dict[str, Any] | None, replace_paths: list[str]) -> None:
+    """One atomic ``config patch --stdin`` write (hot-reloaded by the gateway)."""
+    if not patch:
         return
-    rc, out = await run_openclaw(argv, ["config", "set", "--batch-json", json.dumps(entries)])
+    args = ["config", "patch", "--stdin"]
+    for path in replace_paths:
+        args += ["--replace-path", path]
+    rc, out = await run_openclaw(argv, args, stdin=json.dumps(patch))
     if rc != 0:
-        raise OpenClawCommandError("openclaw config set --batch-json", rc, out)
+        raise OpenClawCommandError("openclaw config patch", rc, out)
+
+
+async def resolve_api_key(
+    argv: list[str], request_key: str | None, env: Any = None,
+) -> tuple[str | None, KeySource]:
+    """Pick the key to store, and say where it came from.
+
+    - An explicit key always wins (``"request"``) and replaces any credential.
+    - Otherwise ``OPENROUTER_API_KEY`` from the environment is used only when
+      OpenClaw has no OpenRouter credential yet (``"env"``), so an OAuth
+      sign-in or a pasted key is never replaced by a save.
+    - Otherwise nothing is written (``"existing"``).
+
+    Raises ``ValueError`` (without echoing the key) for a malformed key.
+    """
+    if request_key:
+        return validate_api_key(request_key), "request"
+    env = os.environ if env is None else env
+    raw = (env.get(API_KEY_ENV_VAR) or "").strip()
+    if raw:
+        key = validate_api_key(raw)
+        if not await is_credential_configured(argv):
+            return key, "env"
+    return None, "existing"
 
 
 def _primary_from(value: Any) -> str | None:
@@ -408,21 +480,33 @@ async def apply_model_config(
     routing: RoutingSettings | None = None,
     response_cache: ResponseCacheSettings | None = None,
 ) -> dict[str, Any]:
-    """Store the key (if any), set the primary model, write per-model params.
+    """Store the key (if any), set the primary model, write per-model params,
+    and drop the previous primary's entry when Dataclaw owns all of it.
 
-    Returns ``{"model": <stored ref>, "key_updated": bool, "entries": n}``.
+    The previous entry is kept when it carries any other setting (alias,
+    runtime pin, other params) or is still listed as a fallback.
+
+    Returns ``{"model", "key_updated", "removed"}``.
     """
     ref, _ = normalize_model_ref(model)
     if api_key:
         await store_api_key(argv, validate_api_key(api_key))
+    previous = await get_config_value(argv, "agents.defaults.model")
+    old_primary = _primary_from(previous)
+    fallbacks = previous.get("fallbacks") if isinstance(previous, dict) else None
     stored = await set_primary_model(argv, ref)
-    entries = build_model_param_entries(stored, routing, response_cache)
-    await apply_batch(argv, entries)
+
+    removed: list[str] = []
+    if old_primary and old_primary != stored and old_primary not in (fallbacks or []):
+        if is_dataclaw_owned_entry(await get_config_value(argv, model_entry_path(old_primary))):
+            removed.append(old_primary)
+    patch, replace_paths = build_model_config_patch(stored, routing, response_cache, removed)
+    await apply_patch(argv, patch, replace_paths)
     logger.info(
-        "Configured OpenClaw model %s (key updated: %s, param entries: %d)",
-        stored, bool(api_key), len(entries),
+        "Configured OpenClaw model %s (key updated: %s, removed stale entries: %s)",
+        stored, bool(api_key), removed or "none",
     )
-    return {"model": stored, "key_updated": bool(api_key), "entries": len(entries)}
+    return {"model": stored, "key_updated": bool(api_key), "removed": removed}
 
 
 async def bootstrap_from_env(argv: list[str], env: dict[str, str] | None = None) -> list[str]:
@@ -445,15 +529,15 @@ async def bootstrap_from_env(argv: list[str], env: dict[str, str] | None = None)
     key: str | None = None
     if raw_key:
         try:
-            key = validate_api_key(raw_key)
+            key, _source = await resolve_api_key(argv, None, env)
         except ValueError as exc:
             lines.append(f"warning: ignoring {API_KEY_ENV_VAR}: {exc}")
-    if key:
-        if await is_credential_configured(argv):
-            lines.append("OpenRouter credential already configured in OpenClaw; leaving it unchanged")
         else:
-            await store_api_key(argv, key)
-            lines.append(f"Stored {API_KEY_ENV_VAR} in OpenClaw's openrouter auth profile")
+            if key:
+                await store_api_key(argv, key)
+                lines.append(f"Stored {API_KEY_ENV_VAR} in OpenClaw's openrouter auth profile")
+            else:
+                lines.append("OpenRouter credential already configured in OpenClaw; leaving it unchanged")
 
     ref: str | None = None
     if raw_model:

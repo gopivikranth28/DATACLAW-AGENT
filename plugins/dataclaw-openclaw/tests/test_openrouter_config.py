@@ -54,13 +54,17 @@ class FakeOpenClaw:
 
     def __init__(self, *, configured: bool = False, primary: str | None = None,
                  params: dict[str, Any] | None = None, fail: dict[str, tuple[int, str]] | None = None,
-                 canonical: dict[str, str] | None = None):
+                 canonical: dict[str, str] | None = None, entries: dict[str, Any] | None = None,
+                 fallbacks: list[str] | None = None):
         self.calls: list[dict[str, Any]] = []
         self.configured = configured
         self.primary = primary
         self.params = params or {}
         self.fail = fail or {}
         self.canonical = canonical or {}
+        # agents.defaults.models; `models set` adds `{}` like the real CLI.
+        self.entries: dict[str, Any] = dict(entries or {})
+        self.fallbacks = fallbacks
 
     def respond(self, args: list[str], stdin: str | None, env: dict | None) -> tuple[int, str]:
         self.calls.append({"args": args, "stdin": stdin, "env": env})
@@ -73,6 +77,7 @@ class FakeOpenClaw:
             return 0, "Auth profile: openrouter:manual (openrouter/api_key)\n"
         if args[:2] == ["models", "set"]:
             self.primary = self.canonical.get(args[2], args[2])
+            self.entries.setdefault(self.primary, {})
             return 0, f"Default model: {self.primary}\n"
         if args[:2] == ["models", "status"]:
             providers = []
@@ -86,14 +91,28 @@ class FakeOpenClaw:
         if args[:2] == ["config", "get"]:
             path = args[2]
             if path == "agents.defaults.model":
-                return (0, json.dumps({"primary": self.primary})) if self.primary else (1, "unset")
+                if not self.primary:
+                    return 1, "unset"
+                model = {"primary": self.primary}
+                if self.fallbacks is not None:
+                    model["fallbacks"] = self.fallbacks
+                return 0, json.dumps(model)
             if path == "agents.defaults.model.primary":
                 return (0, json.dumps(self.primary)) if self.primary else (1, "unset")
             if path.endswith(".params"):
                 return 0, json.dumps(self.params)
+            for ref, entry in self.entries.items():
+                if path == orc.model_entry_path(ref):
+                    return 0, json.dumps(entry)
             return 1, "unset"
-        if args[:2] == ["config", "set"]:
-            return 0, "Updated config paths.\n"
+        if args[:3] == ["config", "patch", "--stdin"]:
+            models = json.loads(stdin)["agents"]["defaults"]["models"]
+            for ref, value in models.items():
+                if value is None:
+                    self.entries.pop(ref, None)
+                else:
+                    self.entries.setdefault(ref, {}).setdefault("params", {}).update(value["params"])
+            return 0, f"Applied {len(models)} config update(s).\n"
         return 1, f"unexpected: {joined}"
 
 
@@ -239,11 +258,13 @@ def test_model_config_request_normalizes_model_and_blank_key() -> None:
     ))
 
 
-# ── Batch entries per option ────────────────────────────────────────────────
+# ── Patch per option ────────────────────────────────────────────────────────
+
+PARAMS = f'agents.defaults.models["{OPUS}"].params'
 
 
-def test_build_entries_nothing_requested() -> None:
-    assert orc.build_model_param_entries(OPUS, None, None) == []
+def test_build_patch_nothing_requested() -> None:
+    assert orc.build_model_config_patch(OPUS, None, None) == (None, [])
 
 
 @pytest.mark.parametrize(
@@ -259,25 +280,47 @@ def test_build_entries_nothing_requested() -> None:
         ({}, {}),  # clears every routing preference
     ],
 )
-def test_build_entries_routing_options(routing: dict, expected: dict) -> None:
-    entries = orc.build_model_param_entries(OPUS, orc.RoutingSettings.model_validate(routing), None)
-    assert entries == [{
-        "path": 'agents.defaults.models["openrouter/anthropic/claude-opus-5.5"].params.provider',
-        "value": expected,
-    }]
+def test_build_patch_routing_options(routing: dict, expected: dict) -> None:
+    patch, replace = orc.build_model_config_patch(OPUS, orc.RoutingSettings.model_validate(routing), None)
+    assert patch == {"agents": {"defaults": {"models": {OPUS: {"params": {"provider": expected}}}}}}
+    # The routing object replaces the stored one instead of merging into it.
+    assert replace == [f"{PARAMS}.provider"]
 
 
-def test_build_entries_response_cache() -> None:
-    base = 'agents.defaults.models["openrouter/auto"].params'
-    with_ttl = orc.build_model_param_entries(
+def test_build_patch_response_cache() -> None:
+    patch, replace = orc.build_model_config_patch(
         "openrouter/auto", None, orc.ResponseCacheSettings(enabled=True, ttl_seconds=300)
     )
-    assert with_ttl == [
-        {"path": f"{base}.responseCache", "value": True},
-        {"path": f"{base}.responseCacheTtlSeconds", "value": 300},
-    ]
-    disabled = orc.build_model_param_entries("openrouter/auto", None, orc.ResponseCacheSettings(enabled=False))
-    assert disabled == [{"path": f"{base}.responseCache", "value": False}]
+    assert patch == {"agents": {"defaults": {"models": {"openrouter/auto": {
+        "params": {"responseCache": True, "responseCacheTtlSeconds": 300}}}}}}
+    assert replace == []
+    patch, _ = orc.build_model_config_patch("openrouter/auto", None, orc.ResponseCacheSettings(enabled=False))
+    assert patch["agents"]["defaults"]["models"]["openrouter/auto"] == {"params": {"responseCache": False}}
+
+
+def test_build_patch_removes_old_refs_in_the_same_write() -> None:
+    old = "openrouter/openai/gpt-6.1-terra"
+    patch, _ = orc.build_model_config_patch(OPUS, None, None, [old, OPUS])
+    # Removal only; the new ref is never deleted even if listed.
+    assert patch == {"agents": {"defaults": {"models": {old: None}}}}
+
+
+@pytest.mark.parametrize(
+    ("entry", "owned"),
+    [
+        ({}, True),
+        ({"params": {}}, True),
+        ({"params": {"provider": {"zdr": True}, "responseCache": True, "responseCacheTtlSeconds": 60}}, True),
+        ({"params": {"provider": {}, "extraBody": {"plugins": []}}}, False),
+        ({"params": {"fastMode": True}}, False),
+        ({"alias": "opus"}, False),
+        ({"agentRuntime": {"id": "openclaw"}, "params": {}}, False),
+        ({"params": "weird"}, False),
+        (None, False),  # absent entry
+    ],
+)
+def test_is_dataclaw_owned_entry(entry: Any, owned: bool) -> None:
+    assert orc.is_dataclaw_owned_entry(entry) is owned
 
 
 # ── CLI argv / stdin ────────────────────────────────────────────────────────
@@ -292,28 +335,29 @@ async def test_apply_model_config_argv_and_key_on_stdin(fake_cli) -> None:
         routing=orc.RoutingSettings(data_collection="deny", zdr=True, sort="price"),
         response_cache=orc.ResponseCacheSettings(enabled=True, ttl_seconds=600),
     )
-    assert result == {"model": OPUS, "key_updated": True, "entries": 3}
+    assert result == {"model": OPUS, "key_updated": True, "removed": []}
     args = [c["args"] for c in cli.calls]
     assert args[0] == ["models", "auth", "paste-api-key", "--provider", "openrouter"]
     assert cli.calls[0]["stdin"] == KEY + "\n"
-    assert args[1] == ["models", "set", OPUS]
-    assert args[2] == ["config", "get", "agents.defaults.model.primary", "--json"]
-    assert args[3][:3] == ["config", "set", "--batch-json"]
-    assert json.loads(args[3][3]) == [
-        {"path": f'agents.defaults.models["{OPUS}"].params.provider',
-         "value": {"data_collection": "deny", "zdr": True, "sort": "price"}},
-        {"path": f'agents.defaults.models["{OPUS}"].params.responseCache', "value": True},
-        {"path": f'agents.defaults.models["{OPUS}"].params.responseCacheTtlSeconds', "value": 600},
-    ]
-    # The key only ever travels on stdin.
+    assert args[1] == ["config", "get", "agents.defaults.model", "--json"]
+    assert args[2] == ["models", "set", OPUS]
+    assert args[3] == ["config", "get", "agents.defaults.model.primary", "--json"]
+    assert args[4] == ["config", "patch", "--stdin", "--replace-path", f"{PARAMS}.provider"]
+    assert json.loads(cli.calls[4]["stdin"]) == {"agents": {"defaults": {"models": {OPUS: {"params": {
+        "provider": {"data_collection": "deny", "zdr": True, "sort": "price"},
+        "responseCache": True,
+        "responseCacheTtlSeconds": 600,
+    }}}}}}
+    # The key only ever travels on stdin of paste-api-key.
     assert not any(KEY in " ".join(c["args"]) for c in cli.calls)
+    assert [c for c in cli.calls if c["stdin"] and KEY in c["stdin"]] == [cli.calls[0]]
 
 
 async def test_apply_model_config_without_key_keeps_existing_credential(fake_cli) -> None:
     cli = fake_cli["cli"]
     await orc.apply_model_config(["openclaw"], model="openrouter/auto")
     assert not _calls(cli, "models", "auth")
-    assert not _calls(cli, "config", "set")  # no params requested
+    assert not _calls(cli, "config", "patch")  # no params requested, nothing to remove
     assert _calls(cli, "models", "set")[0]["args"] == ["models", "set", "openrouter/auto"]
 
 
@@ -323,8 +367,98 @@ async def test_params_are_keyed_on_the_ref_openclaw_stored(fake_cli) -> None:
         ["openclaw"], model="openrouter/openrouter/fusion",
         response_cache=orc.ResponseCacheSettings(enabled=True),
     )
-    batch = json.loads(_calls(cli, "config", "set")[0]["args"][3])
-    assert batch == [{"path": 'agents.defaults.models["openrouter/fusion"].params.responseCache', "value": True}]
+    patch = json.loads(_calls(cli, "config", "patch")[0]["stdin"])
+    assert patch == {"agents": {"defaults": {"models": {"openrouter/fusion": {"params": {"responseCache": True}}}}}}
+
+
+# ── Stale model entries ─────────────────────────────────────────────────────
+
+OLD = "openrouter/openai/gpt-6.1-terra"
+
+
+@pytest.mark.parametrize(
+    "old_entry",
+    [{}, {"params": {"provider": {"sort": "price"}, "responseCache": True, "responseCacheTtlSeconds": 30}}],
+)
+async def test_switching_model_removes_a_dataclaw_owned_entry(fake_cli, old_entry: dict) -> None:
+    cli = fake_cli["cli"] = FakeOpenClaw(primary=OLD, entries={OLD: old_entry})
+    result = await orc.apply_model_config(
+        ["openclaw"], model=OPUS, routing=orc.RoutingSettings(zdr=True),
+    )
+    assert result["removed"] == [OLD]
+    patches = _calls(cli, "config", "patch")
+    assert len(patches) == 1  # params and removal in one write
+    assert json.loads(patches[0]["stdin"])["agents"]["defaults"]["models"] == {
+        OPUS: {"params": {"provider": {"zdr": True}}}, OLD: None,
+    }
+    assert set(cli.entries) == {OPUS}
+
+
+async def test_switching_model_removes_old_entry_even_without_params(fake_cli) -> None:
+    cli = fake_cli["cli"] = FakeOpenClaw(primary=OLD, entries={OLD: {}})
+    await orc.apply_model_config(["openclaw"], model=OPUS)
+    patches = _calls(cli, "config", "patch")
+    assert patches[0]["args"] == ["config", "patch", "--stdin"]  # no --replace-path
+    assert json.loads(patches[0]["stdin"]) == {"agents": {"defaults": {"models": {OLD: None}}}}
+
+
+@pytest.mark.parametrize(
+    "old_entry",
+    [{"alias": "terra"}, {"params": {"fastMode": True}}, {"params": {"provider": {}, "extraBody": {"x": 1}}},
+     {"agentRuntime": {"id": "openclaw"}}],
+)
+async def test_switching_model_keeps_entries_with_user_settings(fake_cli, old_entry: dict) -> None:
+    cli = fake_cli["cli"] = FakeOpenClaw(primary=OLD, entries={OLD: old_entry})
+    result = await orc.apply_model_config(["openclaw"], model=OPUS)
+    assert result["removed"] == []
+    assert not _calls(cli, "config", "patch")
+    assert cli.entries[OLD] == old_entry
+
+
+async def test_switching_model_keeps_an_entry_used_as_fallback(fake_cli) -> None:
+    cli = fake_cli["cli"] = FakeOpenClaw(primary=OLD, entries={OLD: {}}, fallbacks=[OLD])
+    assert (await orc.apply_model_config(["openclaw"], model=OPUS))["removed"] == []
+    assert OLD in cli.entries
+
+
+async def test_reapplying_the_same_model_removes_nothing(fake_cli) -> None:
+    cli = fake_cli["cli"] = FakeOpenClaw(primary=OPUS, entries={OPUS: {}})
+    result = await orc.apply_model_config(
+        ["openclaw"], model=OPUS, response_cache=orc.ResponseCacheSettings(enabled=True),
+    )
+    assert result["removed"] == []
+    assert OPUS not in [k for k, v in json.loads(_calls(cli, "config", "patch")[0]["stdin"])
+                        ["agents"]["defaults"]["models"].items() if v is None]
+
+
+async def test_canonicalized_ref_is_not_treated_as_a_model_change(fake_cli) -> None:
+    # Stored as openrouter/fusion; re-submitting the double-prefixed form must
+    # not delete the entry the new primary lives in.
+    cli = fake_cli["cli"] = FakeOpenClaw(primary="openrouter/fusion", entries={"openrouter/fusion": {}})
+    result = await orc.apply_model_config(["openclaw"], model="openrouter/openrouter/fusion")
+    assert result["removed"] == []
+    assert "openrouter/fusion" in cli.entries
+
+
+# ── Key source ──────────────────────────────────────────────────────────────
+
+
+async def test_resolve_api_key_request_wins_even_when_configured(fake_cli) -> None:
+    fake_cli["cli"] = FakeOpenClaw(configured=True)
+    assert await orc.resolve_api_key(["openclaw"], KEY, {orc.API_KEY_ENV_VAR: "sk-or-v1-envkey"}) == (KEY, "request")
+    assert fake_cli["cli"].calls == []  # no status check needed
+
+
+async def test_resolve_api_key_env_only_when_unconfigured(fake_cli) -> None:
+    env = {orc.API_KEY_ENV_VAR: KEY}
+    assert await orc.resolve_api_key(["openclaw"], None, env) == (KEY, "env")
+    fake_cli["cli"] = FakeOpenClaw(configured=True)
+    assert await orc.resolve_api_key(["openclaw"], None, env) == (None, "existing")
+
+
+async def test_resolve_api_key_without_any_key(fake_cli) -> None:
+    assert await orc.resolve_api_key(["openclaw"], None, {}) == (None, "existing")
+    assert fake_cli["cli"].calls == []
 
 
 async def test_status_check_hides_the_process_key(fake_cli, monkeypatch) -> None:
@@ -581,27 +715,68 @@ def test_post_model_configures_openclaw(api: TestClient, fake_cli, caplog) -> No
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["model"] == OPUS and body["configured"] is True and body["key_updated"] is True
-    assert body["warnings"] == []
+    assert body["key_source"] == "request"
+    assert body["warnings"] == [] and body["removed_models"] == []
     assert KEY not in resp.text and KEY not in caplog.text
     cli = fake_cli["cli"]
     assert _calls(cli, "models", "auth", "paste-api-key")[0]["stdin"] == KEY + "\n"
-    assert len(json.loads(_calls(cli, "config", "set")[0]["args"][3])) == 3
+    patch = json.loads(_calls(cli, "config", "patch")[0]["stdin"])
+    assert len(patch["agents"]["defaults"]["models"][OPUS]["params"]) == 3
 
 
-def test_post_model_uses_env_key_when_omitted(api: TestClient, fake_cli, monkeypatch) -> None:
+def test_post_model_request_key_replaces_an_existing_credential(api: TestClient, fake_cli, monkeypatch) -> None:
+    monkeypatch.setenv(orc.API_KEY_ENV_VAR, "sk-or-v1-from-env-0000")
+    fake_cli["cli"] = FakeOpenClaw(configured=True, primary=OPUS)
+    resp = api.post("/api/openclaw/model", headers=AUTH, json={"provider": "openrouter", "api_key": KEY, "model": OPUS})
+    assert resp.status_code == 200 and resp.json()["key_source"] == "request"
+    assert _calls(fake_cli["cli"], "models", "auth", "paste-api-key")[0]["stdin"] == KEY + "\n"
+
+
+def test_post_model_uses_env_key_only_when_unconfigured(api: TestClient, fake_cli, monkeypatch) -> None:
     monkeypatch.setenv(orc.API_KEY_ENV_VAR, KEY)
     resp = api.post("/api/openclaw/model", headers=AUTH, json={"provider": "openrouter", "model": "openrouter/auto"})
     assert resp.status_code == 200
+    assert resp.json()["key_source"] == "env" and resp.json()["key_updated"] is True
     assert _calls(fake_cli["cli"], "models", "auth", "paste-api-key")[0]["stdin"] == KEY + "\n"
     assert KEY not in resp.text
+
+
+def test_post_model_never_replaces_existing_credential_with_env_key(api: TestClient, fake_cli, monkeypatch) -> None:
+    # e.g. an OAuth sign-in or a key pasted earlier: a UI save must not clobber it.
+    monkeypatch.setenv(orc.API_KEY_ENV_VAR, KEY)
+    fake_cli["cli"] = FakeOpenClaw(configured=True, primary=OPUS)
+    resp = api.post("/api/openclaw/model", headers=AUTH, json={"provider": "openrouter", "model": "openrouter/auto"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["key_source"] == "existing" and body["key_updated"] is False and body["configured"] is True
+    assert not _calls(fake_cli["cli"], "models", "auth")
 
 
 def test_post_model_without_any_key_keeps_existing(api: TestClient, fake_cli) -> None:
     resp = api.post("/api/openclaw/model", headers=AUTH, json={"provider": "openrouter", "model": "openrouter/auto"})
     assert resp.status_code == 200
     assert not _calls(fake_cli["cli"], "models", "auth")
+    assert resp.json()["key_source"] == "existing"
     assert resp.json()["configured"] is False
     assert resp.json()["warnings"]
+
+
+def test_post_model_ignores_a_malformed_env_key(api: TestClient, fake_cli, monkeypatch) -> None:
+    monkeypatch.setenv(orc.API_KEY_ENV_VAR, "sk-or bad key")
+    resp = api.post("/api/openclaw/model", headers=AUTH, json={"provider": "openrouter", "model": "openrouter/auto"})
+    assert resp.status_code == 200
+    assert resp.json()["key_source"] == "existing"
+    assert any(orc.API_KEY_ENV_VAR in w for w in resp.json()["warnings"])
+    assert "sk-or bad key" not in resp.text
+    assert not _calls(fake_cli["cli"], "models", "auth")
+
+
+def test_post_model_reports_removed_stale_entry(api: TestClient, fake_cli) -> None:
+    fake_cli["cli"] = FakeOpenClaw(configured=True, primary="openrouter/auto", entries={"openrouter/auto": {}})
+    resp = api.post("/api/openclaw/model", headers=AUTH, json={"provider": "openrouter", "model": OPUS})
+    assert resp.status_code == 200
+    assert resp.json()["removed_models"] == ["openrouter/auto"]
+    assert set(fake_cli["cli"].entries) == {OPUS}
 
 
 def test_post_model_rejects_unknown_model(api: TestClient, fake_cli) -> None:
