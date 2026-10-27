@@ -55,6 +55,8 @@ test('renders a repeated notebook chart only once and keeps its latest caption',
 
   await expect(page.locator('.chat-cell-output__plot')).toHaveCount(1)
   await expect(page.getByText('Latest evidence caption')).toBeVisible()
+  // plotly.js 3 ignores string titles; PlotlyRenderer converts them to { text }.
+  await expect(page.locator('.chat-cell-output__plot .gtitle')).toHaveText('Repeated chart')
 })
 
 test('keeps charts with identical traces but different semantic layouts', async ({ page }) => {
