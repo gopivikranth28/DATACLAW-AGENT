@@ -48,6 +48,11 @@ logger = logging.getLogger(__name__)
 # (tool call id -> base64 signature) rather than in the content blocks.
 _GEMINI_FC_SIGNATURES_KEY = "__gemini_function_call_thought_signatures__"
 
+# OpenRouter returns reasoning state (Claude thinking signatures, Gemini thought
+# signatures, encrypted OpenAI reasoning) as ``reasoning_details``, which must
+# be sent back on the assistant message of a tool loop.
+_REASONING_DETAILS_KEY = "reasoning_details"
+
 # Content block types that carry provider reasoning state which must be sent
 # back unchanged on the next request of the same tool loop.
 _REASONING_BLOCK_TYPES = frozenset({"thinking", "redacted_thinking", "reasoning"})
@@ -207,17 +212,25 @@ class LangChainLLM:
             tool_call_structured_output,
         )
 
-        if self._compat:
+        native_probe = getattr(self._model, "native_structured_output", None)
+        if callable(native_probe):
+            # Gateways that know per-model support (OpenRouter's catalog):
+            # json_schema where listed, the tool-call fallback otherwise.
+            if not await native_probe():
+                return await tool_call_structured_output(self, messages, schema, system=system, name=name)
+            method = "json_schema"
+        elif self._compat:
             return await tool_call_structured_output(self, messages, schema, system=system, name=name)
-
-        family = _provider_family(self._model)
-        info = lookup_model_info(_model_id(self._model))
-        if info is not None:
-            native = info.supports_structured_output
         else:
-            native = family in (OPENAI, GEMINI)
-        kwargs: dict[str, Any] = {"method": "json_schema" if native else "function_calling"}
-        if family == OPENAI:
+            info = lookup_model_info(_model_id(self._model))
+            if info is not None:
+                native = info.supports_structured_output
+            else:
+                native = _provider_family(self._model) in (OPENAI, GEMINI)
+            method = "json_schema" if native else "function_calling"
+
+        kwargs: dict[str, Any] = {"method": method}
+        if _provider_family(self._model) == OPENAI:
             kwargs["strict"] = strict
         runnable = self._model.with_structured_output(titled_schema(schema, name), **kwargs)
         try:
@@ -288,8 +301,13 @@ class LangChainLLM:
 
 
 def _provider_tag(model: Any) -> str:
-    """Identify the backend that produced (and may consume) provider state."""
-    return type(model).__name__
+    """Identify the backend that produced (and may consume) provider state.
+
+    A model may narrow it: OpenRouter scopes state to the model id, since one
+    backend serves every vendor's reasoning format.
+    """
+    tag = getattr(model, "provider_state_tag", None)
+    return tag if isinstance(tag, str) and tag else type(model).__name__
 
 
 def _provider_family(model: Any) -> str | None:
@@ -350,6 +368,14 @@ def _native_request_kwargs(
     one fails the whole request, so unsupported knobs are dropped and effort
     values the model lacks map to the nearest one it offers.
     """
+    if getattr(model, "gates_request_options", False):
+        # The client checks its own catalog (OpenRouter's supported_parameters)
+        # when it builds the request.
+        return {
+            name: value
+            for name, value in (("reasoning_effort", reasoning_effort), ("verbosity", text_verbosity))
+            if value
+        }
     family = _provider_family(model)
     model_id = _model_id(model)
     kwargs: dict[str, Any] = {}
@@ -401,7 +427,7 @@ def _build_system_message(
     if not (static or context or dynamic):
         return None
 
-    if _provider_family(model) == ANTHROPIC:
+    if _provider_family(model) == ANTHROPIC or getattr(model, "explicit_cache_breakpoints", False):
         blocks: list[dict[str, Any]] = []
         if static:
             blocks.append({"type": "text", "text": static, "cache_control": {"type": "ephemeral"}})
@@ -424,11 +450,13 @@ def _usage_event(message: Any) -> UsageEvent | None:
         return None
     input_details = usage.get("input_token_details") or {}
     output_details = usage.get("output_token_details") or {}
+    cost = (getattr(message, "response_metadata", None) or {}).get("cost_usd")
     return UsageEvent(
         input_tokens=int(usage.get("input_tokens") or 0),
         output_tokens=int(usage.get("output_tokens") or 0),
         cached_input_tokens=int(input_details.get("cache_read") or 0),
         reasoning_tokens=int(output_details.get("reasoning") or 0),
+        cost_usd=float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool) else None,
     )
 
 
@@ -469,12 +497,18 @@ def _capture_provider_state(model: Any, ai_message: AIMessage) -> dict[str, Any]
             ):
                 has_reasoning = True
     signatures = (ai_message.additional_kwargs or {}).get(_GEMINI_FC_SIGNATURES_KEY)
-    if not has_reasoning and not signatures:
+    details = _reasoning_details(ai_message)
+    if not has_reasoning and not signatures and not details:
         return None
 
     state: dict[str, Any] = {"provider": _provider_tag(model), "content": native}
+    extra: dict[str, Any] = {}
     if signatures:
-        state["additional_kwargs"] = {_GEMINI_FC_SIGNATURES_KEY: signatures}
+        extra[_GEMINI_FC_SIGNATURES_KEY] = signatures
+    if details:
+        extra[_REASONING_DETAILS_KEY] = details
+    if extra:
+        state["additional_kwargs"] = extra
     try:
         # Messages may be serialized (sub-agent metadata, Message.to_dict), so
         # normalize to plain JSON types now rather than fail later.
@@ -482,6 +516,16 @@ def _capture_provider_state(model: Any, ai_message: AIMessage) -> dict[str, Any]
     except (TypeError, ValueError):
         logger.warning("Dropping non-serializable provider state from %s", state["provider"])
         return None
+
+
+def _reasoning_details(ai_message: AIMessage) -> list[dict[str, Any]]:
+    """OpenRouter's reasoning_details of a (possibly streamed) AI message."""
+    raw = (ai_message.additional_kwargs or {}).get(_REASONING_DETAILS_KEY)
+    if not isinstance(raw, list) or not raw:
+        return []
+    from dataclaw.providers.llm.openrouter import collapse_reasoning_details
+
+    return collapse_reasoning_details(raw)
 
 
 def _native_ai_message(
@@ -517,6 +561,9 @@ def _native_ai_message(
         additional_kwargs[_GEMINI_FC_SIGNATURES_KEY] = {
             k: v for k, v in signatures.items() if k in call_ids
         }
+    details = (state.get("additional_kwargs") or {}).get(_REASONING_DETAILS_KEY)
+    if isinstance(details, list) and details:
+        additional_kwargs[_REASONING_DETAILS_KEY] = details
     return AIMessage(
         content=content or fallback_text,  # type: ignore[arg-type]
         tool_calls=tool_calls,

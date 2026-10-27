@@ -69,7 +69,7 @@ def test_builtin_backends_and_derived_lists():
     from dataclaw.providers.agent.implementations.langchain_agent import LangChainAgentProvider
 
     assert utility_backend_ids() == {
-        "anthropic", "openai", "gemini", "codex", "openai_compatible", "open_responses",
+        "anthropic", "openai", "gemini", "codex", "openrouter", "openai_compatible", "open_responses",
     }
     # mock can be built but is never offered as a utility backend.
     assert llm_backend_ids() == utility_backend_ids() | {"mock"}
@@ -86,6 +86,7 @@ def test_builtin_backends_and_derived_lists():
         ("openai", "gpt-6.1-sol", "gpt-6-luna"),
         ("gemini", "gemini-4-argon", "gemini-3.8-flash"),
         ("codex", "gpt-5.5", "gpt-5.5"),
+        ("openrouter", "anthropic/claude-opus-5.5", "anthropic/claude-haiku-5.5"),
     ],
 )
 def test_default_models_come_from_registry(backend, default, utility):
@@ -175,8 +176,20 @@ async def test_llm_backends_endpoint_shape():
         "api_key_env": None,
         "headers": {},
         "notes": presets["ollama"]["notes"],
+        "deprecated": False,
     }
     assert {f["name"] for f in compat["fields"]} >= {"preset", "base_url", "api_key", "model", "headers", "reasoning_effort"}
+    # The OpenRouter preset still resolves (deprecated) but is not offered.
+    assert presets["openrouter"]["deprecated"] is True
+    preset_field = next(f for f in compat["fields"] if f["name"] == "preset")
+    assert "openrouter" not in {o["value"] for o in preset_field["options"]}
+
+    openrouter = by_id["openrouter"]
+    assert openrouter["transport"] == "openai_chat"
+    assert openrouter["requires_api_key"] is True
+    assert openrouter["supports_model_listing"] is True
+    assert {f["name"] for f in openrouter["fields"]} == {"api_key", "model", "reasoning_effort", "headers", "routing"}
+    assert next(f for f in openrouter["fields"] if f["name"] == "api_key")["env"] == "OPENROUTER_API_KEY"
     assert json.dumps(payload)  # JSON-serializable
 
 

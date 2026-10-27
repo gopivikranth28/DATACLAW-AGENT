@@ -19,6 +19,14 @@ from dataclaw.providers.llm.model_listing import (
     fetch_gemini_models,
     fetch_openai_models,
 )
+from dataclaw.providers.llm.openrouter import (
+    DEFAULT_MODEL as OPENROUTER_DEFAULT_MODEL,
+    OPENROUTER_API_BASE,
+    OPENROUTER_API_KEY_ENV,
+    UTILITY_DEFAULT_MODEL as OPENROUTER_UTILITY_MODEL,
+    attribution_headers,
+    list_models as list_openrouter_models,
+)
 from dataclaw.providers.llm.registry import (
     KEYLESS_API_KEY,
     LLMBackendSpec,
@@ -202,6 +210,28 @@ def _build_codex(cfg: ResolvedBackendConfig, model: str) -> "LLMProvider":
     )
 
 
+def _build_openrouter(cfg: ResolvedBackendConfig, model: str) -> "LLMProvider":
+    from dataclaw.providers.llm.implementations.langchain_llm import LangChainLLM
+    from dataclaw.providers.llm.implementations.openrouter_chat import OpenRouterChatOpenAI
+
+    _require_model("OpenRouter", "openrouter", model)
+    routing = cfg.get("routing")
+    return LangChainLLM(
+        OpenRouterChatOpenAI(
+            model=model,
+            # build_llm has checked the key is set: never let the SDK fall back
+            # to OPENAI_API_KEY.
+            api_key=cfg.api_key,  # type: ignore[arg-type]
+            base_url=OPENROUTER_API_BASE,
+            default_headers=attribution_headers(cfg.headers),
+            stream_usage=True,
+            routing=routing if isinstance(routing, dict) else None,
+        ),
+        default_reasoning_effort=cfg.reasoning_effort,
+        compat=True,
+    )
+
+
 def _build_open_responses(cfg: ResolvedBackendConfig, model: str) -> "LLMProvider":
     from dataclaw.providers.llm.implementations.openai_responses import OpenAIResponsesLLM
 
@@ -222,6 +252,13 @@ def _build_openai_compatible(cfg: ResolvedBackendConfig, model: str) -> "LLMProv
     from dataclaw.providers.llm.implementations.openai_compatible import CompatibleChatOpenAI
 
     label = cfg.preset.label if cfg.preset else "OpenAI-compatible"
+    if cfg.preset is not None and cfg.preset.deprecated:
+        logger.warning(
+            "The openai_compatible %r preset is deprecated; use the %r LLM backend "
+            "(config files are migrated on startup).",
+            cfg.preset.id,
+            cfg.preset.id,
+        )
     base_url = _require_base_url(label, "openai_compatible", cfg)
     _require_model(label, "openai_compatible", model)
     return LangChainLLM(
@@ -326,16 +363,19 @@ OPENAI_COMPATIBLE_PRESETS: dict[str, PresetSpec] = {
             requires_api_key=False,
             notes="Start the LM Studio local server first.",
         ),
+        # Deprecated alias, kept for one release so configs that were not
+        # migrated (env-only setups) still resolve. Use the openrouter backend.
         PresetSpec(
             id="openrouter",
-            label="OpenRouter",
-            base_url="https://openrouter.ai/api/v1",
-            api_key_env="OPENROUTER_API_KEY",
+            label="OpenRouter (deprecated)",
+            base_url=OPENROUTER_API_BASE,
+            api_key_env=OPENROUTER_API_KEY_ENV,
             headers={
                 "HTTP-Referer": "https://github.com/gopivikranth28/DATACLAW-AGENT",
                 "X-Title": "DataClaw",
             },
-            notes="Model ids look like 'vendor/model'.",
+            notes="Deprecated: choose the OpenRouter provider instead.",
+            deprecated=True,
         ),
         PresetSpec(
             id="groq",
@@ -468,6 +508,47 @@ def builtin_backends() -> list[LLMBackendSpec]:
             ],
         ),
         LLMBackendSpec(
+            id="openrouter",
+            label="OpenRouter",
+            vendor="OpenRouter",
+            description=(
+                "One key for hundreds of models (Anthropic, OpenAI, Google, xAI, ...) through "
+                "openrouter.ai, with per-request cost and provider routing controls."
+            ),
+            transport="openai_chat",
+            build=_build_openrouter,
+            list_models=list_openrouter_models,
+            default_model=OPENROUTER_DEFAULT_MODEL,
+            utility_default_model=OPENROUTER_UTILITY_MODEL,
+            config_fields=[
+                _api_key_field(
+                    OPENROUTER_API_KEY_ENV,
+                    description="An OpenRouter inference key (sk-or-...). A management key cannot run models.",
+                ),
+                _model_field("OPENROUTER_MODEL"),
+                _REASONING_FIELD,
+                ConfigField(
+                    name="headers",
+                    field_type="headers",
+                    label="Attribution headers",
+                    description=(
+                        "Sent with every request. Defaults: HTTP-Referer and X-OpenRouter-Title "
+                        "(DataClaw). Save a header with an empty value to remove it."
+                    ),
+                ),
+                ConfigField(
+                    name="routing",
+                    field_type="openrouter_routing",
+                    label="Provider routing",
+                    description=(
+                        "OpenRouter provider preferences (data_collection, zdr, order, only, ignore, "
+                        "sort, allow_fallbacks, require_parameters, max_price, quantizations) and "
+                        "fallback models (models). Empty settings change nothing."
+                    ),
+                ),
+            ],
+        ),
+        LLMBackendSpec(
             id="openai_compatible",
             label="OpenAI-compatible endpoint",
             vendor="Endpoint",
@@ -484,7 +565,11 @@ def builtin_backends() -> list[LLMBackendSpec]:
                     label="Preset",
                     description="Fills in the endpoint and headers. Choose Custom to enter your own.",
                     options=[{"value": "", "label": "Custom"}]
-                    + [{"value": p.id, "label": p.label} for p in OPENAI_COMPATIBLE_PRESETS.values()],
+                    + [
+                        {"value": p.id, "label": p.label}
+                        for p in OPENAI_COMPATIBLE_PRESETS.values()
+                        if not p.deprecated
+                    ],
                 ),
                 _base_url_field(required=True, description="Base URL ending in /v1, e.g. http://localhost:11434/v1."),
                 _api_key_field(None, required=False, description="Leave empty for keyless local servers."),

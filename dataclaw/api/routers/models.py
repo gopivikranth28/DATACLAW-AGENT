@@ -46,6 +46,8 @@ class ModelOption(BaseModel):
     supports_vision: bool = False
     supports_structured_output: bool = False
     transport: str = ""
+    prompt_price_per_mtok: float | None = None
+    completion_price_per_mtok: float | None = None
 
 
 class ModelCatalogResponse(BaseModel):

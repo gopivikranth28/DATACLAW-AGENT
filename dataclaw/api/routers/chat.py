@@ -465,11 +465,14 @@ async def _run_agent_loop(
         _text_chunks: list[str] = []
         tool_started_at: dict[str, str] = {}
         # Token usage summed over every LLM turn of this run (UsageEvent).
-        run_usage = {
+        run_usage: dict[str, Any] = {
             "inputTokens": 0,
             "outputTokens": 0,
             "cachedInputTokens": 0,
             "reasoningTokens": 0,
+            # USD, summed over turns whose provider reports a cost (OpenRouter);
+            # None until one does.
+            "costUsd": None,
         }
 
         def tool_timing(call_id: str) -> dict[str, str]:
@@ -521,12 +524,15 @@ async def _run_agent_loop(
                         ("reasoningTokens", event.reasoning_tokens),
                     ):
                         run_usage[key] += value
+                    if event.cost_usd is not None:
+                        run_usage["costUsd"] = (run_usage["costUsd"] or 0.0) + event.cost_usd
                     emit(emitter.custom("llm:usage", {
                         "turn": turn + 1,
                         "inputTokens": event.input_tokens,
                         "outputTokens": event.output_tokens,
                         "cachedInputTokens": event.cached_input_tokens,
                         "reasoningTokens": event.reasoning_tokens,
+                        "costUsd": event.cost_usd,
                         "runTotals": dict(run_usage),
                     }))
 

@@ -2,13 +2,13 @@
 
 Mirrors the LLM backend registry: each backend is a ``DecisionBackendSpec``
 with its config fields (for the settings UI and resolution) and a
-``build`` function.  Built-ins are ``typesafe`` (Jev) and ``llm`` (the
+``build`` function.  Built-ins are ``typesafe`` (Jev), ``openrouter`` (Jev via OpenRouter) and ``llm`` (the
 utility model through ``structured_output``); plugins add backends through
 ``PluginContext.register_decision_backend``.
 
 Settings::
 
-    decision.backend           none | typesafe | llm | <plugin id>   (DATACLAW_DECISION_BACKEND)
+    decision.backend           none | typesafe | openrouter | llm | <plugin id>   (DATACLAW_DECISION_BACKEND)
     decision.min_confidence    0.7
     decision.<backend>.<field> backend fields, e.g. decision.typesafe.api_key (TYPESAFE_API_KEY)
     decision.routing.{plan_gates, skill_routing, compaction}   opt-in internal uses, default off
@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from dataclaw.config.resolver import resolve, resolve_bool
 from dataclaw.providers.config_field import ConfigField
-from dataclaw.providers.decision.provider import DecisionConfigurationError, DecisionProvider
+from dataclaw.providers.decision.provider import DecisionConfigurationError, DecisionError, DecisionProvider
 
 if TYPE_CHECKING:
     from dataclaw.providers.llm.provider import LLMProvider
@@ -120,6 +120,45 @@ def _build_typesafe(cfg: ResolvedDecisionConfig, llm: "LLMProvider | None") -> D
     )
 
 
+def _build_openrouter(cfg: ResolvedDecisionConfig, llm: "LLMProvider | None") -> DecisionProvider:
+    """Jev through OpenRouter, with the LLM backend's key and routing settings.
+
+    One OpenRouter key (``llm.backends.openrouter.api_key`` /
+    ``OPENROUTER_API_KEY``) powers both the LLM and the decision backend.
+    """
+    from dataclaw.providers.decision.implementations.openrouter_jev import (
+        DEFAULT_ENDPOINT,
+        DEFAULT_MODEL,
+        OpenRouterJevProvider,
+    )
+    from dataclaw.providers.llm.registry import resolve_backend_config
+
+    llm_cfg = resolve_backend_config("openrouter")
+    if not llm_cfg.api_key:
+        raise DecisionConfigurationError(
+            "OpenRouter API key is not configured for the 'openrouter' decision backend. "
+            "Set OPENROUTER_API_KEY or llm.backends.openrouter.api_key."
+        )
+    try:
+        timeout = float(cfg.get("timeout", 30))
+        max_retries = int(cfg.get("max_retries", 2))
+    except (TypeError, ValueError) as exc:
+        raise DecisionConfigurationError(f"Invalid OpenRouter timeout/max_retries: {exc}") from exc
+    routing = llm_cfg.get("routing")
+    try:
+        return OpenRouterJevProvider(
+            llm_cfg.api_key,
+            model=str(cfg.get("model", DEFAULT_MODEL)).strip(),
+            endpoint=str(cfg.get("endpoint", DEFAULT_ENDPOINT)).strip(),
+            routing=routing if isinstance(routing, dict) else None,
+            headers=llm_cfg.headers,
+            timeout=timeout,
+            max_retries=max_retries,
+        )
+    except DecisionError as exc:
+        raise DecisionConfigurationError(str(exc)) from exc
+
+
 def _build_llm(cfg: ResolvedDecisionConfig, llm: "LLMProvider | None") -> DecisionProvider:
     from dataclaw.providers.decision.implementations.llm_fallback import LLMDecisionProvider
 
@@ -157,6 +196,38 @@ def _builtin_backends() -> list[DecisionBackendSpec]:
                     "Base URL",
                     "https://api.typesafe.ai, or https://ai-gateway.vercel.sh/typesafe for Vercel AI Gateway.",
                     default="https://api.typesafe.ai",
+                ),
+                ConfigField("timeout", "int", "Timeout (seconds)", default=30),
+                ConfigField("max_retries", "int", "Retries on 429/5xx", default=2),
+            ],
+        ),
+        DecisionBackendSpec(
+            id="openrouter",
+            label="OpenRouter Jev (alpha)",
+            vendor="OpenRouter",
+            description=(
+                "Jev and other decision models through OpenRouter's Decisions API (alpha). "
+                "Uses the OpenRouter key and routing settings of the OpenRouter LLM provider."
+            ),
+            build=_build_openrouter,
+            config_fields=[
+                ConfigField(
+                    "model",
+                    "string",
+                    "Model",
+                    "~typesafe/jev-latest, or a pinned typesafe/jev-1.14 or typesafe/jev-1.13.",
+                    default="~typesafe/jev-latest",
+                ),
+                ConfigField(
+                    "endpoint",
+                    "select",
+                    "API",
+                    "The Decisions API is alpha; System One is the TypeSafe-SDK-compatible surface.",
+                    default="decisions",
+                    options=[
+                        {"value": "decisions", "label": "Decisions API (alpha)"},
+                        {"value": "systemone", "label": "System One API"},
+                    ],
                 ),
                 ConfigField("timeout", "int", "Timeout (seconds)", default=30),
                 ConfigField("max_retries", "int", "Retries on 429/5xx", default=2),

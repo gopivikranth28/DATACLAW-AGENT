@@ -51,12 +51,15 @@ class UsageEvent:
     ``input_tokens`` is the provider-reported prompt size including cached
     tokens; ``cached_input_tokens`` and ``reasoning_tokens`` are the subsets
     served from the prompt cache and spent on hidden reasoning (0 when the
-    provider does not report them).  Consumers may ignore this event.
+    provider does not report them).  ``cost_usd`` is the provider-reported
+    charge for the turn (OpenRouter's ``usage.cost``), None when unknown.
+    Consumers may ignore this event.
     """
     input_tokens: int = 0
     output_tokens: int = 0
     cached_input_tokens: int = 0
     reasoning_tokens: int = 0
+    cost_usd: float | None = None
 
 
 @dataclass

@@ -43,6 +43,7 @@ def migrate_config(raw: dict[str, Any]) -> bool:
     """Apply every config migration in order. Returns True if ``raw`` changed."""
     changed = migrate_runtime_utility_config(raw)
     changed = migrate_llm_backends_config(raw) or changed
+    changed = migrate_openrouter_preset(raw) or changed
     return changed
 
 
@@ -195,6 +196,56 @@ def migrate_llm_backends_config(raw: dict[str, Any]) -> bool:
         del llm[backend]
         changed = True
     return changed
+
+
+# Settings of an ``openai_compatible`` section with the OpenRouter preset that
+# carry over to the ``openrouter`` backend. ``base_url`` and ``preset`` are
+# implied by the new backend.
+_OPENROUTER_PRESET_KEYS = ("api_key", "model", "reasoning_effort")
+_OPENROUTER_PRESET_HEADERS = {"X-Title": "DataClaw"}
+
+
+def migrate_openrouter_preset(raw: dict[str, Any]) -> bool:
+    """Move ``llm.backends.openai_compatible`` with ``preset: openrouter`` to
+    ``llm.backends.openrouter``.
+
+    The key, model, reasoning effort and custom headers are kept (a value
+    already set under ``openrouter`` wins), ``llm.backend`` follows when it
+    pointed at ``openai_compatible``, and the old section is removed so the
+    key does not linger in a stale copy. The preset still resolves for one
+    release (deprecated) for configs that never pass through this migration.
+    """
+    llm = raw.get("llm")
+    backends = llm.get("backends") if isinstance(llm, dict) else None
+    if not isinstance(backends, dict):
+        return False
+    legacy = backends.get("openai_compatible")
+    if not isinstance(legacy, dict) or str(legacy.get("preset") or "").strip() != "openrouter":
+        return False
+
+    current = backends.get("openrouter")
+    if not isinstance(current, dict):
+        current = {}
+        backends["openrouter"] = current
+    for key in _OPENROUTER_PRESET_KEYS:
+        if not _is_unset(legacy.get(key)) and _is_unset(current.get(key)):
+            current[key] = legacy[key]
+    headers = legacy.get("headers")
+    if isinstance(headers, dict):
+        # The preset's own X-Title default is replaced by the backend's
+        # X-OpenRouter-Title default; anything the user set is kept.
+        custom = {
+            k: v for k, v in headers.items()
+            if v not in (None, "") and _OPENROUTER_PRESET_HEADERS.get(k) != v
+        }
+        merged = {**custom, **(current.get("headers") if isinstance(current.get("headers"), dict) else {})}
+        if merged:
+            current["headers"] = merged
+    del backends["openai_compatible"]
+    if llm.get("backend") == "openai_compatible":
+        llm["backend"] = "openrouter"
+    logger.info("migrated llm.backends.openai_compatible (OpenRouter preset) → llm.backends.openrouter")
+    return True
 
 
 def _successor_model(backend: str, model: Any, legacy: dict[str, Any]) -> Any:
