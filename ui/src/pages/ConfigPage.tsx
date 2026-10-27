@@ -5,6 +5,7 @@ import { Alert, Button, Divider, Drawer, Input, InputNumber, Modal, Select, Spac
 import { CheckCircleOutlined, CloseCircleOutlined, CodeOutlined, DownloadOutlined, LoginOutlined, LoadingOutlined, ReloadOutlined, SaveOutlined, SettingOutlined, UndoOutlined } from '@ant-design/icons'
 import { API } from '../api'
 import WebTerminal from '../components/WebTerminal'
+import OpenClawModelProvider from '../components/OpenClawModelProvider'
 
 interface PluginInfo {
   id: string
@@ -1324,6 +1325,10 @@ export default function ConfigPage({ plugins }: Props) {
                     <Field label="Timeout" description="Set 0 to wait indefinitely.">
                       <NumberWithUnit ariaLabel="OpenClaw timeout" value={openclawConfig.wait_ms ?? 0} onChange={v => updatePluginConfig('openclaw', 'wait_ms', v)} min={0} max={900000} unit="ms" />
                     </Field>
+
+                    <Divider />
+                    <SectionTitle title="Model provider" description="The model OpenClaw's agent runs on. OpenRouter is configured here; other providers sign in from a terminal." />
+                    <OpenClawModelProvider onOpenTerminal={() => openTerminal('openclaw', 'openclaw models auth login --set-default')} />
 
                     <Divider />
                     <SectionTitle title="OpenClaw installation and authentication" description="Install or maintain the CLI, then authenticate its model provider. These credentials belong to OpenClaw." />
