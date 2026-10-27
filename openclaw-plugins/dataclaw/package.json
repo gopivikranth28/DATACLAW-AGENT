@@ -37,9 +37,9 @@
     "openclaw": ">=2026.10.7 <2027"
   },
   "devDependencies": {
-    "@types/node": "^24.12.2",
-    "esbuild": "^0.24.0",
+    "@types/node": "^24.19.2",
+    "esbuild": "^0.28.2",
     "openclaw": "2026.10.7",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.3"
   }
 }
