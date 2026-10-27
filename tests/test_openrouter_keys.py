@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -143,6 +144,8 @@ def test_provision_stores_only_the_inference_key(client, fake, tmp_dataclaw_home
     }
     assert stored["llm"]["backend"] == "openrouter"
     assert stored["decision"]["backend"] == "openrouter"
+    # The config now holds an inference key, so it must stay owner-only.
+    assert stat.S_IMODE(config_file(tmp_dataclaw_home).stat().st_mode) == 0o600
     assert resolve_backend_config("openrouter").api_key == NEW_KEY
     assert_management_key_absent(tmp_dataclaw_home, caplog, response.text)
 
