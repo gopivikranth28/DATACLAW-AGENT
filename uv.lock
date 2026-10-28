@@ -767,6 +767,7 @@ dependencies = [
     { name = "dataclaw-artifacts" },
     { name = "dataclaw-browser" },
     { name = "dataclaw-codex" },
+    { name = "dataclaw-context-research" },
     { name = "dataclaw-custom-tools" },
     { name = "dataclaw-data" },
     { name = "dataclaw-eda" },
@@ -774,6 +775,7 @@ dependencies = [
     { name = "dataclaw-hermes" },
     { name = "dataclaw-kaggle" },
     { name = "dataclaw-notebooks" },
+    { name = "dataclaw-okf" },
     { name = "dataclaw-openclaw" },
     { name = "dataclaw-plans" },
     { name = "dataclaw-projects" },
@@ -806,6 +808,7 @@ requires-dist = [
     { name = "dataclaw-artifacts", editable = "plugins/dataclaw-artifacts" },
     { name = "dataclaw-browser", editable = "plugins/dataclaw-browser" },
     { name = "dataclaw-codex", editable = "plugins/dataclaw-codex" },
+    { name = "dataclaw-context-research", editable = "plugins/dataclaw-context-research" },
     { name = "dataclaw-custom-tools", editable = "plugins/dataclaw-custom-tools" },
     { name = "dataclaw-data", editable = "plugins/dataclaw-data" },
     { name = "dataclaw-eda", editable = "plugins/dataclaw-eda" },
@@ -813,6 +816,7 @@ requires-dist = [
     { name = "dataclaw-hermes", editable = "plugins/dataclaw-hermes" },
     { name = "dataclaw-kaggle", editable = "plugins/dataclaw-kaggle" },
     { name = "dataclaw-notebooks", editable = "plugins/dataclaw-notebooks" },
+    { name = "dataclaw-okf", editable = "plugins/dataclaw-okf" },
     { name = "dataclaw-openclaw", editable = "plugins/dataclaw-openclaw" },
     { name = "dataclaw-plans", editable = "plugins/dataclaw-plans" },
     { name = "dataclaw-projects", editable = "plugins/dataclaw-projects" },
@@ -906,6 +910,28 @@ dependencies = [
 requires-dist = [
     { name = "dataclaw" },
     { name = "openai-codex-app-server-sdk", git = "https://github.com/openai/codex.git?subdirectory=sdk%2Fpython&rev=be1d3cff9300c7d72d4adab2b31c19e8a8bb27ca" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
+]
+provides-extras = ["dev"]
+
+[[package]]
+name = "dataclaw-context-research"
+version = "0.1.0"
+source = { editable = "plugins/dataclaw-context-research" }
+dependencies = [
+    { name = "dataclaw" },
+    { name = "dataclaw-data" },
+    { name = "dataclaw-okf" },
+    { name = "httpx" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dataclaw" },
+    { name = "dataclaw-data" },
+    { name = "dataclaw-okf" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
 ]
@@ -1035,6 +1061,24 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
     { name = "uv", specifier = ">=0.11,<0.12" },
+]
+provides-extras = ["dev"]
+
+[[package]]
+name = "dataclaw-okf"
+version = "0.1.0"
+source = { editable = "plugins/dataclaw-okf" }
+dependencies = [
+    { name = "dataclaw" },
+    { name = "dataclaw-data" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dataclaw" },
+    { name = "dataclaw-data" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
 ]
 provides-extras = ["dev"]
 
