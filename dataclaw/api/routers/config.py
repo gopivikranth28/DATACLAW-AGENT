@@ -45,6 +45,17 @@ async def get_config(request: Request) -> dict[str, Any]:
 @router.patch("")
 async def update_config(updates: dict[str, Any], request: Request) -> dict[str, Any]:
     """Merge updates into the config file and hot-reload agent if backend changed."""
+    _strip_masked_secrets(updates)
+    await apply_config_updates(request, updates)
+    return {"status": "updated"}
+
+
+async def apply_config_updates(request: Request, updates: dict[str, Any]) -> None:
+    """Merge ``updates`` into the config file, then refresh and hot-reload.
+
+    The one write path for settings changed through the API (PATCH /api/config
+    and the OpenRouter key endpoints).
+    """
     import asyncio
 
     path = config_path()
@@ -54,7 +65,6 @@ async def update_config(updates: dict[str, Any], request: Request) -> dict[str, 
     else:
         raw = {}
 
-    _strip_masked_secrets(updates)
     _deep_merge(raw, updates)
     write_private_text(path, json.dumps(raw, indent=2))
     invalidate_cache()
@@ -75,8 +85,6 @@ async def update_config(updates: dict[str, Any], request: Request) -> dict[str, 
         await asyncio.to_thread(_hot_reload_plugins, request, updated_config)
 
     await reload_runtime(request)
-
-    return {"status": "updated"}
 
 
 async def reload_runtime(request: Request) -> Any:
@@ -208,7 +216,9 @@ def _mask_secrets_recursive(d: dict) -> None:
 # Substrings of key names whose values are masked. The hyphenated forms and
 # "authorization" cover HTTP header names in llm.backends.<id>.headers.
 _SECRET_KEY_PATTERNS = {"api_key", "api-key", "apikey", "token", "secret", "password", "authorization"}
-_EXACT_SECRET_KEYS = {"kaggle_key"}
+# management_key is never written by DataClaw; it is listed so a value a user
+# puts into the file by hand is still masked.
+_EXACT_SECRET_KEYS = {"kaggle_key", "management_key"}
 
 
 def _strip_masked_secrets(updates: dict) -> None:

@@ -103,7 +103,7 @@ class DecisionRoutingConfig(BaseModel):
 
 
 class DecisionConfig(BaseModel):
-    backend: str = "none"  # none | typesafe | llm | <plugin backend>
+    backend: str = "none"  # none | typesafe | openrouter | llm | <plugin backend>
     min_confidence: float = 0.7
     typesafe: TypeSafeDecisionConfig = TypeSafeDecisionConfig()
     routing: DecisionRoutingConfig = DecisionRoutingConfig()

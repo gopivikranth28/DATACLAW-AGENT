@@ -337,28 +337,39 @@ class TypeSafeJevProvider:
         state: str | dict[str, Any],
         questions: list[DecisionQuestion],
     ) -> list[DecisionResult]:
-        body = build_request_body(self.model, state, questions)
+        body = self._request_body(state, questions)
         data = await self._post(body)
         self.last_model = str(data.get("model") or self.model) if isinstance(data, dict) else self.model
         return parse_answers(data, questions)
 
+    # Overridden by gateways that serve the same wire format (OpenRouter).
+    service = "TypeSafe"
+    retry_count_header: str | None = "X-TypeSafe-Retry-Count"
+
+    def _request_body(self, state: str | dict[str, Any], questions: list[DecisionQuestion]) -> dict[str, Any]:
+        return build_request_body(self.model, state, questions)
+
+    def _extra_headers(self) -> dict[str, str]:
+        return {}
+
     async def _post(self, body: dict[str, Any]) -> Any:
         headers = {
+            **self._extra_headers(),
             "Authorization": f"Bearer {self.api_key}",
             "Accept": "application/json",
             "Content-Type": "application/json",
         }
         async with httpx.AsyncClient(transport=self._transport, timeout=self.timeout) as client:
             for attempt in range(self.max_retries + 1):
-                if attempt:
-                    headers["X-TypeSafe-Retry-Count"] = str(attempt)
+                if attempt and self.retry_count_header:
+                    headers[self.retry_count_header] = str(attempt)
                 try:
                     response = await client.post(self.url, json=body, headers=headers)
                 except httpx.HTTPError as exc:
                     if attempt < self.max_retries:
                         await self._sleep(self._backoff(attempt))
                         continue
-                    raise DecisionError(f"TypeSafe request failed: {type(exc).__name__}: {exc}") from exc
+                    raise DecisionError(f"{self.service} request failed: {type(exc).__name__}: {exc}") from exc
 
                 if response.status_code in RETRY_STATUSES and attempt < self.max_retries:
                     delay = retry_after_seconds(response.headers)
@@ -371,8 +382,8 @@ class TypeSafeJevProvider:
                 try:
                     return response.json()
                 except ValueError as exc:
-                    raise DecisionError("TypeSafe returned a response that is not JSON") from exc
-        raise DecisionError("TypeSafe request failed")  # pragma: no cover - loop always returns or raises
+                    raise DecisionError(f"{self.service} returned a response that is not JSON") from exc
+        raise DecisionError(f"{self.service} request failed")  # pragma: no cover - loop always returns or raises
 
     @staticmethod
     def _backoff(attempt: int) -> float:
@@ -380,17 +391,23 @@ class TypeSafeJevProvider:
         return delay * random.uniform(0.75, 1.25)
 
     @staticmethod
-    def _api_error(response: httpx.Response) -> TypeSafeAPIError:
+    def _status_hint(status: int) -> str:
+        return _status_hint(status)
+
+    def _api_error(self, response: httpx.Response) -> TypeSafeAPIError:
         try:
             body: Any = response.json()
         except ValueError:
             body = response.text
-        message = error_message(body) or _status_hint(response.status_code) or response.reason_phrase
-        hint = _status_hint(response.status_code)
+        hint = self._status_hint(response.status_code)
+        message = error_message(body) or hint or response.reason_phrase
         if hint and hint != message:
             message = f"{message} ({hint})"
-        return TypeSafeAPIError(
+        return self._error(
             response.status_code,
             str(message)[:500],
             request_id=response.headers.get("x-typesafe-request-id"),
         )
+
+    def _error(self, status: int, message: str, request_id: str | None) -> TypeSafeAPIError:
+        return TypeSafeAPIError(status, message, request_id=request_id)

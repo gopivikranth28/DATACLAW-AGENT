@@ -31,7 +31,8 @@ class ModelInfo:
 
     ``None`` limits mean unknown.  ``reasoning_efforts`` lists the values the
     model's native reasoning control accepts; empty means either no reasoning
-    control or an unverified list.
+    control or an unverified list.  Prices are USD per million tokens, when
+    the provider reports them (OpenRouter's catalog does).
     """
 
     id: str
@@ -44,6 +45,8 @@ class ModelInfo:
     supports_vision: bool = False
     supports_structured_output: bool = False
     transport: str = ""
+    prompt_price_per_mtok: float | None = None
+    completion_price_per_mtok: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -6,6 +6,9 @@ import { CheckCircleOutlined, CloseCircleOutlined, CodeOutlined, DownloadOutline
 import { API } from '../api'
 import WebTerminal from '../components/WebTerminal'
 import OpenClawModelProvider from '../components/OpenClawModelProvider'
+import { OpenRouterSetupCard } from '../components/OpenRouterSetup'
+import { groupedModelOptions, modelDetails } from '../components/openrouterModels'
+import type { OpenRouterRouting } from '../components/OpenRouterSetup'
 
 interface PluginInfo {
   id: string
@@ -82,6 +85,8 @@ interface ModelOption {
   max_output?: number | null
   supports_reasoning?: boolean
   reasoning_efforts?: string[]
+  prompt_price_per_mtok?: number | null
+  completion_price_per_mtok?: number | null
 }
 
 interface ModelCatalogResponse {
@@ -128,7 +133,10 @@ const AGENT_RUNTIME_OPTIONS = [
 // utility model backend. Used only until the backend list has loaded.
 const RUNTIME_BACKEND_VALUES = ['openclaw', 'hermes', 'mock']
 // Backend fields rendered by dedicated controls rather than generically.
-const SPECIAL_BACKEND_FIELDS = ['model', 'reasoning_effort']
+// OpenRouter's key and routing are edited in its setup card.
+const SPECIAL_BACKEND_FIELDS = ['model', 'reasoning_effort', 'routing']
+const OPENROUTER_CARD_FIELDS = ['api_key']
+const OPENROUTER_DEFAULT_HEADERS = 'HTTP-Referer: https://github.com/gopivikranth28/DATACLAW-AGENT\nX-OpenRouter-Title: DataClaw'
 
 const HISTORY_STRATEGY_OPTIONS = [
   { value: 'noop', label: 'Keep all history' },
@@ -157,6 +165,13 @@ const SETTINGS_GROUP_STYLE: CSSProperties = { border: '1px solid #e8e8e8', borde
 const FIELD_GRID_STYLE: CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(260px, 100%), 1fr))', columnGap: 16 }
 const EXTENSION_SECTION_STYLE: CSSProperties = { borderBottom: '1px solid #eee', padding: '2px 0 10px', marginBottom: 20 }
 const TERMINAL_OUTPUT_STYLE: CSSProperties = { background: '#1e1e1e', color: '#d4d4d4', padding: 12, borderRadius: 6, fontSize: 12, fontFamily: 'monospace', maxHeight: 400, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }
+
+// The parts of the config draft the OpenRouter card writes.
+interface DraftConfig {
+  llm?: { backend?: string; backends?: Record<string, Record<string, unknown>>; [key: string]: unknown }
+  decision?: Record<string, unknown>
+  [key: string]: unknown
+}
 
 function cloneConfig(value: any): any {
   return JSON.parse(JSON.stringify(value ?? {}))
@@ -223,6 +238,8 @@ export default function ConfigPage({ plugins }: Props) {
   const [utilityAccessMessage, setUtilityAccessMessage] = useState<string | null>(null)
   const utilityRequestRef = useRef(0)
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  // Bumped to reload the model catalog after a key is stored server-side.
+  const [catalogTick, setCatalogTick] = useState(0)
 
   useEffect(() => {
     fetch(`${API}/config`)
@@ -439,7 +456,7 @@ export default function ConfigPage({ plugins }: Props) {
     // Credentials are deliberately omitted: API-key fields trigger loading on
     // blur/Enter so we do not send a request for every character typed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [utilityBackend, backendConfig.auth_mode, backendConfig.preset, llmBackendsLoaded])
+  }, [utilityBackend, backendConfig.auth_mode, backendConfig.preset, llmBackendsLoaded, catalogTick])
 
   const updateBackendConfig = (field: string, value: any) => {
     setConfig((prev: any) => ({
@@ -528,6 +545,38 @@ export default function ConfigPage({ plugins }: Props) {
       ...prev,
       llm: { ...(prev.llm || {}), backend: value },
     }))
+  }
+
+  // OpenRouter setup card: one key for the LLM and decision backends.
+  const openrouterConfig = llm.backends?.openrouter || {}
+  const updateOpenRouter = (field: string, value: unknown) => {
+    setConfig((prev: DraftConfig) => ({
+      ...prev,
+      llm: {
+        ...(prev.llm || {}),
+        backends: {
+          ...(prev.llm?.backends || {}),
+          openrouter: { ...(prev.llm?.backends?.openrouter || {}), [field]: value },
+        },
+      },
+    }))
+  }
+  // After the server stored a provisioned key, take the saved OpenRouter
+  // section (key masked) into both the draft and the saved snapshot, so other
+  // unsaved edits stay pending.
+  const applyProvisionedKey = async (result: { use_for_llm?: boolean; use_for_decisions?: boolean }) => {
+    const fresh = await fetch(`${API}/config`).then(r => r.json()).catch(() => null)
+    if (!fresh) return
+    const merge = (base: unknown) => {
+      const next = cloneConfig(base)
+      next.llm = { ...(next.llm || {}), backends: { ...(next.llm?.backends || {}), openrouter: fresh.llm?.backends?.openrouter || {} } }
+      if (result.use_for_llm) next.llm.backend = 'openrouter'
+      if (result.use_for_decisions) next.decision = { ...(next.decision || {}), backend: 'openrouter' }
+      return next
+    }
+    setConfig((prev: DraftConfig) => merge(prev))
+    setSavedConfig((prev: DraftConfig | null) => (prev ? merge(prev) : prev))
+    setCatalogTick(tick => tick + 1)
   }
 
   // Codex login state
@@ -998,6 +1047,7 @@ export default function ConfigPage({ plugins }: Props) {
 
   const renderBackendField = (field: ConfigFieldDef) => {
     if (SPECIAL_BACKEND_FIELDS.includes(field.name)) return null
+    if (utilityBackend === 'openrouter' && OPENROUTER_CARD_FIELDS.includes(field.name)) return null
     // The OpenAI API choice only matters for a custom endpoint.
     if (field.name === 'api' && !backendConfig.base_url) return null
     const envHint = [field.env, field.name === 'api_key' ? backendPreset?.api_key_env : null]
@@ -1044,7 +1094,9 @@ export default function ConfigPage({ plugins }: Props) {
           <HeadersField
             value={backendConfig.headers}
             onChange={value => updateBackendConfig('headers', value)}
-            placeholder={Object.entries(backendPreset?.headers || {}).map(([name, value]) => `${name}: ${value}`).join('\n') || 'X-Custom-Header: value'}
+            placeholder={utilityBackend === 'openrouter'
+              ? OPENROUTER_DEFAULT_HEADERS
+              : Object.entries(backendPreset?.headers || {}).map(([name, value]) => `${name}: ${value}`).join('\n') || 'X-Custom-Header: value'}
           />
         </Field>
       )
@@ -1139,6 +1191,20 @@ export default function ConfigPage({ plugins }: Props) {
               <div style={TAB_PANEL_STYLE}>
                 <TabIntro>Configure DataClaw's model once, then choose which runtime owns the primary agent loop.</TabIntro>
 
+                {llmBackends.some(backend => backend.id === 'openrouter') && (
+                  <OpenRouterSetupCard
+                    apiKey={openrouterConfig.api_key || ''}
+                    onApiKeyChange={value => updateOpenRouter('api_key', value)}
+                    routing={(openrouterConfig.routing || {}) as OpenRouterRouting}
+                    onRoutingChange={value => updateOpenRouter('routing', value)}
+                    llmSelected={utilityBackend === 'openrouter'}
+                    decisionsSelected={decisionBackend === 'openrouter'}
+                    onUseForLlm={() => setUtilityBackend('openrouter')}
+                    onUseForDecisions={() => updateByPath('decision.backend', 'openrouter')}
+                    onProvisioned={applyProvisionedKey}
+                  />
+                )}
+
                 <SettingsGroup
                   step="1"
                   title="Configure the DataClaw utility model"
@@ -1226,6 +1292,7 @@ export default function ConfigPage({ plugins }: Props) {
                     onReload={loadModels}
                     defaultModel={defaultModel}
                     allowCustom={modelAllowsCustomId}
+                    groupByVendor={utilityBackend === 'openrouter'}
                   />
                   {modelEfforts.length > 0 && (
                     <Field label="Reasoning effort" description="Default thinking level for this model. DataClaw still raises or lowers it for specific turns, such as plan drafting or summaries.">
@@ -1602,6 +1669,9 @@ export default function ConfigPage({ plugins }: Props) {
                     ))}
                   </div>
                 )}
+                {decisionBackend === 'openrouter' && !openrouterConfig.api_key && (
+                  <Alert type="warning" showIcon title="OpenRouter key required" description="Decisions use the key from the OpenRouter card on the Agent tab (or OPENROUTER_API_KEY). Until one is set, decisions fall back to the utility LLM." style={{ marginBottom: 14 }} />
+                )}
                 {decisionSpec?.requires_api_key && !decisionConfig[decisionSpec.id]?.api_key && (
                   <Alert type="warning" showIcon title={`${decisionSpec.vendor} API key required`} description={`Enter it above or set ${decisionSpec.fields.find(f => f.name === 'api_key')?.env || 'the API key environment variable'}. Until then decisions fall back to the utility LLM.`} style={{ marginBottom: 14 }} />
                 )}
@@ -1836,6 +1906,7 @@ function ModelSelector({
   onReload,
   defaultModel = '',
   allowCustom = false,
+  groupByVendor = false,
 }: {
   value: string
   onChange: (value: string) => void
@@ -1848,12 +1919,18 @@ function ModelSelector({
   defaultModel?: string
   // Custom endpoints may not list every model they serve, so any id can be typed.
   allowCustom?: boolean
+  // Gateways with hundreds of models (OpenRouter): group by vendor prefix and
+  // show context window and price per option.
+  groupByVendor?: boolean
 }) {
   const configuredModelMissing = !allowCustom && !!value && authenticated === true && !models.some(model => model.id === value)
+  const selected = models.find(model => model.id === value)
   const helpText = error
     || statusMessage
     || (loading ? 'Loading models from the authenticated provider…' : null)
     || (authenticated && models.length === 0 ? 'The provider returned no available models.' : null)
+    || (groupByVendor && selected ? modelDetails(selected) : null)
+    || (groupByVendor && models.length > 0 ? `${models.length} models. Type to search by vendor, name or id.` : null)
   const options = models.map(model => ({ value: model.id, label: model.label }))
   const defaultPlaceholder = defaultModel ? `Default: ${defaultModel}` : 'Choose a model'
 
@@ -1869,6 +1946,31 @@ function ModelSelector({
             filterOption={(input, option) => String(option?.value || '').toLowerCase().includes(input.toLowerCase())}
             allowClear
             style={{ width: '100%' }}
+          />
+        ) : groupByVendor ? (
+          <Select
+            value={value || undefined}
+            onChange={next => onChange(next || '')}
+            options={groupedModelOptions(models)}
+            loading={loading}
+            disabled={authenticated !== true || models.length === 0}
+            placeholder={loading ? 'Loading models…' : authenticated === true ? defaultPlaceholder : 'Authenticate to choose a model'}
+            showSearch={{
+              filterOption: (input, option) => String((option as { searchText?: string } | undefined)?.searchText || '').includes(input.trim().toLowerCase()),
+            }}
+            optionRender={option => {
+              const details = (option.data as { details?: string }).details
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.3, padding: '2px 0' }}>
+                  <span style={{ whiteSpace: 'normal' }}>{option.label}</span>
+                  {details && <span style={{ fontSize: 11, color: '#8c8c8c' }}>{details}</span>}
+                </div>
+              )
+            }}
+            allowClear
+            listHeight={360}
+            style={{ width: '100%' }}
+            notFoundContent={loading ? <LoadingOutlined /> : 'No matching models'}
           />
         ) : (
           <Select

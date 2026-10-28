@@ -518,6 +518,9 @@ All runtime data under `~/.dataclaw/` (override with `$DATACLAW_HOME`):
 | `GEMINI_MODEL` | `llm.backends.gemini.model` | `gemini-4-argon` (utility: `gemini-3.8-flash`) |
 | `CODEX_MODEL` | `llm.backends.codex.model` | `gpt-5.5` |
 | `CODEX_AUTH_MODE` | `llm.backends.codex.auth_mode` | `default` (OAuth) — `api_key` for direct |
+| `OPENROUTER_API_KEY` | `llm.backends.openrouter.api_key` | |
+| `OPENROUTER_MODEL` | `llm.backends.openrouter.model` | `anthropic/claude-opus-5.5` (utility: `anthropic/claude-haiku-5.5`) |
+| `OPENROUTER_MANAGEMENT_KEY` | Never stored; read only when provisioning a key | |
 | `DATACLAW_MAX_TURNS` | `app.max_turns` | `30` |
 | `DATACLAW_HOST` | `app.host` | `127.0.0.1` |
 | `DATACLAW_PORT` | `app.port` | `8000` |
@@ -549,13 +552,13 @@ above.
 | `openai` | Responses API (`store=false`) | Set `api: "chat_completions"` to opt out; a custom `base_url` defaults to Chat Completions |
 | `gemini` | langchain-google-genai | `thinking_level` |
 | `codex` | Responses API via Codex OAuth or an API key | |
-| `openai_compatible` | Chat Completions at a custom `base_url` | Presets: Ollama, vLLM, LM Studio (keyless), OpenRouter, Groq, xAI, DeepSeek, Mistral, Together |
+| `openrouter` | Chat Completions at `https://openrouter.ai/api/v1` | Hundreds of models with one key; see [OpenRouter](#openrouter) |
+| `openai_compatible` | Chat Completions at a custom `base_url` | Presets: Ollama, vLLM, LM Studio (keyless), Groq, xAI, DeepSeek, Mistral, Together |
 | `open_responses` | Responses API at a custom `base_url` | For [Open Responses](https://www.openresponses.org) servers; API key optional |
 
 A backend that needs an API key and has none fails with a configuration error
 naming the env var and config path; the runtime status in Settings shows it.
-Hosted presets also read their own key variable (`OPENROUTER_API_KEY`,
-`GROQ_API_KEY`, `XAI_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`,
+Hosted presets also read their own key variable (`GROQ_API_KEY`, `XAI_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`,
 `TOGETHER_API_KEY`). vLLM's default port (8000) clashes with DataClaw's, so its
 preset expects `--port 8001`. Plugins can add backends with
 `PluginContext.register_llm_backend`.
@@ -566,6 +569,56 @@ is shared by DataClaw, Hermes, and OpenClaw for compaction and delegated
 sub-agents. When `agent.runtime` is `dataclaw`, the same model also runs the
 primary agent.
 
+### OpenRouter
+
+The `openrouter` backend reaches Anthropic, OpenAI, Google, xAI, DeepSeek and
+other models with one key; model ids look like `anthropic/claude-opus-5.5`.
+Settings → Agent has an **OpenRouter** card, the recommended setup:
+
+- **Paste an API key** (an inference key, `sk-or-v1-…`), or
+- **Provision with a management key.** OpenRouter management keys cannot run
+  models; they only manage keys. DataClaw uses yours once to create an
+  inference key named `dataclaw-<hostname>`, with an optional spending limit
+  and reset schedule (daily, weekly or monthly), stores only that new key
+  (and its hash, for rotation) in `llm.backends.openrouter`, and discards the
+  management key. It is never written to the config file or the logs. For
+  headless setups, set `OPENROUTER_MANAGEMENT_KEY` and call
+  `POST /api/providers/openrouter/provision` with
+  `{"limit_usd": 25, "limit_reset": "monthly"}`. `POST
+  /api/providers/openrouter/rotate` creates a replacement key, switches to it
+  and deletes the old one.
+
+The card shows the key's credits used and remaining
+(`GET /api/providers/openrouter/key-status`) and can select OpenRouter for both
+the DataClaw model and decisions. The model list comes from OpenRouter's live
+catalog (refreshed hourly), grouped by vendor with context size and price per
+million tokens. Reasoning effort and verbosity are sent only to models that
+list them, and reasoning state (`reasoning_details`) is kept across tool
+calls. Claude models get a prompt-cache breakpoint on the system prompt.
+
+**Privacy and routing.** `llm.backends.openrouter.routing` holds OpenRouter's
+provider preferences, sent with every request (chat and decisions). The card
+exposes the main ones:
+
+| Key | Effect |
+|---|---|
+| `data_collection: "deny"` | Only providers that do not store or train on prompts |
+| `zdr: true` | Only zero-data-retention endpoints |
+| `sort` | `price`, `throughput` or `latency` |
+| `order` / `only` / `ignore` | Provider slugs to try first, allow, or skip |
+| `allow_fallbacks`, `require_parameters`, `max_price`, `quantizations` | As in [OpenRouter's provider routing](https://openrouter.ai/docs/guides/routing/provider-selection) |
+| `models` | Fallback models tried in order if the primary fails |
+
+Empty settings send nothing, so your account-level OpenRouter settings apply.
+
+**Cost.** OpenRouter reports each response's cost. It appears as `costUsd` on
+the `llm:usage` run event, and summed in its `runTotals`.
+
+Configs that used the `openai_compatible` backend with the `openrouter` preset
+are moved to the `openrouter` backend on startup (key, model and custom
+headers kept; covered by the one-time backup above). The preset still works,
+deprecated, for one more release.
+
 ### Decision models
 
 A decision model answers typed questions about a state instead of chatting:
@@ -575,10 +628,12 @@ backend has one, a probability distribution. Settings live under `decision`:
 
 | Key | Env | Default | Notes |
 |---|---|---|---|
-| `decision.backend` | `DATACLAW_DECISION_BACKEND` | `none` | `typesafe`, `llm` or a plugin backend |
+| `decision.backend` | `DATACLAW_DECISION_BACKEND` | `none` | `typesafe`, `openrouter`, `llm` or a plugin backend |
 | `decision.typesafe.api_key` | `TYPESAFE_API_KEY` | | TypeSafe or Vercel AI Gateway key |
 | `decision.typesafe.model` | | `jev-latest` | `jev-preview`, `jev-1.14.0`, `jev-1.13.0` |
 | `decision.typesafe.base_url` | | `https://api.typesafe.ai` | `https://ai-gateway.vercel.sh/typesafe` for Vercel AI Gateway |
+| `decision.openrouter.model` | | `~typesafe/jev-latest` | `typesafe/jev-1.14`, `typesafe/jev-1.13` |
+| `decision.openrouter.endpoint` | | `decisions` | `systemone` for the TypeSafe-SDK-compatible API |
 | `decision.min_confidence` | `DATACLAW_DECISION_MIN_CONFIDENCE` | `0.7` | |
 | `decision.routing.{plan_gates, skill_routing, compaction}` | | `false` | Opt-in internal uses |
 
@@ -586,6 +641,10 @@ backend has one, a probability distribution. Settings live under `decision`:
   (`POST /v1/systemone`), retrying 429/529/5xx with backoff. State beyond
   Jev's limits (64k tokens per request, 32k per question) is truncated with a
   logged warning.
+- **`openrouter`** (alpha) calls Jev through OpenRouter's Decisions API
+  (`POST /api/alpha/decisions`, an alpha API) with the OpenRouter key and
+  privacy routing of the `openrouter` LLM backend, billed to the same
+  account. Same retries and state limits as `typesafe`.
 - **`llm`** answers the same questions with the utility model through
   structured output. Its confidence is the model's own estimate, so results
   are marked `calibrated: false` and carry no probabilities.

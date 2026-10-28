@@ -50,6 +50,37 @@ async def test_usage_event_is_streamed_and_run_finishes(mock_providers):
 
 
 @pytest.mark.asyncio
+async def test_usage_cost_is_streamed_and_totalled(mock_providers):
+    class Agent:
+        def __init__(self):
+            self.turns = 0
+
+        async def stream_turn(self, state):
+            self.turns += 1
+            yield TextDeltaEvent(text="Hello")
+            yield UsageEvent(input_tokens=10, output_tokens=2, cost_usd=0.00125)
+            yield TurnCompleteEvent(has_pending_tool_calls=False)
+
+    run, encoded = await _run("usage-cost-session", mock_providers, Agent())
+
+    compact = encoded.replace(" ", "")
+    assert '"costUsd":0.00125' in compact
+    assert '"runTotals":{"inputTokens":10,"outputTokens":2,"cachedInputTokens":0,"reasoningTokens":0,"costUsd":0.00125}' in compact
+    assert run.status == "finished"
+
+
+@pytest.mark.asyncio
+async def test_usage_without_cost_reports_null(mock_providers):
+    class Agent:
+        async def stream_turn(self, state):
+            yield UsageEvent(input_tokens=1, output_tokens=1)
+            yield TurnCompleteEvent(has_pending_tool_calls=False)
+
+    _, encoded = await _run("usage-nocost-session", mock_providers, Agent())
+    assert '"costUsd":null' in encoded.replace(" ", "")
+
+
+@pytest.mark.asyncio
 async def test_error_event_fails_run_with_provider_message(mock_providers):
     class Agent:
         async def stream_turn(self, state):

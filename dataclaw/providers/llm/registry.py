@@ -57,6 +57,8 @@ class PresetSpec:
     api_key_env: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
     notes: str = ""
+    # Still resolves for existing configs but is no longer offered in the UI.
+    deprecated: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -68,6 +70,7 @@ class PresetSpec:
             "api_key_env": self.api_key_env,
             "headers": dict(self.headers),
             "notes": self.notes,
+            "deprecated": self.deprecated,
         }
 
 
