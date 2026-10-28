@@ -12,6 +12,20 @@ updates:
     directory: /ui
     schedule:
       interval: weekly
+    ignore:
+      # plotly.js 4 drops the mapbox traces and changes color parsing; the UI
+      # and the report runtime (served from Python plotly <7) stay on 3.x.
+      - dependency-name: plotly.js-dist-min
+        versions: [">=4"]
+      # ESLint 10 is a flat-config/plugin major; take it with the existing
+      # lint backlog, not as a drive-by bump.
+      - dependency-name: eslint
+        versions: [">=10"]
+      - dependency-name: "@eslint/js"
+        versions: [">=10"]
+      # Types track the Node major the images and CI run (24).
+      - dependency-name: "@types/node"
+        versions: [">=25"]
 
   - package-ecosystem: npm
     directory: /openclaw-plugins/dataclaw
@@ -21,11 +35,22 @@ updates:
       # OpenClaw host upgrades are coordinated with the plugin SDK changes and
       # the pinned OPENCLAW_VERSION in Dockerfile.bundled; do them by hand.
       - dependency-name: openclaw
+      # TypeScript 7 is a compiler rewrite; move with OpenClaw's own toolchain.
+      - dependency-name: typescript
+        versions: [">=7"]
+      # Types track the Node major the images and CI run (24).
+      - dependency-name: "@types/node"
+        versions: [">=25"]
 
   - package-ecosystem: docker
     directories: [/]
     schedule:
       interval: weekly
+    ignore:
+      # The images, CI and OpenClaw's engines check are validated on Node 24.
+      # Moving to 26 means updating all of them together.
+      - dependency-name: node
+        versions: [">=25"]
 
   - package-ecosystem: github-actions
     directory: /
