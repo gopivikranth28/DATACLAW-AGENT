@@ -67,6 +67,12 @@ class ProviderRegistry:
 
         register_llm_backend(spec)
 
+    def register_decision_backend(self, spec: Any) -> None:
+        """Register a ``DecisionBackendSpec`` (process-wide, like LLM backends)."""
+        from dataclaw.providers.decision.registry import register_decision_backend
+
+        register_decision_backend(spec)
+
     def get_runtime_factory(self, runtime: str) -> Any | None:
         return self._runtime_factories.get(runtime.strip().lower())
 

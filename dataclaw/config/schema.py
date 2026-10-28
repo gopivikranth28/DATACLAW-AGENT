@@ -85,11 +85,38 @@ class MemoryConfig(BaseModel):
     gbrain: GbrainMemoryConfig = GbrainMemoryConfig()
 
 
+class TypeSafeDecisionConfig(BaseModel):
+    api_key: str = ""  # or TYPESAFE_API_KEY
+    model: str = "jev-latest"
+    base_url: str = "https://api.typesafe.ai"  # or https://ai-gateway.vercel.sh/typesafe
+    timeout: float = 30
+    max_retries: int = 2
+
+    model_config = {"extra": "allow"}
+
+
+class DecisionRoutingConfig(BaseModel):
+    """Opt-in internal uses of the decision model."""
+    plan_gates: bool = False
+    skill_routing: bool = False
+    compaction: bool = False
+
+
+class DecisionConfig(BaseModel):
+    backend: str = "none"  # none | typesafe | llm | <plugin backend>
+    min_confidence: float = 0.7
+    typesafe: TypeSafeDecisionConfig = TypeSafeDecisionConfig()
+    routing: DecisionRoutingConfig = DecisionRoutingConfig()
+
+    model_config = {"extra": "allow"}  # plugin backends keep settings in decision.<id>
+
+
 class DataclawConfig(BaseModel):
     agent: AgentConfig = AgentConfig()
     llm: LLMConfig = LLMConfig()
     compaction: CompactionConfig = CompactionConfig()
     memory: MemoryConfig = MemoryConfig()
+    decision: DecisionConfig = DecisionConfig()
     app: AppConfig = AppConfig()
     plugins: dict[str, Any] = {}  # Plugin-specific config sections
 

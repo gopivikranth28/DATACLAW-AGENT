@@ -18,6 +18,8 @@ from dataclaw.providers.tool.provider import ToolProvider
 from dataclaw.providers.llm.implementations.factory import llm_from_config
 from dataclaw.providers.agent.implementations.langchain_agent import LangChainAgentProvider
 from dataclaw.providers.sub_agent.implementations.default import DefaultSubAgentProvider
+from dataclaw.providers.decision.routing import bind_providers as bind_decision_providers
+from dataclaw.providers.decision.tool import register_decide_tool
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +85,11 @@ def init_providers(registry: ProviderRegistry) -> DefaultToolAvailability:
         parameters={"type": "object", "properties": {}},
         fn=skill_provider.list_available_skills,
     ))
+
+    # Decision tool: always registered (so generated tool manifests are
+    # stable) but only offered while decision.backend is not "none".
+    register_decide_tool(tool_registry)
+    bind_decision_providers(registry)
 
     registry.agent = LangChainAgentProvider(llm)
 

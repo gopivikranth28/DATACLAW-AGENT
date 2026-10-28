@@ -45,6 +45,14 @@ class PluginContext:
         """
         self.providers.register_llm_backend(spec)
 
+    def register_decision_backend(self, spec: Any) -> None:
+        """Add a decision backend (``dataclaw.providers.decision.registry.DecisionBackendSpec``).
+
+        It becomes selectable as ``decision.backend`` and appears in the
+        settings UI with its config fields.
+        """
+        self.providers.register_decision_backend(spec)
+
     def include_api_router(self, router: Any, **kwargs: Any) -> None:
         """Register a router under the /api prefix. Plugins should use this instead of app.include_router()."""
         prefix = kwargs.pop("prefix", "")

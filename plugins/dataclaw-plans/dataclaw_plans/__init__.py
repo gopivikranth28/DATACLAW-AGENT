@@ -13,7 +13,8 @@ from dataclaw_plans.tools import propose_plan, update_plan, list_plans, get_plan
 from dataclaw_plans.mlflow_tools import query_mlflow_runs
 from dataclaw_plans.router import router as plans_router, mlflow_router
 from dataclaw_plans.hooks import active_plan_context_hook, planning_reasoning_hook
-from dataclaw_plans.gates import GateRiskAcceptanceGuardrail
+from dataclaw_plans.gates import GateRiskAcceptanceGuardrail, register_gate_resolver
+from dataclaw_plans.decisions import DECISION_GATE, decision_gate_resolver, decision_skill_routing_hook
 
 
 class PlansPlugin:
@@ -29,6 +30,10 @@ class PlansPlugin:
         ctx.hooks.register("preToolCallHook", active_plan_context_hook)
         # Runs right before the agent turn: elevates reasoning while drafting a plan.
         ctx.hooks.register("postToolAvailabilityHook", planning_reasoning_hook)
+        # Opt-in decision-model routing (decision.routing.*); both are no-ops
+        # while their toggle is off.
+        ctx.hooks.register("postSkillHook", decision_skill_routing_hook)
+        register_gate_resolver(DECISION_GATE, decision_gate_resolver)
         if ctx.guardrail_registry is not None:
             ctx.guardrail_registry.register(GateRiskAcceptanceGuardrail())
         if ctx.session_cleanup_registry is not None:

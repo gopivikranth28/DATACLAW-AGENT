@@ -30,10 +30,14 @@ class ToolProvider:
         parameters: dict[str, Any],
         fn: Callable[..., Awaitable[dict[str, Any]]],
         source: str = "builtin",
+        available: Callable[[], bool] | None = None,
     ) -> None:
         self.name = name
         self.fn = fn
         self.source = source
+        # Optional runtime switch: an unavailable tool stays registered (and in
+        # generated manifests) but is not offered to the agent or invocable.
+        self._available = available
         self._definition: ToolDefinition = {
             "name": name,
             "description": description,
@@ -49,6 +53,15 @@ class ToolProvider:
     @property
     def definition(self) -> ToolDefinition:
         return self._definition
+
+    def is_available(self) -> bool:
+        """False while the tool's backing feature is switched off."""
+        if self._available is None:
+            return True
+        try:
+            return bool(self._available())
+        except Exception:
+            return False
 
     async def execute(self, **kwargs: Any) -> dict[str, Any]:
         """Execute the wrapped function, stripping injected context params if needed."""

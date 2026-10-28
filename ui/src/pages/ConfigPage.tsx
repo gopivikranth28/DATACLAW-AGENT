@@ -51,6 +51,16 @@ interface LLMBackendDef {
   presets: LLMPresetDef[]
 }
 
+// One entry of GET /api/providers/decision-backends (the decision backend registry).
+interface DecisionBackendDef {
+  id: string
+  label: string
+  vendor: string
+  description: string
+  requires_api_key: boolean
+  fields: ConfigFieldDef[]
+}
+
 interface ProviderInfo {
   slot: string
   name: string | null
@@ -133,6 +143,12 @@ const MEMORY_STRATEGY_OPTIONS = [
   { value: 'gbrain', label: 'GBrain' },
 ]
 
+const DECISION_ROUTING_OPTIONS = [
+  { key: 'plan_gates', label: 'Plan gate pre-check', description: 'Adds an advisory decision_precheck gate (pass or warn) to plan steps with recorded work. It never blocks on its own.' },
+  { key: 'skill_routing', label: 'Skill routing while drafting a plan', description: 'Suggests the matching playbook in the prompt when the model is confident. Built-in runtime only.' },
+  { key: 'compaction', label: 'Early history compaction', description: 'May process history before the thresholds when older turns are no longer needed. Never skips a required compaction. Built-in runtime only.' },
+]
+
 const HELP_STYLE: CSSProperties = { fontSize: 12, color: '#737373', lineHeight: 1.5 }
 const CALLOUT_STYLE: CSSProperties = { background: '#fafafa', border: '1px solid #eee', padding: '10px 12px', borderRadius: 7, fontSize: 12, color: '#555' }
 const INACTIVE_GROUP_STYLE: CSSProperties = { background: '#fafafa', border: '1px solid #e8e8e8', borderRadius: 8, padding: '14px 14px 1px' }
@@ -171,6 +187,7 @@ function describeConfigChanges(before: any, after: any): string[] {
   if (before?.app?.max_turns !== after?.app?.max_turns) changed.push('Maximum action rounds')
   if (JSON.stringify(before?.compaction) !== JSON.stringify(after?.compaction)) changed.push('Conversation history')
   if (JSON.stringify(before?.memory) !== JSON.stringify(after?.memory)) changed.push('Cross-chat memory')
+  if (JSON.stringify(before?.decision) !== JSON.stringify(after?.decision)) changed.push('Decision model')
   const beforeExtensions = Object.fromEntries(Object.entries(before?.plugins || {}).filter(([id]) => id !== 'openclaw' && id !== 'hermes' && id !== 'codex'))
   const afterExtensions = Object.fromEntries(Object.entries(after?.plugins || {}).filter(([id]) => id !== 'openclaw' && id !== 'hermes' && id !== 'codex'))
   if (JSON.stringify(beforeExtensions) !== JSON.stringify(afterExtensions)) changed.push('Extensions')
@@ -194,6 +211,7 @@ export default function ConfigPage({ plugins }: Props) {
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [llmBackends, setLlmBackends] = useState<LLMBackendDef[]>([])
   const [llmBackendsLoaded, setLlmBackendsLoaded] = useState(false)
+  const [decisionBackends, setDecisionBackends] = useState<DecisionBackendDef[]>([])
   const [availableModels, setAvailableModels] = useState<ModelOption[]>([])
   const [modelsLoading, setModelsLoading] = useState(false)
   const [modelsAuthenticated, setModelsAuthenticated] = useState<boolean | null>(null)
@@ -223,6 +241,10 @@ export default function ConfigPage({ plugins }: Props) {
       .then((data: LLMBackendDef[]) => setLlmBackends(Array.isArray(data) ? data : []))
       .catch(() => message.error('Failed to load LLM backends'))
       .finally(() => setLlmBackendsLoaded(true))
+    fetch(`${API}/providers/decision-backends`)
+      .then(r => (r.ok ? r.json() : Promise.reject(new Error('Failed to load decision backends'))))
+      .then((data: DecisionBackendDef[]) => setDecisionBackends(Array.isArray(data) ? data : []))
+      .catch(() => {})
   }, [])
 
   const save = async (): Promise<boolean> => {
@@ -950,6 +972,15 @@ export default function ConfigPage({ plugins }: Props) {
     )
   }
   const utilityBackendOptions = llmBackends.map(backend => ({ value: backend.id, label: backend.label }))
+  const decisionConfig = config.decision || {}
+  const decisionBackend: string = decisionConfig.backend || 'none'
+  const decisionSpec = decisionBackends.find(backend => backend.id === decisionBackend)
+  const decisionBackendOptions = [
+    { value: 'none', label: 'Off' },
+    ...decisionBackends.map(backend => ({ value: backend.id, label: backend.label })),
+    // Keep an unknown saved value visible rather than silently showing "Off".
+    ...(decisionBackend !== 'none' && decisionBackends.length > 0 && !decisionSpec ? [{ value: decisionBackend, label: `${decisionBackend} (unknown)` }] : []),
+  ]
   const utilityBackendLabel = backendSpec?.label || utilityBackend
   const utilityProviderConfig = backendConfig
   const utilityCodexAuthMode = llm.backends?.codex?.auth_mode || 'default'
@@ -1558,6 +1589,30 @@ export default function ConfigPage({ plugins }: Props) {
                     <Alert type="warning" showIcon title="No settings schema is available for this memory strategy." />
                   )}
                 </DisabledSettings>
+
+                <Divider />
+                <SectionTitle title="Decision model" description="A decision model answers typed questions (choice, score, yes/no) with probabilities. It powers the decide tool and the optional routing below." />
+                <Field label="Backend" description={decisionSpec?.description || 'Off: the decide tool is hidden and no routing runs.'}>
+                  <Select value={decisionBackend} onChange={v => updateByPath('decision.backend', v)} style={{ width: '100%' }} options={decisionBackendOptions} />
+                </Field>
+                {decisionSpec && decisionSpec.fields.length > 0 && (
+                  <div style={FIELD_GRID_STYLE}>
+                    {decisionSpec.fields.map(field => (
+                      <DynamicField key={field.name} field={field} value={decisionConfig[decisionSpec.id]?.[field.name] ?? field.default} onChange={v => updateByPath(`decision.${decisionSpec.id}.${field.name}`, v)} />
+                    ))}
+                  </div>
+                )}
+                {decisionSpec?.requires_api_key && !decisionConfig[decisionSpec.id]?.api_key && (
+                  <Alert type="warning" showIcon title={`${decisionSpec.vendor} API key required`} description={`Enter it above or set ${decisionSpec.fields.find(f => f.name === 'api_key')?.env || 'the API key environment variable'}. Until then decisions fall back to the utility LLM.`} style={{ marginBottom: 14 }} />
+                )}
+                <Field label="Minimum confidence" description="Answers below this confidence are re-asked of the utility LLM (routing) or flagged (decide tool).">
+                  <InputNumber aria-label="Minimum confidence" disabled={decisionBackend === 'none'} value={decisionConfig.min_confidence ?? 0.7} onChange={v => updateByPath('decision.min_confidence', v)} min={0} max={1} step={0.05} style={{ width: '100%' }} />
+                </Field>
+                {DECISION_ROUTING_OPTIONS.map(option => (
+                  <Field key={option.key} label={option.label} description={option.description}>
+                    <Switch aria-label={option.label} disabled={decisionBackend === 'none'} checked={!!decisionConfig.routing?.[option.key]} onChange={v => updateByPath(`decision.routing.${option.key}`, v)} />
+                  </Field>
+                ))}
 
                 <Divider />
                 <Button type="link" icon={<SettingOutlined />} onClick={() => setAdvancedOpen(true)} style={{ paddingInline: 0 }}>Advanced settings</Button>

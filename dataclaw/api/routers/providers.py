@@ -108,6 +108,14 @@ async def list_llm_backends() -> list[dict[str, Any]]:
     return [spec.to_dict() for spec in registered()]
 
 
+@router.get("/decision-backends")
+async def list_decision_backends() -> list[dict[str, Any]]:
+    """Selectable decision backends (besides "none") with their config fields."""
+    from dataclaw.providers.decision.registry import list_decision_backends as registered
+
+    return [spec.to_dict() for spec in registered()]
+
+
 @router.get("")
 async def list_providers(request: Request) -> list[dict[str, Any]]:
     """List all registered providers with their config schemas."""

@@ -564,6 +564,48 @@ is shared by DataClaw, Hermes, and OpenClaw for compaction and delegated
 sub-agents. When `agent.runtime` is `dataclaw`, the same model also runs the
 primary agent.
 
+### Decision models
+
+A decision model answers typed questions about a state instead of chatting:
+`choice` (pick one option), `score` (ordered levels; the answer is the
+expected level) and `boolean` (yes/no), each with a confidence and, where the
+backend has one, a probability distribution. Settings live under `decision`:
+
+| Key | Env | Default | Notes |
+|---|---|---|---|
+| `decision.backend` | `DATACLAW_DECISION_BACKEND` | `none` | `typesafe`, `llm` or a plugin backend |
+| `decision.typesafe.api_key` | `TYPESAFE_API_KEY` | | TypeSafe or Vercel AI Gateway key |
+| `decision.typesafe.model` | | `jev-latest` | `jev-preview`, `jev-1.14.0`, `jev-1.13.0` |
+| `decision.typesafe.base_url` | | `https://api.typesafe.ai` | `https://ai-gateway.vercel.sh/typesafe` for Vercel AI Gateway |
+| `decision.min_confidence` | `DATACLAW_DECISION_MIN_CONFIDENCE` | `0.7` | |
+| `decision.routing.{plan_gates, skill_routing, compaction}` | | `false` | Opt-in internal uses |
+
+- **`typesafe`** calls TypeSafe's [Jev](https://docs.typesafe.ai/models)
+  (`POST /v1/systemone`), retrying 429/529/5xx with backoff. State beyond
+  Jev's limits (64k tokens per request, 32k per question) is truncated with a
+  logged warning.
+- **`llm`** answers the same questions with the utility model through
+  structured output. Its confidence is the model's own estimate, so results
+  are marked `calibrated: false` and carry no probabilities.
+
+With a backend selected, the agent gets a **`decide`** tool (also exposed to
+OpenClaw and Hermes). It falls back to the utility LLM when Jev is
+unavailable. The routing toggles are advisory and fall back to the LLM when
+Jev fails or answers below `min_confidence`:
+
+- `plan_gates` adds a `decision_precheck` gate (`pass` or `warn`) to plan
+  steps with recorded work. It blocks only if a stored gate policy marks it
+  required.
+- `skill_routing` adds a "likely playbook" hint to the prompt while a plan is
+  being drafted.
+- `compaction` can compact history early, once it reaches half of a
+  threshold. It never skips a compaction the thresholds require.
+
+`skill_routing` and `compaction` apply only when DataClaw runs the agent loop.
+Each decision is logged and emitted as a `decision:result` event on the run
+stream. Plugins can add backends with
+`PluginContext.register_decision_backend`.
+
 ---
 
 ## Security Considerations

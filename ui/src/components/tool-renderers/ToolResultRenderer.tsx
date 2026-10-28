@@ -7,6 +7,7 @@ import { FileWriteDisplay, FileReadDisplay } from './FileDisplay'
 import ReportDisplay from './ReportDisplay'
 import MetricDisplay from './MetricDisplay'
 import PublishArtifactCard from './PublishArtifactCard'
+import DecisionCard from './DecisionCard'
 import { reportPreviewUrl } from '../reportPreview'
 import { toolBaseName } from '../reportPublishState'
 
@@ -20,6 +21,7 @@ const AUTO_EXPAND_TOOLS = new Set([
   'report_publish',
   'publish_artifact',
   'insert_cell', 'edit_cell', 'edit_cell_source',
+  'decide',
 ])
 
 const CUSTOM_RENDER_TOOLS = new Set([
@@ -101,6 +103,8 @@ export default function ToolResultRenderer({ toolName, result, args, status, onF
       return <ReportUpdateNotice data={parsed} onFileClick={onFileClick} />
     case 'publish_artifact':
       return <PublishArtifactCard data={parsed} sessionId={sessionId} />
+    case 'decide':
+      return <DecisionCard data={parsed} />
     default:
       return <GenericResult result={result} />
   }
