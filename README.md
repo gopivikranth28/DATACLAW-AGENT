@@ -284,7 +284,7 @@ Installed skills become available to direct LLM sessions, subject to the project
 
 ### Python Dependencies
 
-Core: `fastapi`, `uvicorn`, `pydantic`, `httpx`, `langgraph`, `langchain`, `ag-ui-protocol`
+Core: `fastapi`, `uvicorn`, `pydantic`, `httpx`, `pyyaml`, `openai`, `langgraph`, `langchain-core`, `ag-ui-protocol`
 
 LLM providers (optional, based on backend): `langchain-anthropic`, `langchain-openai`, `langchain-google-genai`
 
@@ -458,6 +458,8 @@ Plugins can register **sub-agent providers** (`ctx.sub_agent_registry.register(.
 | `llm` | `DefaultSubAgentProvider` (built-in) | Spin up a fresh LangGraph loop with a focused system prompt and a scoped tool set |
 | `browser` | `dataclaw-browser` | Hand off web tasks to `browser-use` (Playwright) |
 | `codex` | `dataclaw-codex` | Hand off coding work to OpenAI Codex via the `codex` CLI/app-server |
+
+browser-use's anonymized PostHog telemetry is turned off by default. The browser plugin starts browser-use's telemetry with `ANONYMIZED_TELEMETRY=false` and then restores the environment, so the setting doesn't leak into other code or child processes. To opt in, set `ANONYMIZED_TELEMETRY=true` before starting DataClaw.
 
 Subagent definitions are managed in the **Subagents** page (`/subagents`) and can be scoped per-project. The parent agent's `list_subagents` tool returns only the subagents the current session has been allowed to use.
 

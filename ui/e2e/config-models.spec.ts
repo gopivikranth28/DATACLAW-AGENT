@@ -40,7 +40,7 @@ test('lists authenticated backend models in a selector', async ({ page }) => {
 
   await page.goto('/config')
 
-  const agentPanel = page.locator('.ant-tabs-tabpane-active')
+  const agentPanel = page.getByRole('tabpanel')
   const selects = agentPanel.locator('.ant-select')
   await expect(selects).toHaveCount(3)
   await expect(selects.nth(1)).toContainText('gpt-4o')
@@ -192,13 +192,13 @@ test('uses three tabs and keeps related agent integrations together', async ({ p
   await expect(page.getByText('Allow Codex delegation')).toBeVisible()
 
   await page.getByRole('tab', { name: 'Behavior' }).click()
-  const behaviorPanel = page.locator('.ant-tabs-tabpane-active')
+  const behaviorPanel = page.getByRole('tabpanel')
   await expect(behaviorPanel.getByText('Not currently applied')).toHaveCount(2)
   await expect(page.getByLabel('Start after')).toBeDisabled()
   await expect(page.getByLabel('Start after')).toHaveValue('30')
 
   await page.getByRole('tab', { name: 'Extensions' }).click()
-  const extensionsPanel = page.locator('.ant-tabs-tabpane-active')
+  const extensionsPanel = page.getByRole('tabpanel')
   await expect(extensionsPanel.getByText('Browser', { exact: true })).toBeVisible()
   await expect(extensionsPanel.getByRole('switch')).toBeChecked()
   await expect(extensionsPanel.getByText('Codex delegation', { exact: true })).toHaveCount(0)

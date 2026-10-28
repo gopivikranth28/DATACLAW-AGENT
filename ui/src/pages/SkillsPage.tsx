@@ -5,7 +5,7 @@ import { PlusOutlined, UploadOutlined, EditOutlined, DeleteOutlined, DownloadOut
          BoldOutlined, ItalicOutlined, OrderedListOutlined, UnorderedListOutlined } from '@ant-design/icons'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
-import { Markdown } from 'tiptap-markdown'
+import { Markdown } from '@tiptap/markdown'
 import { API } from '../api'
 
 interface Skill {
@@ -85,8 +85,9 @@ function SkillEditor({ value, onChange }: { value: string; onChange: (md: string
       Markdown,
     ],
     content: value,
+    contentType: 'markdown',
     onUpdate({ editor }) {
-      onChange((editor.storage as any).markdown.getMarkdown())
+      onChange(editor.getMarkdown())
     },
   })
 
@@ -94,9 +95,9 @@ function SkillEditor({ value, onChange }: { value: string; onChange: (md: string
   const prevValue = useCallback(() => value, [value])
   useEffect(() => {
     if (!editor) return
-    const current = (editor.storage as any).markdown.getMarkdown()
+    const current = editor.getMarkdown()
     if (current !== value) {
-      editor.commands.setContent(value)
+      editor.commands.setContent(value, { contentType: 'markdown' })
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor, prevValue])
@@ -121,6 +122,7 @@ function SkillBody({ value }: { value: string }) {
     editable: false,
     extensions: [StarterKit, Markdown],
     content: value,
+    contentType: 'markdown',
   }, [value])
 
   if (!value?.trim()) {

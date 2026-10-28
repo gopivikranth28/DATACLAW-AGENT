@@ -17,7 +17,7 @@ from typing import Any
 from dataclaw.providers.config_field import ConfigField
 from dataclaw.providers.sub_agent.provider import SubAgentContext, SubAgentResult
 
-from dataclaw_browser.tools import _create_llm
+from dataclaw_browser.tools import _create_llm, disable_browser_use_telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +113,7 @@ class BrowserSubAgentProvider:
                 result="browser-use is not installed. Run: pip install browser-use",
                 conversation_id=conversation_id,
             )
+        disable_browser_use_telemetry()
 
         llm = _create_llm(llm_provider, llm_model, api_key)
         if llm is None:

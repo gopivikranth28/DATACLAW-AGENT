@@ -6,6 +6,7 @@ scripted stream events, so no network access is needed.
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace as NS
 from typing import Any
 
@@ -258,3 +259,114 @@ async def test_stream_ending_without_completed_is_an_error():
     llm, _ = _llm([NS(type="response.output_text.delta", delta="cut")])
     with pytest.raises(LLMStreamError):
         await _run(llm, [Message.user("hi")])
+
+
+# ── real SDK over a mocked transport ──────────────────────────────────────
+# The tests above replay SimpleNamespace events. These run the installed
+# openai SDK end to end (HTTPX2 transport, SSE parsing, typed event models),
+# so an SDK upgrade that renames events or fields fails here.
+
+
+def _sse(*events: dict[str, Any]) -> bytes:
+    return b"".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n".encode() for e in events)
+
+
+def _sdk_llm(body: bytes) -> tuple[OpenAIResponsesLLM, list[dict[str, Any]]]:
+    import httpx2
+    from openai import AsyncOpenAI, DefaultAsyncHttpx2Client
+
+    sent: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        sent.append(json.loads(request.content))
+        return httpx2.Response(200, headers={"content-type": "text/event-stream"}, content=body)
+
+    llm = OpenAIResponsesLLM(api_key="test", base_url="http://localhost/v1", model="gpt-5.5")
+    llm._client = AsyncOpenAI(
+        api_key="test",
+        base_url="http://localhost/v1",
+        http_client=DefaultAsyncHttpx2Client(transport=httpx2.MockTransport(handler)),
+    )
+    return llm, sent
+
+
+_SDK_USAGE = {
+    "input_tokens": 50,
+    "input_tokens_details": {"cached_tokens": 40},
+    "output_tokens": 10,
+    "output_tokens_details": {"reasoning_tokens": 6},
+    "total_tokens": 60,
+}
+
+
+def _sdk_response(status: str, **extra: Any) -> dict[str, Any]:
+    return {"id": "resp_1", "object": "response", "status": status, "output": [], "usage": _SDK_USAGE, **extra}
+
+
+@pytest.mark.asyncio
+async def test_sdk_stream_parses_tool_call_reasoning_and_usage():
+    reasoning = {
+        "type": "reasoning", "id": "rs_1", "encrypted_content": "ENC-1",
+        "summary": [{"type": "summary_text", "text": "thinking"}],
+    }
+    fc = {
+        "type": "function_call", "id": "fc_123", "call_id": "call_abc",
+        "name": "search", "arguments": '{"q": "x"}', "status": "completed",
+    }
+    body = _sse(
+        {"type": "response.output_item.done", "output_index": 0, "sequence_number": 1, "item": reasoning},
+        {"type": "response.output_item.added", "output_index": 1, "sequence_number": 2, "item": {**fc, "arguments": ""}},
+        {"type": "response.output_item.done", "output_index": 1, "sequence_number": 3, "item": fc},
+        {"type": "response.completed", "sequence_number": 4, "response": _sdk_response("completed")},
+    )
+    llm, sent = _sdk_llm(body)
+
+    events = await _run(llm, [Message.user("find x")], tools=[{"name": "search"}])
+
+    assert sent[0]["stream"] is True
+    assert sent[0]["include"] == ["reasoning.encrypted_content"]
+    assert [e for e in events if isinstance(e, ToolUseStartEvent)] == [
+        ToolUseStartEvent(tool_name="search", call_id="call_abc")
+    ]
+    calls = [e for e in events if isinstance(e, PendingToolCall)]
+    assert calls == [PendingToolCall(call_id="call_abc", tool_name="search", tool_input={"q": "x"})]
+    assert UsageEvent(input_tokens=50, output_tokens=10, cached_input_tokens=40, reasoning_tokens=6) in events
+    state = llm.build_tool_result_message(calls, [{}], [None])[0].provider_state
+    assert state["reasoning"][0]["encrypted_content"] == "ENC-1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event", "code"),
+    [
+        (
+            {"type": "response.failed", "sequence_number": 1,
+             "response": _sdk_response("failed", error={"code": "server_error", "message": "boom"})},
+            "server_error",
+        ),
+        (
+            {"type": "response.incomplete", "sequence_number": 1,
+             "response": _sdk_response("incomplete", incomplete_details={"reason": "max_output_tokens"})},
+            "incomplete:max_output_tokens",
+        ),
+    ],
+)
+async def test_sdk_stream_failed_and_incomplete_events(event, code):
+    llm, _ = _sdk_llm(_sse(event))
+    with pytest.raises(LLMStreamError) as excinfo:
+        await _run(llm, [Message.user("hi")])
+    assert excinfo.value.code == code
+
+
+@pytest.mark.asyncio
+async def test_sdk_structured_output_sends_text_format_json_schema():
+    schema = {"type": "object", "properties": {"a": {"type": "integer"}}, "required": ["a"]}
+    body = _sse(
+        {"type": "response.output_text.delta", "item_id": "msg_1", "output_index": 0,
+         "content_index": 0, "sequence_number": 1, "delta": '{"a": 1}', "logprobs": []},
+        {"type": "response.completed", "sequence_number": 2, "response": _sdk_response("completed")},
+    )
+    llm, sent = _sdk_llm(body)
+
+    assert await llm.structured_output([Message.user("q")], schema, name="answer", strict=True) == {"a": 1}
+    assert sent[0]["text"]["format"] == {"type": "json_schema", "name": "answer", "schema": schema, "strict": True}

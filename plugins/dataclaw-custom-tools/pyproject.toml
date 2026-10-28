@@ -5,7 +5,7 @@ description = "Custom Python tools and MCP server connections for DataClaw"
 requires-python = ">=3.12"
 dependencies = [
     "dataclaw",
-    "mcp>=1.0.0",
+    "mcp>=2.1",
 ]
 
 [project.entry-points."dataclaw.plugins"]

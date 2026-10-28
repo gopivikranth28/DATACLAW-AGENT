@@ -91,3 +91,41 @@ def test_create_llm_passes_keys_explicitly_and_uses_registry_defaults(
     monkeypatch.setenv(env_var, "sk-from-dataclaw")
     _create_llm(provider, "custom-model", "")
     assert created[provider] == {"model": "custom-model", "api_key": "sk-from-dataclaw"}
+
+
+def test_browser_use_telemetry_singleton_starts_disabled():
+    """The real browser-use telemetry singleton ends up without a PostHog client.
+
+    Runs in a fresh interpreter because ProductTelemetry is a process singleton.
+    """
+    import subprocess
+
+    pytest.importorskip("browser_use")
+    code = (
+        "import os\n"
+        "from dataclaw_browser.tools import disable_browser_use_telemetry\n"
+        "disable_browser_use_telemetry()\n"
+        "from browser_use.telemetry.service import ProductTelemetry\n"
+        "assert ProductTelemetry()._posthog_client is None\n"
+        "assert 'ANONYMIZED_TELEMETRY' not in os.environ\n"
+    )
+    env = {k: v for k, v in os.environ.items() if k != "ANONYMIZED_TELEMETRY"}
+    proc = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=120)
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_browser_use_telemetry_respects_explicit_user_setting(monkeypatch):
+    from dataclaw_browser.tools import disable_browser_use_telemetry
+
+    created: list[str | None] = []
+    service = types.ModuleType("browser_use.telemetry.service")
+    service.ProductTelemetry = lambda: created.append(os.environ.get("ANONYMIZED_TELEMETRY"))
+    monkeypatch.setitem(sys.modules, "browser_use.telemetry.service", service)
+
+    monkeypatch.setenv("ANONYMIZED_TELEMETRY", "true")
+    disable_browser_use_telemetry()
+    assert created == [] and os.environ["ANONYMIZED_TELEMETRY"] == "true"
+
+    monkeypatch.delenv("ANONYMIZED_TELEMETRY")
+    disable_browser_use_telemetry()
+    assert created == ["false"] and "ANONYMIZED_TELEMETRY" not in os.environ
