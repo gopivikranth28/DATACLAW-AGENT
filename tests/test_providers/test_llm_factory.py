@@ -18,6 +18,7 @@ from dataclaw.providers.llm.implementations.factory import llm_from_config
 from dataclaw.providers.llm.implementations.langchain_llm import LangChainLLM
 from dataclaw.providers.llm.implementations.mock_llm import MockLLM
 from dataclaw.providers.llm.implementations.openai_responses import OpenAIResponsesLLM
+from dataclaw.providers.llm.registry import LLMConfigurationError
 
 _ENV = [
     "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL",
@@ -45,9 +46,17 @@ def test_mock_backend():
     assert isinstance(llm_from_config(backend="mock"), MockLLM)
 
 
-@pytest.mark.parametrize("backend", ["anthropic", "openai", "gemini"])
-def test_missing_key_falls_back_to_mock(backend):
-    assert isinstance(llm_from_config(backend=backend), MockLLM)
+@pytest.mark.parametrize(
+    ("backend", "env_var"),
+    [("anthropic", "ANTHROPIC_API_KEY"), ("openai", "OPENAI_API_KEY"), ("gemini", "GOOGLE_API_KEY")],
+)
+def test_missing_key_raises_configuration_error(backend, env_var):
+    # No silent MockLLM fallback: the error names where to put the key.
+    with pytest.raises(LLMConfigurationError) as exc_info:
+        llm_from_config(backend=backend)
+    message = str(exc_info.value)
+    assert env_var in message
+    assert f"llm.backends.{backend}.api_key" in message
 
 
 def test_anthropic_backend(monkeypatch):
@@ -55,18 +64,32 @@ def test_anthropic_backend(monkeypatch):
     llm = llm_from_config(backend="anthropic")
     assert isinstance(llm, LangChainLLM)
     assert type(llm._model).__name__ == "ChatAnthropic"
-    assert llm._model.model == "claude-sonnet-4-20250514"
+    assert llm._model.model == "claude-opus-5-5"
+    # Catalog max output (128K) capped; never a thinking budget.
+    assert llm._model.max_tokens == 32_000
+    assert llm._model.thinking is None
     assert llm_from_config(backend="anthropic", model="claude-opus-4-5")._model.model == "claude-opus-4-5"
 
 
-def test_openai_backend(monkeypatch):
+def test_openai_backend_uses_responses_api(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    llm = llm_from_config(backend="openai")
+    assert isinstance(llm, OpenAIResponsesLLM)
+    assert llm._model == "gpt-6.1-sol"
+    assert str(llm._client.base_url) == "https://api.openai.com/v1/"
+    assert llm._client.api_key == "sk-test"
+
+
+def test_openai_custom_base_url_uses_chat_completions(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("OPENAI_BASE_URL", "http://localhost:9999/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-4o")
     llm = llm_from_config(backend="openai")
     assert isinstance(llm, LangChainLLM)
     assert type(llm._model).__name__ == "ChatOpenAI"
     assert llm._model.model_name == "gpt-4o"
     assert llm._model.openai_api_base == "http://localhost:9999/v1"
+    assert llm._model.stream_usage is True
 
 
 def test_gemini_backend(monkeypatch):
@@ -101,7 +124,7 @@ def test_utility_backend_used_when_backend_omitted(monkeypatch):
     monkeypatch.setenv("DATACLAW_UTILITY_BACKEND", "openai")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     llm = llm_from_config()
-    assert isinstance(llm, LangChainLLM) and type(llm._model).__name__ == "ChatOpenAI"
+    assert isinstance(llm, OpenAIResponsesLLM)
 
 
 def test_unknown_backend_raises():
@@ -169,8 +192,8 @@ def test_reload_dataclaw_runtime_uses_utility_backend(monkeypatch):
 
     _reload_llm_agent(providers, "dataclaw")
 
-    assert isinstance(providers.llm, LangChainLLM)
-    assert providers.llm._model.model_name == "gpt-5"
+    assert isinstance(providers.llm, OpenAIResponsesLLM)
+    assert providers.llm._model == "gpt-5"
     assert isinstance(providers.agent, LangChainAgentProvider)
     assert providers.compaction._llm is providers.llm
 

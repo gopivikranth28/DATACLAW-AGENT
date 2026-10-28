@@ -13,6 +13,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
+from langchain_core.exceptions import OutputParserException
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
@@ -26,12 +27,14 @@ from dataclaw.providers.llm.capabilities import (
     ANTHROPIC,
     GEMINI,
     OPENAI,
-    supports_reasoning_effort,
+    resolve_reasoning_effort,
     supports_text_verbosity,
 )
+from dataclaw.providers.llm.catalog import lookup_model_info
 from dataclaw.providers.llm.provider import (
     BrokerEvent,
     PendingToolCall,
+    StructuredOutputError,
     TextDeltaEvent,
     ToolUseStartEvent,
     TurnCompleteEvent,
@@ -66,8 +69,25 @@ class _TurnState:
 class LangChainLLM:
     """LLM provider backed by a LangChain BaseChatModel."""
 
-    def __init__(self, model: BaseChatModel) -> None:
+    def __init__(
+        self,
+        model: BaseChatModel,
+        *,
+        default_reasoning_effort: str | None = None,
+        compat: bool = False,
+    ) -> None:
+        """
+        Args:
+            model: The LangChain chat model.
+            default_reasoning_effort: Effort used on turns that don't set one
+                (the backend's configured ``reasoning_effort``).
+            compat: The model is served by a third-party OpenAI-compatible
+                endpoint. Optional knobs (reasoning effort) are only sent when
+                the model catalog vouches for them, and verbosity never is.
+        """
         self._model = model
+        self._default_reasoning_effort = default_reasoning_effort or None
+        self._compat = compat
         # AI-message state of turns that ended in tool calls, keyed by call id.
         # Keyed (rather than "last message") because one provider instance is
         # shared by concurrent runs and by sub-agents that run inside a tool
@@ -92,26 +112,19 @@ class LangChainLLM:
         # on every backend, not only the OpenAI/codex path. Applied as bind
         # kwargs, and only for models that accept them; a bind failure must
         # never break the call.
-        native = _native_request_kwargs(self._model, reasoning_effort, text_verbosity)
+        native = _native_request_kwargs(
+            self._model,
+            reasoning_effort or self._default_reasoning_effort,
+            text_verbosity,
+            compat=self._compat,
+        )
         if native:
             try:
                 bound = bound.bind(**native)
             except Exception:  # pragma: no cover - defensive
                 logger.warning("Could not apply request options %s", native)
 
-        # System-role messages in the history (compaction summaries) are
-        # folded into the single leading system message: Anthropic rejects
-        # non-consecutive system messages and Gemini merges them into
-        # system_instruction anyway, so this is the one shape every backend
-        # accepts.
-        context = [m.text() for m in messages if m.role == "system"]
-        history = [m for m in messages if m.role != "system"]
-
-        lc_messages: list[BaseMessage] = []
-        system_message = _build_system_message(self._model, system, context, system_dynamic)
-        if system_message is not None:
-            lc_messages.append(system_message)
-        lc_messages.extend(_to_lc_messages(history, provider=_provider_tag(self._model)))
+        lc_messages = self._lc_messages(messages, system, system_dynamic)
 
         accumulated: AIMessage | None = None
         seen_tool_indices: set[int] = set()
@@ -155,6 +168,65 @@ class LangChainLLM:
             )
 
         yield TurnCompleteEvent(has_pending_tool_calls=bool(tool_calls))
+
+    def _lc_messages(self, messages: list[Message], system: str, system_dynamic: str) -> list[BaseMessage]:
+        # System-role messages in the history (compaction summaries) are
+        # folded into the single leading system message: Anthropic rejects
+        # non-consecutive system messages and Gemini merges them into
+        # system_instruction anyway, so this is the one shape every backend
+        # accepts.
+        context = [m.text() for m in messages if m.role == "system"]
+        history = [m for m in messages if m.role != "system"]
+
+        lc_messages: list[BaseMessage] = []
+        system_message = _build_system_message(self._model, system, context, system_dynamic)
+        if system_message is not None:
+            lc_messages.append(system_message)
+        lc_messages.extend(_to_lc_messages(history, provider=_provider_tag(self._model)))
+        return lc_messages
+
+    async def structured_output(
+        self,
+        messages: list[Message],
+        schema: dict[str, Any],
+        *,
+        system: str = "",
+        name: str = "response",
+        strict: bool = False,
+    ) -> dict[str, Any]:
+        """Schema-shaped reply (see ``StructuredOutputProvider``).
+
+        Uses the SDK's native JSON-schema response format where the model
+        offers one (OpenAI, Gemini, catalogued Claude models), LangChain's
+        forced function call for other first-party models, and the generic
+        tool-call fallback on third-party OpenAI-compatible servers.
+        """
+        from dataclaw.providers.llm.structured import (
+            check_required,
+            titled_schema,
+            tool_call_structured_output,
+        )
+
+        if self._compat:
+            return await tool_call_structured_output(self, messages, schema, system=system, name=name)
+
+        family = _provider_family(self._model)
+        info = lookup_model_info(_model_id(self._model))
+        if info is not None:
+            native = info.supports_structured_output
+        else:
+            native = family in (OPENAI, GEMINI)
+        kwargs: dict[str, Any] = {"method": "json_schema" if native else "function_calling"}
+        if family == OPENAI:
+            kwargs["strict"] = strict
+        runnable = self._model.with_structured_output(titled_schema(schema, name), **kwargs)
+        try:
+            result = await runnable.ainvoke(self._lc_messages(messages, system, ""))
+        except OutputParserException as exc:
+            raise StructuredOutputError(f"The model's reply did not match the schema: {exc}") from exc
+        if result is None:
+            raise StructuredOutputError("The model returned no structured reply")
+        return check_required(result, schema)
 
     def _remember_turn(self, ai_message: AIMessage, call_ids: list[str]) -> None:
         state = _TurnState(
@@ -221,13 +293,16 @@ def _provider_tag(model: Any) -> str:
 
 
 def _provider_family(model: Any) -> str | None:
-    name = type(model).__name__
-    if name in ("ChatOpenAI", "AzureChatOpenAI"):
-        return OPENAI
-    if name == "ChatAnthropic":
-        return ANTHROPIC
-    if name in ("ChatGoogleGenerativeAI", "ChatVertexAI"):
-        return GEMINI
+    # Walk the MRO so thin subclasses (the OpenAI-compatible client) keep
+    # their SDK's family without importing any SDK here.
+    for cls in type(model).__mro__:
+        name = cls.__name__
+        if name in ("ChatOpenAI", "AzureChatOpenAI"):
+            return OPENAI
+        if name == "ChatAnthropic":
+            return ANTHROPIC
+        if name in ("ChatGoogleGenerativeAI", "ChatVertexAI"):
+            return GEMINI
     return None
 
 
@@ -265,26 +340,34 @@ def _native_request_kwargs(
     model: Any,
     reasoning_effort: str | None,
     text_verbosity: str | None,
+    *,
+    compat: bool = False,
 ) -> dict[str, Any]:
     """Native bind kwargs for the optional per-turn knobs this model accepts.
 
     Callers pass these knobs opportunistically (the plans plugin raises
     effort, the compactor lowers verbosity); a model that does not implement
-    one fails the whole request, so unsupported knobs are dropped.
+    one fails the whole request, so unsupported knobs are dropped and effort
+    values the model lacks map to the nearest one it offers.
     """
     family = _provider_family(model)
     model_id = _model_id(model)
     kwargs: dict[str, Any] = {}
     if reasoning_effort:
-        if family and supports_reasoning_effort(family, model_id):
-            kwargs.update(_native_reasoning_kwargs(model, reasoning_effort))
+        effort = (
+            resolve_reasoning_effort(family, model_id, reasoning_effort, catalog_only=compat)
+            if family
+            else None
+        )
+        if effort:
+            kwargs.update(_native_reasoning_kwargs(model, effort))
         else:
             logger.debug(
                 "Skipping reasoning_effort=%r: not supported by %s model %r",
                 reasoning_effort, type(model).__name__, model_id,
             )
     if text_verbosity:
-        if family == OPENAI and supports_text_verbosity(family, model_id):
+        if family == OPENAI and not compat and supports_text_verbosity(family, model_id):
             kwargs["verbosity"] = text_verbosity
         else:
             logger.debug(

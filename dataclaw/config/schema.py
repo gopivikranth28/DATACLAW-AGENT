@@ -7,36 +7,33 @@ from typing import Any
 from pydantic import BaseModel
 
 
-class AnthropicConfig(BaseModel):
-    api_key: str = ""
-    model: str = "claude-sonnet-4-20250514"
+class LLMBackendConfig(BaseModel):
+    """Settings for one LLM backend under ``llm.backends.<id>``.
 
+    Empty values fall back to env vars, the backend's preset, and the
+    registry defaults (dataclaw.providers.llm.registry). Backend-specific
+    keys (codex ``auth_mode``/``codex_bin``) are kept as extra fields.
+    """
 
-class OpenAIConfig(BaseModel):
     api_key: str = ""
-    model: str = "gpt-4o"
     base_url: str = ""
+    model: str = ""
+    headers: dict[str, str] = {}
+    preset: str = ""
+    reasoning_effort: str = ""
+    api: str = ""  # openai only: "" (auto) | "responses" | "chat_completions"
 
-
-class GeminiConfig(BaseModel):
-    api_key: str = ""
-    model: str = "gemini-2.5-flash"
-
-
-class CodexConfig(BaseModel):
-    model: str = "gpt-5.5"
-    api_key: str = ""
-    auth_mode: str = "default"  # "default" | "api_key"
+    model_config = {"extra": "allow"}
 
 
 class LLMConfig(BaseModel):
     # DataClaw-owned utility model. The selected agent runtime is configured
-    # separately under agent.runtime.
-    backend: str = "codex"  # anthropic | openai | gemini | codex
-    anthropic: AnthropicConfig = AnthropicConfig()
-    openai: OpenAIConfig = OpenAIConfig()
-    gemini: GeminiConfig = GeminiConfig()
-    codex: CodexConfig = CodexConfig()
+    # separately under agent.runtime. Any registered LLM backend id
+    # (anthropic | openai | gemini | codex | openai_compatible | ...).
+    backend: str = "codex"
+    # Per-backend settings. Legacy llm.anthropic|openai|gemini|codex
+    # sections are moved here by config.migrations on startup.
+    backends: dict[str, LLMBackendConfig] = {}
 
 
 class AgentConfig(BaseModel):

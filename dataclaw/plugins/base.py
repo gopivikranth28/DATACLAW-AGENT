@@ -37,6 +37,14 @@ class PluginContext:
         """Shortcut to providers.sub_agent_hooks."""
         return self.providers.sub_agent_hooks
 
+    def register_llm_backend(self, spec: Any) -> None:
+        """Add an LLM backend (``dataclaw.providers.llm.registry.LLMBackendSpec``).
+
+        It becomes selectable as the utility model, appears in the settings
+        UI with its config fields, and can be built by ``llm_from_config``.
+        """
+        self.providers.register_llm_backend(spec)
+
     def include_api_router(self, router: Any, **kwargs: Any) -> None:
         """Register a router under the /api prefix. Plugins should use this instead of app.include_router()."""
         prefix = kwargs.pop("prefix", "")

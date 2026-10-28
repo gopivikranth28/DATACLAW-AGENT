@@ -1,0 +1,126 @@
+{
+  "_comment": [
+    "Model capability metadata keyed by model-id prefix (longest prefix wins).",
+    "Ids are matched lower-cased on their last path segment, so gateway ids",
+    "such as 'openai/gpt-6.1-sol' resolve too. Provider /models endpoints",
+    "rarely report these limits, so the catalog enriches them from here.",
+    "Unlisted models fall back to the prefix rules in capabilities.py.",
+    "Sources: Anthropic, OpenAI and Google model docs (Oct 2026). The Gemini",
+    "thinking_level lists mirror the Gemini 3 pro/flash split. Third-party",
+    "ids (xAI, DeepSeek, Mistral) are preset suggestions, not verified here."
+  ],
+  "models": {
+    "claude-opus-5": {
+      "context_window": 1000000,
+      "max_output": 128000,
+      "supports_tools": true,
+      "supports_reasoning": true,
+      "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
+      "supports_vision": true,
+      "supports_structured_output": true
+    },
+    "claude-sonnet-5": {
+      "context_window": 1000000,
+      "max_output": 128000,
+      "supports_tools": true,
+      "supports_reasoning": true,
+      "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
+      "supports_vision": true,
+      "supports_structured_output": true
+    },
+    "claude-haiku-5": {
+      "context_window": 1000000,
+      "max_output": 128000,
+      "supports_tools": true,
+      "supports_reasoning": true,
+      "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
+      "supports_vision": true,
+      "supports_structured_output": true
+    },
+    "claude-fable-5": {
+      "context_window": 1000000,
+      "max_output": 128000,
+      "supports_tools": true,
+      "supports_reasoning": true,
+      "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
+      "supports_vision": true,
+      "supports_structured_output": true
+    },
+    "gpt-6-astra": {
+      "context_window": 1050000,
+      "max_output": 128000,
+      "supports_tools": true,
+      "supports_reasoning": true,
+      "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
+      "supports_vision": true,
+      "supports_structured_output": true
+    },
+    "gpt-6.1-sol": {
+      "context_window": 1050000,
+      "max_output": 128000,
+      "supports_tools": true,
+      "supports_reasoning": true,
+      "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
+      "supports_vision": true,
+      "supports_structured_output": true
+    },
+    "gpt-6.1-terra": {
+      "context_window": 1050000,
+      "max_output": 128000,
+      "supports_tools": true,
+      "supports_reasoning": true,
+      "reasoning_efforts": ["none", "low", "medium", "high", "xhigh", "max"],
+      "supports_vision": true,
+      "supports_structured_output": true
+    },
+    "gpt-6-luna": {
+      "context_window": 1050000,
+      "max_output": 128000,
+      "supports_tools": true,
+      "supports_reasoning": true,
+      "reasoning_efforts": ["none", "low", "medium", "high", "xhigh", "max"],
+      "supports_vision": true,
+      "supports_structured_output": true
+    },
+    "gpt-4.1": {
+      "context_window": 1047576,
+      "max_output": 32768,
+      "supports_tools": true,
+      "supports_reasoning": false,
+      "reasoning_efforts": [],
+      "supports_vision": true,
+      "supports_structured_output": true
+    },
+    "gpt-4o": {
+      "context_window": 128000,
+      "max_output": 16384,
+      "supports_tools": true,
+      "supports_reasoning": false,
+      "reasoning_efforts": [],
+      "supports_vision": true,
+      "supports_structured_output": true
+    },
+    "gemini-4-argon": {
+      "context_window": 1000000,
+      "supports_tools": true,
+      "supports_reasoning": true,
+      "reasoning_efforts": ["low", "high"],
+      "supports_vision": true,
+      "supports_structured_output": true
+    },
+    "gemini-3.8-flash": {
+      "context_window": 1000000,
+      "supports_tools": true,
+      "supports_reasoning": true,
+      "reasoning_efforts": ["minimal", "low", "medium", "high"],
+      "supports_vision": true,
+      "supports_structured_output": true
+    },
+    "grok-4.7": {
+      "context_window": 500000,
+      "supports_tools": true,
+      "supports_reasoning": false,
+      "reasoning_efforts": []
+    }
+  }
+}

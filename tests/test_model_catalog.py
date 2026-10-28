@@ -11,6 +11,20 @@ import pytest
 from fastapi import HTTPException
 
 from dataclaw.api.routers import models
+from dataclaw.config.resolver import invalidate_cache
+from dataclaw.providers.llm import model_listing
+
+
+@pytest.fixture(autouse=True)
+def _no_provider_env(monkeypatch: pytest.MonkeyPatch):
+    for name in (
+        "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "GOOGLE_API_KEY",
+        "CODEX_AUTH_MODE", "OPENROUTER_API_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    invalidate_cache()
+    yield
+    invalidate_cache()
 
 
 class _FakeAsyncClient:
@@ -31,7 +45,7 @@ class _FakeAsyncClient:
 
 def _install_fake_client(monkeypatch: pytest.MonkeyPatch, responses: list[httpx.Response]) -> _FakeAsyncClient:
     client = _FakeAsyncClient(responses)
-    monkeypatch.setattr(models.httpx, "AsyncClient", lambda **_kwargs: client)
+    monkeypatch.setattr(model_listing.httpx, "AsyncClient", lambda **_kwargs: client)
     return client
 
 
@@ -221,13 +235,17 @@ async def test_codex_catalog_ignores_new_metadata_and_paginates(
     fake_sdk.AppServerConfig = _FakeAppServerConfig
     fake_sdk.AppServerClient = _FakeAppServerClient
     monkeypatch.setitem(sys.modules, "codex_app_server", fake_sdk)
-    monkeypatch.setattr(models, "resolve", lambda *_args: "")
-    monkeypatch.setattr(models.shutil, "which", lambda _name: "/usr/local/bin/codex")
+    monkeypatch.setattr(model_listing, "resolve", lambda *_args: "")
+    monkeypatch.setattr(model_listing.shutil, "which", lambda _name: "/usr/local/bin/codex")
 
-    result = await models._fetch_codex_oauth_models()
+    result = await model_listing.fetch_codex_oauth_models()
 
     assert [item.id for item in result] == ["gpt-new", "gpt-fallback-id"]
     assert result[0].label == "GPT New (gpt-new)"
+    # Codex reports its efforts; they are passed through as reported.
+    assert result[0].supports_reasoning is True
+    assert result[0].reasoning_efforts == ["max", "ultra"]
+    assert result[0].transport == "codex"
     assert calls == [
         ("model/list", {"includeHidden": False}),
         ("model/list", {"includeHidden": False, "cursor": "page-2"}),
@@ -240,3 +258,66 @@ async def test_unsupported_backend_is_rejected():
         await models._discover_models(models.ModelCatalogRequest(backend="mock"))
 
     assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_catalog_entries_carry_capability_metadata(monkeypatch: pytest.MonkeyPatch):
+    _install_fake_client(
+        monkeypatch,
+        [httpx.Response(200, json={"data": [{"id": "claude-opus-5-5", "display_name": "Claude Opus 5.5"}], "has_more": False})],
+    )
+
+    result = await models._discover_models(models.ModelCatalogRequest(backend="anthropic", api_key="k"))
+
+    opus = result.models[0]
+    assert opus.context_window == 1_000_000
+    assert opus.max_output == 128_000
+    assert opus.supports_reasoning is True
+    assert opus.reasoning_efforts == ["low", "medium", "high", "xhigh", "max"]
+    assert opus.transport == "anthropic"
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_preset_lists_keyless_endpoint(monkeypatch: pytest.MonkeyPatch):
+    client = _install_fake_client(
+        monkeypatch,
+        [httpx.Response(200, json={"data": [{"id": "qwen3:8b"}, {"id": "llama4", "context_length": 131072}]})],
+    )
+
+    result = await models._discover_models(
+        models.ModelCatalogRequest(backend="openai_compatible", preset="ollama", base_url="")
+    )
+
+    assert result.authenticated is True
+    assert client.calls[0]["url"] == "http://localhost:11434/v1/models"
+    assert "Authorization" not in client.calls[0]["headers"]
+    llama = next(m for m in result.models if m.id == "llama4")
+    assert llama.context_window == 131072
+    assert llama.supports_reasoning is False
+    assert llama.transport == "openai_chat"
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_hosted_preset_needs_key_and_sends_headers(monkeypatch: pytest.MonkeyPatch):
+    missing = await models._discover_models(
+        models.ModelCatalogRequest(backend="openai_compatible", preset="openrouter")
+    )
+    assert missing.authenticated is False
+    assert "API key" in (missing.message or "")
+
+    client = _install_fake_client(monkeypatch, [httpx.Response(200, json={"data": []})])
+    await models._discover_models(
+        models.ModelCatalogRequest(backend="openai_compatible", preset="openrouter", api_key="or-key")
+    )
+    headers = client.calls[0]["headers"]
+    assert client.calls[0]["url"] == "https://openrouter.ai/api/v1/models"
+    assert headers["Authorization"] == "Bearer or-key"
+    assert headers["X-Title"] == "DataClaw"
+
+
+@pytest.mark.asyncio
+async def test_custom_endpoint_without_url_asks_for_one():
+    result = await models._discover_models(models.ModelCatalogRequest(backend="open_responses"))
+
+    assert result.authenticated is False
+    assert "base URL" in (result.message or "")

@@ -17,7 +17,7 @@ test('lists authenticated backend models in a selector', async ({ page }) => {
       agent: { runtime: 'dataclaw' },
       llm: {
         backend: 'openai',
-        openai: { api_key: 'sk-test...1234', model: 'gpt-4o', base_url: '' },
+        backends: { openai: { api_key: 'sk-test...1234', model: 'gpt-4o', base_url: '' } },
       },
       app: {},
       plugins: {},
@@ -54,6 +54,77 @@ test('lists authenticated backend models in a selector', async ({ page }) => {
   expect(modelRequests[0]).toMatchObject({ backend: 'openai', base_url: '' })
   expect(modelRequests[0]).not.toHaveProperty('api_key')
   await expect(agentPanel.locator('input[placeholder="gpt-4o"]')).toHaveCount(0)
+})
+
+test('shows reasoning effort only for models that support it', async ({ page }) => {
+  await page.route('**/api/plugins', route => route.fulfill({ contentType: 'application/json', body: '[]' }))
+  await page.route('**/api/providers', route => route.fulfill({ contentType: 'application/json', body: '[]' }))
+  await page.route('**/api/config', route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({
+      agent: { runtime: 'dataclaw' },
+      llm: { backend: 'anthropic', backends: { anthropic: { api_key: 'sk-ant...1234', model: 'claude-opus-5-5' } } },
+      app: {},
+      plugins: {},
+    }),
+  }))
+  await page.route('**/api/models', route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({
+      backend: 'anthropic',
+      authenticated: true,
+      models: [
+        { id: 'claude-opus-5-5', label: 'Claude Opus 5.5', supports_reasoning: true, reasoning_efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
+        { id: 'claude-legacy', label: 'Claude Legacy', supports_reasoning: false, reasoning_efforts: [] },
+      ],
+    }),
+  }))
+
+  await page.goto('/config')
+
+  const utilitySection = page.getByRole('heading', { name: 'Configure the DataClaw utility model' }).locator('xpath=ancestor::section')
+  await expect(utilitySection.getByText('Reasoning effort', { exact: true })).toBeVisible()
+  const selects = utilitySection.locator('.ant-select')
+  await selects.nth(2).click()
+  await page.locator('.ant-select-dropdown:visible').getByText('xhigh', { exact: true }).click()
+  await expect(selects.nth(2)).toContainText('xhigh')
+
+  await selects.nth(1).click()
+  await page.locator('.ant-select-dropdown:visible').getByText('Claude Legacy', { exact: true }).click()
+  await expect(utilitySection.getByText('Reasoning effort', { exact: true })).toHaveCount(0)
+})
+
+test('renders OpenAI-compatible presets from the backend registry', async ({ page }) => {
+  const modelRequests: Record<string, unknown>[] = []
+  await page.route('**/api/plugins', route => route.fulfill({ contentType: 'application/json', body: '[]' }))
+  await page.route('**/api/providers', route => route.fulfill({ contentType: 'application/json', body: '[]' }))
+  await page.route('**/api/config', route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({
+      agent: { runtime: 'dataclaw' },
+      llm: { backend: 'openai_compatible', backends: { openai_compatible: { preset: 'vllm', model: '' } } },
+      app: {},
+      plugins: {},
+    }),
+  }))
+  await page.route('**/api/models', async route => {
+    modelRequests.push(route.request().postDataJSON())
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ backend: 'openai_compatible', authenticated: true, models: [{ id: 'qwen3', label: 'qwen3' }] }),
+    })
+  })
+
+  await page.goto('/config')
+
+  const utilitySection = page.getByRole('heading', { name: 'Configure the DataClaw utility model' }).locator('xpath=ancestor::section')
+  await expect(utilitySection.locator('.ant-select').first()).toContainText('OpenAI-compatible endpoint')
+  await expect(utilitySection.getByText('Preset', { exact: true })).toBeVisible()
+  await expect(utilitySection.locator('input[placeholder="http://localhost:8001/v1"]')).toBeVisible()
+  await expect(utilitySection.getByText(/--port 8001/)).toBeVisible()
+  await expect(utilitySection.getByText('API key (optional)', { exact: true })).toBeVisible()
+  await expect.poll(() => modelRequests.length).toBeGreaterThan(0)
+  expect(modelRequests[0]).toMatchObject({ backend: 'openai_compatible', preset: 'vllm', base_url: '' })
 })
 
 test('uses three tabs and keeps related agent integrations together', async ({ page }) => {
@@ -93,7 +164,7 @@ test('uses three tabs and keeps related agent integrations together', async ({ p
     contentType: 'application/json',
     body: JSON.stringify({
       agent: { runtime: 'openclaw' },
-      llm: { backend: 'codex', codex: { auth_mode: 'default', model: 'gpt-5.5' } },
+      llm: { backend: 'codex', backends: { codex: { auth_mode: 'default', model: 'gpt-5.5' } } },
       app: { max_turns: 30 },
       compaction: { backend: 'llm_summarizer', max_messages: 30, keep_recent: 8, max_tokens: 100000 },
       memory: { backend: 'noop' },
@@ -175,8 +246,10 @@ test('shows CLI and authentication controls only for the selected external runti
       agent: { runtime: 'openclaw' },
       llm: {
         backend: 'codex',
-        openai: { model: '' },
-        codex: { auth_mode: 'api_key', api_key: '', model: 'gpt-5.5' },
+        backends: {
+          openai: { model: '' },
+          codex: { auth_mode: 'api_key', api_key: '', model: 'gpt-5.5' },
+        },
       },
       app: {},
       plugins: {
@@ -326,7 +399,7 @@ test('keeps changes as a draft and confirms navigation away', async ({ page }) =
   const patches: Record<string, unknown>[] = []
   const baseConfig = {
     agent: { runtime: 'dataclaw' },
-    llm: { backend: 'openai', openai: { api_key: 'sk-test...1234', model: 'gpt-4o', base_url: '' } },
+    llm: { backend: 'openai', backends: { openai: { api_key: 'sk-test...1234', model: 'gpt-4o', base_url: '' } } },
     app: { max_turns: 30, debug: false },
     compaction: { backend: 'noop', max_messages: 30, keep_recent: 8, max_tokens: 100000 },
     memory: { backend: 'noop' },

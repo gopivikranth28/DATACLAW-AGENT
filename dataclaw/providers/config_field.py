@@ -15,12 +15,13 @@ class ConfigField:
     """Describes a config field a provider needs, broadcast to the UI."""
 
     name: str
-    field_type: str  # "string" | "text" | "int" | "bool" | "select" | "multiselect"
+    field_type: str  # "string" | "secret" | "text" | "int" | "bool" | "select" | "multiselect" | "headers"
     label: str
     description: str = ""
     required: bool = False
     default: Any = None
     options: list[dict[str, str]] | None = None  # for select/multiselect
+    env: str | None = None  # environment variable that overrides the saved value
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -34,4 +35,6 @@ class ConfigField:
             d["default"] = self.default
         if self.options is not None:
             d["options"] = self.options
+        if self.env is not None:
+            d["env"] = self.env
         return d

@@ -10,6 +10,8 @@ from dataclaw.providers.llm.provider import (
     UsageEvent,
     ErrorEvent,
     LLMStreamError,
+    StructuredOutputError,
+    StructuredOutputProvider,
 )
 
 __all__ = [
@@ -22,4 +24,6 @@ __all__ = [
     "UsageEvent",
     "ErrorEvent",
     "LLMStreamError",
+    "StructuredOutputError",
+    "StructuredOutputProvider",
 ]

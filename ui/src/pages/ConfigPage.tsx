@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { useBeforeUnload, useBlocker } from 'react-router-dom'
-import { Alert, Button, Divider, Drawer, Input, InputNumber, Modal, Select, Space, Switch, Tabs, Tag, message } from 'antd'
+import { Alert, AutoComplete, Button, Divider, Drawer, Input, InputNumber, Modal, Select, Space, Switch, Tabs, Tag, message } from 'antd'
 import { CheckCircleOutlined, CloseCircleOutlined, CodeOutlined, DownloadOutlined, LoginOutlined, LoadingOutlined, ReloadOutlined, SaveOutlined, SettingOutlined, UndoOutlined } from '@ant-design/icons'
 import { API } from '../api'
 import WebTerminal from '../components/WebTerminal'
@@ -21,6 +21,34 @@ interface ConfigFieldDef {
   description?: string
   default?: any
   options?: { value: string; label: string }[]
+  required?: boolean
+  env?: string
+}
+
+interface LLMPresetDef {
+  id: string
+  label: string
+  base_url: string
+  default_model: string
+  requires_api_key: boolean
+  api_key_env?: string | null
+  headers: Record<string, string>
+  notes: string
+}
+
+// One entry of GET /api/providers/llm-backends (the LLM backend registry).
+interface LLMBackendDef {
+  id: string
+  label: string
+  vendor: string
+  description: string
+  transport: string
+  requires_api_key: boolean
+  default_model: string
+  utility_default_model: string
+  supports_model_listing: boolean
+  fields: ConfigFieldDef[]
+  presets: LLMPresetDef[]
 }
 
 interface ProviderInfo {
@@ -40,6 +68,10 @@ interface ProviderInfo {
 interface ModelOption {
   id: string
   label: string
+  context_window?: number | null
+  max_output?: number | null
+  supports_reasoning?: boolean
+  reasoning_efforts?: string[]
 }
 
 interface ModelCatalogResponse {
@@ -82,12 +114,11 @@ const AGENT_RUNTIME_OPTIONS = [
   { value: 'mock', label: 'Mock (testing)', shortLabel: 'Mock agent' },
 ]
 
-const UTILITY_BACKEND_OPTIONS = [
-  { value: 'codex', label: 'OpenAI Codex' },
-  { value: 'openai', label: 'OpenAI API' },
-  { value: 'anthropic', label: 'Anthropic Claude' },
-  { value: 'gemini', label: 'Google Gemini' },
-]
+// Values of llm.backend that name an agent runtime (legacy configs), not a
+// utility model backend. Used only until the backend list has loaded.
+const RUNTIME_BACKEND_VALUES = ['openclaw', 'hermes', 'mock']
+// Backend fields rendered by dedicated controls rather than generically.
+const SPECIAL_BACKEND_FIELDS = ['model', 'reasoning_effort']
 
 const HISTORY_STRATEGY_OPTIONS = [
   { value: 'noop', label: 'Keep all history' },
@@ -120,6 +151,10 @@ function configForSave(value: any): any {
   delete persisted._active_agent
   delete persisted._runtime_status
   return persisted
+}
+
+function isMaskedSecret(value: string): boolean {
+  return value === '***' || value.includes('...')
 }
 
 function shellQuote(value: string): string {
@@ -157,6 +192,8 @@ export default function ConfigPage({ plugins }: Props) {
   const [savedConfig, setSavedConfig] = useState<any | null>(null)
   const [saving, setSaving] = useState(false)
   const [providers, setProviders] = useState<ProviderInfo[]>([])
+  const [llmBackends, setLlmBackends] = useState<LLMBackendDef[]>([])
+  const [llmBackendsLoaded, setLlmBackendsLoaded] = useState(false)
   const [availableModels, setAvailableModels] = useState<ModelOption[]>([])
   const [modelsLoading, setModelsLoading] = useState(false)
   const [modelsAuthenticated, setModelsAuthenticated] = useState<boolean | null>(null)
@@ -181,6 +218,11 @@ export default function ConfigPage({ plugins }: Props) {
       .then(r => r.json())
       .then(setProviders)
       .catch(() => {})
+    fetch(`${API}/providers/llm-backends`)
+      .then(r => (r.ok ? r.json() : Promise.reject(new Error('Failed to load LLM backends'))))
+      .then((data: LLMBackendDef[]) => setLlmBackends(Array.isArray(data) ? data : []))
+      .catch(() => message.error('Failed to load LLM backends'))
+      .finally(() => setLlmBackendsLoaded(true))
   }, [])
 
   const save = async (): Promise<boolean> => {
@@ -247,18 +289,47 @@ export default function ConfigPage({ plugins }: Props) {
   const legacyBackend = llm.backend || 'openclaw'
   const agentBackend = config.agent?.runtime
     || (['openclaw', 'hermes', 'mock'].includes(legacyBackend) ? legacyBackend : 'dataclaw')
-  const utilityBackend = ['anthropic', 'openai', 'gemini', 'codex'].includes(legacyBackend)
+  const backendIds = llmBackends.map(backend => backend.id)
+  const isUtilityBackendId = (value: unknown): value is string => (
+    typeof value === 'string' && !!value
+    && (backendIds.length ? backendIds.includes(value) : !RUNTIME_BACKEND_VALUES.includes(value))
+  )
+  const utilityBackend: string = isUtilityBackendId(legacyBackend)
     ? legacyBackend
     : hermesConfig.utility_backend || 'codex'
-  const backendConfig = llm[utilityBackend] || {}
+  const backendSpec = llmBackends.find(backend => backend.id === utilityBackend)
+  const backendConfig = llm.backends?.[utilityBackend] || {}
+  const backendPreset = backendSpec?.presets.find(preset => preset.id === backendConfig.preset)
+  // The registry default applies when no model is saved: the primary model
+  // when DataClaw runs the agent loop, the cheaper utility model otherwise.
+  const defaultModel = backendPreset?.default_model
+    || (agentBackend === 'dataclaw' || agentBackend === 'mock'
+      ? backendSpec?.default_model
+      : backendSpec?.utility_default_model)
+    || ''
+  const effectiveModel: string = backendConfig.model || defaultModel
+  const utilityKeyRequired = backendPreset ? backendPreset.requires_api_key : backendSpec?.requires_api_key ?? true
+
+  // Request body for POST /api/models: the backend's unsaved settings, with
+  // masked secrets left out so the server uses the saved ones.
+  function catalogPayload(backend: string): Record<string, unknown> {
+    const spec = llmBackends.find(item => item.id === backend)
+    const selectedConfig = config.llm?.backends?.[backend] || {}
+    const payload: Record<string, unknown> = { backend }
+    const apiKey = String(selectedConfig.api_key || '')
+    if (apiKey && !isMaskedSecret(apiKey)) payload.api_key = apiKey
+    for (const field of spec?.fields || []) {
+      if (field.name === 'base_url') payload.base_url = selectedConfig.base_url || ''
+      else if (['auth_mode', 'preset', 'api'].includes(field.name)) payload[field.name] = selectedConfig[field.name] || field.default || ''
+      else if (field.name === 'headers' && selectedConfig.headers && Object.keys(selectedConfig.headers).length) payload.headers = selectedConfig.headers
+    }
+    return payload
+  }
 
   async function loadModels() {
-    const selectedBackend = String(
-      ['anthropic', 'openai', 'gemini', 'codex'].includes(config.llm?.backend)
-        ? config.llm.backend
-        : config.plugins?.hermes?.utility_backend || 'codex',
-    )
-    if (!['anthropic', 'openai', 'gemini', 'codex'].includes(selectedBackend)) {
+    const selectedBackend = utilityBackend
+    const spec = llmBackends.find(item => item.id === selectedBackend)
+    if (!isUtilityBackendId(selectedBackend) || (spec && !spec.supports_model_listing)) {
       setAvailableModels([])
       setModelsAuthenticated(null)
       setModelsMessage(null)
@@ -266,12 +337,7 @@ export default function ConfigPage({ plugins }: Props) {
       return
     }
 
-    const selectedConfig = config.llm?.[selectedBackend] || {}
-    const payload: Record<string, string> = { backend: selectedBackend }
-    const apiKey = selectedConfig.api_key || ''
-    if (apiKey && apiKey !== '***' && !apiKey.includes('...')) payload.api_key = apiKey
-    if (selectedBackend === 'openai') payload.base_url = selectedConfig.base_url || ''
-    if (selectedBackend === 'codex') payload.auth_mode = selectedConfig.auth_mode || 'default'
+    const payload = catalogPayload(selectedBackend)
 
     const requestId = ++modelRequestRef.current
     setModelsLoading(true)
@@ -302,24 +368,17 @@ export default function ConfigPage({ plugins }: Props) {
   }
 
   async function checkUtilityAccess(): Promise<boolean> {
-    const selectedBackend = String(
-      ['anthropic', 'openai', 'gemini', 'codex'].includes(config.llm?.backend)
-        ? config.llm.backend
-        : config.plugins?.hermes?.utility_backend || '',
-    )
+    const selectedBackend = isUtilityBackendId(config.llm?.backend)
+      ? String(config.llm.backend)
+      : String(config.plugins?.hermes?.utility_backend || '')
     const requestId = ++utilityRequestRef.current
-    if (!['anthropic', 'openai', 'gemini', 'codex'].includes(selectedBackend)) {
+    if (!isUtilityBackendId(selectedBackend)) {
       setUtilityAuthenticated(false)
       setUtilityAccessMessage('Choose a utility backend first.')
       return false
     }
 
-    const selectedConfig = config.llm?.[selectedBackend] || {}
-    const payload: Record<string, string> = { backend: selectedBackend }
-    const apiKey = String(selectedConfig.api_key || '')
-    if (apiKey && apiKey !== '***' && !apiKey.includes('...')) payload.api_key = apiKey
-    if (selectedBackend === 'openai') payload.base_url = selectedConfig.base_url || ''
-    if (selectedBackend === 'codex') payload.auth_mode = selectedConfig.auth_mode || 'default'
+    const payload = catalogPayload(selectedBackend)
 
     setUtilityAccessLoading(true)
     setUtilityAccessMessage(null)
@@ -351,12 +410,14 @@ export default function ConfigPage({ plugins }: Props) {
   }
 
   useEffect(() => {
-    if (!config.llm) return
+    // Wait for the backend list so the first request carries each backend's
+    // settings (endpoint, preset, sign-in method).
+    if (!config.llm || !llmBackendsLoaded) return
     loadModels()
     // Credentials are deliberately omitted: API-key fields trigger loading on
     // blur/Enter so we do not send a request for every character typed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [utilityBackend, backendConfig.auth_mode])
+  }, [utilityBackend, backendConfig.auth_mode, backendConfig.preset, llmBackendsLoaded])
 
   const updateBackendConfig = (field: string, value: any) => {
     setConfig((prev: any) => ({
@@ -364,9 +425,12 @@ export default function ConfigPage({ plugins }: Props) {
       llm: {
         ...prev.llm,
         backend: utilityBackend,
-        [utilityBackend]: {
-          ...(prev.llm?.[utilityBackend] || {}),
-          [field]: value,
+        backends: {
+          ...(prev.llm?.backends || {}),
+          [utilityBackend]: {
+            ...(prev.llm?.backends?.[utilityBackend] || {}),
+            [field]: value,
+          },
         },
       },
     }))
@@ -865,7 +929,7 @@ export default function ConfigPage({ plugins }: Props) {
     ? hermesConfig.model || 'Profile default model'
     : agentBackend === 'openclaw'
       ? 'OpenClaw profile model'
-      : backendConfig.model || 'No model selected'
+      : effectiveModel || 'No model selected'
   const hermesCli = hermesConfig.cli_path || 'hermes'
   const hermesProfile = hermesConfig.profile || 'dataclaw'
   const hermesModelCommand = `${shellQuote(hermesCli)} -p ${shellQuote(hermesProfile)} model`
@@ -885,19 +949,90 @@ export default function ConfigPage({ plugins }: Props) {
       />
     )
   }
-  const utilityBackendLabel = UTILITY_BACKEND_OPTIONS.find(
-    option => option.value === utilityBackend,
-  )?.label || utilityBackend
+  const utilityBackendOptions = llmBackends.map(backend => ({ value: backend.id, label: backend.label }))
+  const utilityBackendLabel = backendSpec?.label || utilityBackend
   const utilityProviderConfig = backendConfig
-  const utilityCodexAuthMode = llm.codex?.auth_mode || 'default'
+  const utilityCodexAuthMode = llm.backends?.codex?.auth_mode || 'default'
   const utilityCodexApiKeyMissing = utilityBackend === 'codex'
     && utilityCodexAuthMode === 'api_key'
     && !String(utilityProviderConfig.api_key || '').trim()
     && utilityAuthenticated !== true
   const utilityApiKeyMissing = !!utilityBackend
-    && (utilityBackend !== 'codex' || utilityCodexAuthMode === 'api_key')
+    && (utilityBackend === 'codex' ? utilityCodexAuthMode === 'api_key' : utilityKeyRequired)
     && !String(utilityProviderConfig.api_key || '').trim()
     && utilityAuthenticated !== true
+  const selectedModelInfo = availableModels.find(model => model.id === effectiveModel)
+  const modelEfforts = selectedModelInfo?.supports_reasoning ? selectedModelInfo.reasoning_efforts || [] : []
+  const modelAllowsCustomId = !!backendSpec?.fields.some(field => field.name === 'base_url' && field.required)
+
+  const renderBackendField = (field: ConfigFieldDef) => {
+    if (SPECIAL_BACKEND_FIELDS.includes(field.name)) return null
+    // The OpenAI API choice only matters for a custom endpoint.
+    if (field.name === 'api' && !backendConfig.base_url) return null
+    const envHint = [field.env, field.name === 'api_key' ? backendPreset?.api_key_env : null]
+      .filter(Boolean)
+      .map(env => `Or set ${env}.`)
+      .join(' ')
+    const description = [field.description, envHint].filter(Boolean).join(' ')
+    if (field.field_type === 'secret') {
+      const isApiKey = field.name === 'api_key'
+      const label = isApiKey
+        ? (utilityKeyRequired ? `${utilityBackendLabel} API key` : 'API key (optional)')
+        : field.label
+      return (
+        <Field key={field.name} label={label} description={description || 'Stored securely and used by DataClaw in every runtime.'}>
+          <Input.Password
+            value={backendConfig[field.name] || ''}
+            onChange={event => updateBackendConfig(field.name, event.target.value)}
+            placeholder={isApiKey ? `Enter ${utilityBackendLabel} API key` : undefined}
+            autoComplete="new-password"
+            onBlur={loadModels}
+            onPressEnter={loadModels}
+          />
+        </Field>
+      )
+    }
+    if (field.field_type === 'select') {
+      return (
+        <Field key={field.name} label={field.label} description={description}>
+          <Select
+            value={backendConfig[field.name] ?? field.default ?? ''}
+            onChange={value => updateBackendConfig(field.name, value)}
+            style={{ width: '100%' }}
+            options={[
+              ...(field.options?.some(option => option.value === '') ? [] : [{ value: '', label: 'Automatic' }]),
+              ...(field.options || []),
+            ]}
+          />
+        </Field>
+      )
+    }
+    if (field.field_type === 'headers') {
+      return (
+        <Field key={field.name} label={field.label} description={description}>
+          <HeadersField
+            value={backendConfig.headers}
+            onChange={value => updateBackendConfig('headers', value)}
+            placeholder={Object.entries(backendPreset?.headers || {}).map(([name, value]) => `${name}: ${value}`).join('\n') || 'X-Custom-Header: value'}
+          />
+        </Field>
+      )
+    }
+    const placeholder = field.name === 'base_url'
+      ? backendPreset?.base_url || (utilityBackend === 'openai' ? 'https://api.openai.com/v1' : 'http://localhost:8001/v1')
+      : undefined
+    return (
+      <Field key={field.name} label={field.label} description={description}>
+        <Input
+          value={backendConfig[field.name] || ''}
+          onChange={event => updateBackendConfig(field.name, event.target.value)}
+          placeholder={placeholder}
+          onBlur={loadModels}
+          onPressEnter={loadModels}
+        />
+      </Field>
+    )
+  }
   const hermesHealthLabel = hermesHealth?.status === 'healthy'
     ? 'Connected'
     : hermesHealth?.status === 'configured_inactive'
@@ -946,7 +1081,7 @@ export default function ConfigPage({ plugins }: Props) {
             <Space size={6} wrap style={{ marginTop: 7 }}>
               <Tag>{runtimeLabel}</Tag>
               {agentBackend !== 'mock' && <Tag>{configuredModel}</Tag>}
-              <Tag>{`Utility: ${utilityBackendLabel}${backendConfig.model ? ` · ${backendConfig.model}` : ''}`}</Tag>
+              <Tag>{`Utility: ${utilityBackendLabel}${effectiveModel ? ` · ${effectiveModel}` : ''}`}</Tag>
               <Tag color={modelsAuthenticated === true ? 'success' : modelsAuthenticated === false ? 'error' : 'default'}>{authLabel}</Tag>
               {runtimeStatus.configured_runtime && (
                 <Tag color={runtimeStatus.last_selection_error ? 'error' : runtimeStatus.available ? 'success' : 'warning'}>
@@ -983,7 +1118,8 @@ export default function ConfigPage({ plugins }: Props) {
                       value={utilityBackend}
                       onChange={setUtilityBackend}
                       style={{ width: '100%' }}
-                      options={UTILITY_BACKEND_OPTIONS}
+                      options={utilityBackendOptions}
+                      loading={!llmBackendsLoaded}
                     />
                   </Field>
 
@@ -992,7 +1128,7 @@ export default function ConfigPage({ plugins }: Props) {
                       <Field label="Sign-in method">
                         <Select
                           value={utilityCodexAuthMode}
-                          onChange={value => updateByPath('llm.codex.auth_mode', value)}
+                          onChange={value => updateByPath('llm.backends.codex.auth_mode', value)}
                           style={{ width: '100%' }}
                           options={[
                             { value: 'default', label: 'OpenAI account (OAuth)' },
@@ -1039,27 +1175,12 @@ export default function ConfigPage({ plugins }: Props) {
                     </>
                   ) : (
                     <>
-                      <Field label={`${utilityBackendLabel} API key`} description="Stored securely and used by DataClaw in every runtime.">
-                        <Input.Password
-                          value={backendConfig.api_key || ''}
-                          onChange={event => updateBackendConfig('api_key', event.target.value)}
-                          placeholder={`Enter ${utilityBackendLabel} API key`}
-                          autoComplete="new-password"
-                          onBlur={loadModels}
-                          onPressEnter={loadModels}
-                        />
-                      </Field>
-                      {utilityBackend === 'openai' && (
-                        <Field label="API endpoint" description="Optional. Set only for an OpenAI-compatible proxy or hosted endpoint.">
-                          <Input
-                            value={backendConfig.base_url || ''}
-                            onChange={event => updateBackendConfig('base_url', event.target.value)}
-                            placeholder="https://api.openai.com/v1"
-                            onBlur={loadModels}
-                            onPressEnter={loadModels}
-                          />
-                        </Field>
+                      {backendSpec?.description && <div style={{ ...HELP_STYLE, marginBottom: 14 }}>{backendSpec.description}</div>}
+                      {llmBackendsLoaded && !backendSpec && (
+                        <Alert type="error" showIcon title={`Unknown LLM backend “${utilityBackend}”`} description="Choose a provider from the list." style={{ marginBottom: 14 }} />
                       )}
+                      {backendSpec?.fields.map(renderBackendField)}
+                      {backendPreset?.notes && <Alert type="info" showIcon title={backendPreset.notes} style={{ marginBottom: 14 }} />}
                     </>
                   )}
 
@@ -1072,7 +1193,19 @@ export default function ConfigPage({ plugins }: Props) {
                     statusMessage={modelsMessage}
                     error={modelsError}
                     onReload={loadModels}
+                    defaultModel={defaultModel}
+                    allowCustom={modelAllowsCustomId}
                   />
+                  {modelEfforts.length > 0 && (
+                    <Field label="Reasoning effort" description="Default thinking level for this model. DataClaw still raises or lowers it for specific turns, such as plan drafting or summaries.">
+                      <Select
+                        value={modelEfforts.includes(backendConfig.reasoning_effort) ? backendConfig.reasoning_effort : ''}
+                        onChange={value => updateBackendConfig('reasoning_effort', value)}
+                        style={{ width: '100%' }}
+                        options={[{ value: '', label: 'Model default' }, ...modelEfforts.map(effort => ({ value: effort, label: effort }))]}
+                      />
+                    </Field>
+                  )}
                   <Space wrap style={{ marginBottom: 14 }}>
                     <Button icon={<ReloadOutlined />} loading={utilityAccessLoading} onClick={() => void checkUtilityAccess()}>
                       Check utility access
@@ -1088,14 +1221,14 @@ export default function ConfigPage({ plugins }: Props) {
                       style={{ marginBottom: 14 }}
                     />
                   )}
-                  {!backendConfig.model && <Alert type="warning" showIcon title="Choose a DataClaw utility model" style={{ marginBottom: 14 }} />}
+                  {!effectiveModel && <Alert type="warning" showIcon title="Choose a DataClaw utility model" style={{ marginBottom: 14 }} />}
                   {utilityCodexApiKeyMissing && (
                     <Alert
                       type="error"
                       showIcon
                       title="DataClaw utility Codex is set to API-key sign-in"
                       description="Use Codex OAuth, or keep API-key mode and enter an OpenAI API key."
-                      action={<Button size="small" onClick={() => updateByPath('llm.codex.auth_mode', 'default')}>Use Codex OAuth</Button>}
+                      action={<Button size="small" onClick={() => updateByPath('llm.backends.codex.auth_mode', 'default')}>Use Codex OAuth</Button>}
                       style={{ marginBottom: 14 }}
                     />
                   )}
@@ -1113,7 +1246,7 @@ export default function ConfigPage({ plugins }: Props) {
                     <Select value={agentBackend} onChange={setAgentBackend} style={{ width: '100%' }} options={AGENT_RUNTIME_OPTIONS} />
                   </Field>
                   {agentBackend === 'dataclaw' && (
-                    <Alert type="info" showIcon title={`DataClaw will run the primary agent with ${utilityBackendLabel} · ${backendConfig.model || 'select a model above'}`} style={{ marginBottom: 14 }} />
+                    <Alert type="info" showIcon title={`DataClaw will run the primary agent with ${utilityBackendLabel} · ${effectiveModel || 'select a model above'}`} style={{ marginBottom: 14 }} />
                   )}
                   {agentBackend === 'mock' && <Alert type="warning" showIcon title="Testing runtime" description="Returns test responses without calling the configured utility model." style={{ marginBottom: 14 }} />}
                 </SettingsGroup>
@@ -1160,7 +1293,7 @@ export default function ConfigPage({ plugins }: Props) {
                                 ? (
                                     <Button
                                       size="small"
-                                      onClick={() => updateByPath('llm.codex.auth_mode', 'default')}
+                                      onClick={() => updateByPath('llm.backends.codex.auth_mode', 'default')}
                                     >
                                       Use Codex OAuth
                                     </Button>
@@ -1646,6 +1779,8 @@ function ModelSelector({
   statusMessage,
   error,
   onReload,
+  defaultModel = '',
+  allowCustom = false,
 }: {
   value: string
   onChange: (value: string) => void
@@ -1655,28 +1790,46 @@ function ModelSelector({
   statusMessage: string | null
   error: string | null
   onReload: () => void
+  defaultModel?: string
+  // Custom endpoints may not list every model they serve, so any id can be typed.
+  allowCustom?: boolean
 }) {
-  const configuredModelMissing = !!value && authenticated === true && !models.some(model => model.id === value)
+  const configuredModelMissing = !allowCustom && !!value && authenticated === true && !models.some(model => model.id === value)
   const helpText = error
     || statusMessage
     || (loading ? 'Loading models from the authenticated provider…' : null)
     || (authenticated && models.length === 0 ? 'The provider returned no available models.' : null)
+  const options = models.map(model => ({ value: model.id, label: model.label }))
+  const defaultPlaceholder = defaultModel ? `Default: ${defaultModel}` : 'Choose a model'
 
   return (
     <Field label="Model">
       <Space.Compact style={{ width: '100%' }}>
-        <Select
-          value={value || undefined}
-          onChange={onChange}
-          options={models.map(model => ({ value: model.id, label: model.label }))}
-          loading={loading}
-          disabled={authenticated !== true || models.length === 0}
-          placeholder={loading ? 'Loading models…' : 'Authenticate to choose a model'}
-          showSearch
-          optionFilterProp="label"
-          style={{ width: '100%' }}
-          notFoundContent={loading ? <LoadingOutlined /> : 'No models available'}
-        />
+        {allowCustom ? (
+          <AutoComplete
+            value={value || undefined}
+            onChange={next => onChange(next || '')}
+            options={options}
+            placeholder={defaultModel ? defaultPlaceholder : 'Model id, e.g. qwen3:8b'}
+            filterOption={(input, option) => String(option?.value || '').toLowerCase().includes(input.toLowerCase())}
+            allowClear
+            style={{ width: '100%' }}
+          />
+        ) : (
+          <Select
+            value={value || undefined}
+            onChange={next => onChange(next || '')}
+            options={options}
+            loading={loading}
+            disabled={authenticated !== true || models.length === 0}
+            placeholder={loading ? 'Loading models…' : authenticated === true ? defaultPlaceholder : 'Authenticate to choose a model'}
+            showSearch
+            allowClear
+            optionFilterProp="label"
+            style={{ width: '100%' }}
+            notFoundContent={loading ? <LoadingOutlined /> : 'No models available'}
+          />
+        )}
         <Button
           icon={<ReloadOutlined />}
           loading={loading}
@@ -1699,6 +1852,58 @@ function ModelSelector({
         />
       )}
     </Field>
+  )
+}
+
+function formatHeaders(headers: Record<string, string> | undefined): string {
+  return Object.entries(headers || {})
+    .filter(([, value]) => value !== '')
+    .map(([name, value]) => `${name}: ${value}`)
+    .join('\n')
+}
+
+// Edits a header map as "Name: value" lines and commits on blur. Removed
+// headers are saved as empty values, because saving merges into the stored
+// config and could not otherwise delete them; empty headers are not sent.
+function HeadersField({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: Record<string, string> | undefined
+  onChange: (value: Record<string, string>) => void
+  placeholder?: string
+}) {
+  const serialized = formatHeaders(value)
+  const [text, setText] = useState(serialized)
+  // Re-sync the draft when the saved value changes (e.g. after a reload).
+  const [syncedValue, setSyncedValue] = useState(serialized)
+  if (syncedValue !== serialized) {
+    setSyncedValue(serialized)
+    setText(serialized)
+  }
+
+  const commit = () => {
+    const next: Record<string, string> = {}
+    for (const name of Object.keys(value || {})) next[name] = ''
+    for (const line of text.split('\n')) {
+      const index = line.indexOf(':')
+      if (index <= 0) continue
+      const name = line.slice(0, index).trim()
+      if (name) next[name] = line.slice(index + 1).trim()
+    }
+    if (JSON.stringify(next) !== JSON.stringify(value || {})) onChange(next)
+  }
+
+  return (
+    <Input.TextArea
+      value={text}
+      onChange={event => setText(event.target.value)}
+      onBlur={commit}
+      placeholder={placeholder}
+      autoSize={{ minRows: 2, maxRows: 6 }}
+      style={{ fontFamily: 'monospace', fontSize: 12 }}
+    />
   )
 }
 

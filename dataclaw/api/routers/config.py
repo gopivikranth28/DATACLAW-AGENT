@@ -205,16 +205,19 @@ def _mask_secrets_recursive(d: dict) -> None:
             d[key] = val[:8] + "..." + val[-4:] if len(val) > 12 else "***"
 
 
-_SECRET_KEY_PATTERNS = {"api_key", "token", "secret", "password"}
+# Substrings of key names whose values are masked. The hyphenated forms and
+# "authorization" cover HTTP header names in llm.backends.<id>.headers.
+_SECRET_KEY_PATTERNS = {"api_key", "api-key", "apikey", "token", "secret", "password", "authorization"}
 _EXACT_SECRET_KEYS = {"kaggle_key"}
 
 
 def _strip_masked_secrets(updates: dict) -> None:
     """Recursively remove masked secret values so they don't overwrite real keys.
 
-    Any key whose name contains 'api_key', 'token', 'secret', or 'password'
-    is checked. If the value looks masked (contains '...' or is '***'),
-    it's removed so the real value in the config file is preserved.
+    Any key whose name matches _SECRET_KEY_PATTERNS (api_key, token, secret,
+    password, authorization, ...) is checked. If the value looks masked
+    (contains '...' or is '***'), it's removed so the real value in the config
+    file is preserved.
     """
     _strip_masked_recursive(updates)
 

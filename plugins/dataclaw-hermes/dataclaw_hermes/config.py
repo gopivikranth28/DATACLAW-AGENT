@@ -144,14 +144,12 @@ class HermesConfig:
                 "Hermes 0.19.0 does not expose a raw utility LLM contract; "
                 "configure llm.backend and the selected provider model"
             )
-        if self.utility_backend not in {
-            "anthropic",
-            "openai",
-            "gemini",
-            "codex",
-        }:
+        from dataclaw.providers.llm.registry import utility_backend_ids
+
+        backends = utility_backend_ids()
+        if self.utility_backend not in backends:
             raise ValueError(
-                "utility_backend must be anthropic, openai, gemini, or codex"
+                "utility_backend must be one of: " + ", ".join(sorted(backends))
             )
         if self.provider:
             raise ValueError(
