@@ -1,5 +1,5 @@
 # Stage 1: Build the UI
-FROM node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS ui-build
+FROM node:24.22.2-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85 AS ui-build
 WORKDIR /build
 COPY ui/package.json ui/package-lock.json ./
 RUN npm ci --no-audit --no-fund
@@ -8,7 +8,7 @@ RUN npm run build
 
 # Stage 2: Grab glibc Node.js binaries for the runtime image (Node 24 meets
 # OpenClaw 2026.10's >=24.22.1 floor for the in-container install.sh path)
-FROM node:24.22.1-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205 AS node-bin
+FROM node:24.22.2-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c AS node-bin
 
 # Stage 3: API + built UI
 FROM python:3.12-slim-bookworm@sha256:6a0e06f5ba0b373d051aabd3fffb9b873f27f9a2a3a14bcbe37dee6f0e3bbc70
